@@ -1,0 +1,88 @@
+# git-zen 开发任务
+
+状态标记：[ ] 待做 · [x] 完成 · [~] 进行中 · [-] 明确不做
+
+## M1 骨架
+
+- [x] 技术选型确认（Tauri 2 + Vue 3 + TS）
+- [x] 项目骨架：package.json / vite / tsconfig / tauri.conf
+- [x] Rust 后端全部 command（git.rs 单文件）
+- [x] 前端类型镜像 gitApi.ts
+- [x] 文档留存：docs/（DESIGN / NOTES / TASKS）
+- [x] pnpm install + cargo check 通过
+- [x] vue-tsc 类型检查通过
+- [x] graph.test.ts 自检通过
+- [x] `pnpm tauri dev` 跑起来，手动冒烟
+
+## M2 核心四件套
+
+- [x] 暂存/取消暂存（单文件 + 全部）
+- [x] 提交（Ctrl+Enter 快捷键）
+- [x] Push / Pull + ahead/behind 徽标
+- [x] 分支列表 / 切换 / 新建
+- [x] 泳道历史图（300 条上限）
+
+## M3 打磨
+
+- [x] UI 改版：Tailwind v4 + shadcn-vue 风格组件已落地（Button/Input/Textarea/Badge + lucide 图标）
+- [x] 错误 toast 文案美化：humanize 映射（无上游/非快进/认证失败/非仓库/空仓库/冲突/网络）+ 原始 stderr 小字附显
+- [x] 正式应用图标：scripts/gen-icon.mjs 生成泳道主题多尺寸 ICO（16-256），可重跑再生成
+- [x] 空仓库 / 无上游分支等边界场景提示（随错误映射覆盖；空仓库已有"暂无提交"空态）
+- [x] release 构建：`git-zen.exe`（9MB）已产出 ✓；NSIS 安装包被网络阻塞，有网环境重跑 `pnpm tauri build`
+
+## M4 日常可用（已完成）
+
+- [x] **diff 查看**：文件行 hover 出 diff 图标，弹层展示 +/- 行着色；未跟踪文件提示无 diff。后端 `git_diff(repo, path, cached)`
+- [x] **checkout 远程分支**：点 origin/x 自动建同名本地跟踪分支（DWIM）
+- [x] **历史过滤 + 加载更多**：顶部搜索框按提交信息/作者前端过滤（过滤时隐藏加载按钮）；`--skip` 分页每页 300
+- [x] **启动/打开仓库后台 fetch 一次**：静默刷 ahead/behind，失败不打扰
+- [x] **rename 显示**：porcelain `old -> new` 拆成删除线+箭头样式
+
+## M4.1 日常可用 - 补充（已完成）
+
+- [x] **commit 级 diff**：点历史行弹窗看整个 commit 的 patch（多文件，文件名分段标题）；后端 `git_show(repo, hash)`，hash 做了十六进制校验
+- [x] **分支双击切换**：本地/远程分支都改为双击触发，hover 提示已更新
+- [x] **滚动自动加载**：历史区滚到底部距底 60px 自动拉下一页（loading 防抖防重复触发），按钮已移除
+
+## M4.2 日常可用 - 实用内容（已完成）
+
+- [x] **仓库选项卡**：工具栏下方标签行，持久化所有导入过的仓库；单击切换、双击重命名、X 关闭、拖动排序
+- [x] **本地分支删除/重命名**：叶子 hover 出 GitMerge/Pencil/Trash2 图标；删除走确认框且用 `-d` 安全删（未合并会拒绝）；重命名行内编辑回车保存
+- [x] **分支合并**：非当前分支 hover 合并图标 → 确认框后 `merge --no-edit` 到当前分支；远程分支自动取同名跟踪分支名
+- [x] **报错改确认框**：居中卡片展示友好文案 + 可展开的原始 stderr，点「确认」才关，不再自动消失
+- [x] **diff 一键展开/收起**：多文件时头部出现两个按钮，操作折叠集合
+- [x] **侧边栏拖宽**：两侧把手拖拽调整宽度（左 140-420 / 右 240-520），localStorage 持久化
+- [x] **Spinner**：新增 `ui/Spinner.vue`（lucide LoaderCircle + animate-spin），历史区遮罩与 diff 弹窗加载态已换用，后续 loading 统一用它
+
+## M4.3 日常可用 - 实用内容2（已完成）
+
+- [x] **合并当前分支到某分支**：本地非当前分支 hover 出 GitPullRequestArrow 图标；流程=切到目标→merge 当前→成功切回，冲突则停在目标待解决（确认框写明流程）
+- [x] **选项卡拖动换库**：改用 vue-draggable-plus（SortableJS），150ms 动画，v-model 自动同步排序；自研鼠标拖拽方案已移除
+- [x] **快捷键**：Ctrl+Tab / Ctrl+Shift+Tab 切仓库、Ctrl+1..9 跳第 N 个、F5 刷新；设置弹窗新增「快捷键」页展示全部快捷键（固定绑定，暂不可改）
+- [x] **强制删除分支**：确认框带勾选框，勾选后用 `-D` 强删，默认仍 `-d` 安全删
+- [x] **diff 一键展/收单按钮**：两个按钮合成一个切换按钮，图标随状态变化
+
+## M5 功能升级
+
+## M6 AI 拓展
+
+## 需求池（无需关注，后面排期）
+
+来自 M5 的存量：
+
+- stash 列表/弹出/恢复
+- amend 上次提交 / 撤销上次提交（reset --soft HEAD~1）
+- 冲突文件标记 + 引导跳终端解决
+- rebase / cherry-pick（交互复杂度高，终端更顺手）
+- 自动轮询刷新（fetch-once + focus 刷新已够）
+
+新增想法：
+
+- 历史行右键菜单：复制 hash / checkout 到该提交 / revert
+- hunk 级暂存：diff 弹窗内按块 stage/unstage
+- 文件列表目录树/平铺双视图切换
+- worktree 支持（列出/切换工作树）
+- commit message 模板支持（读 .gitcommittemplate 或配置）
+- 任务栏徽标/窗口标题显示未推送数
+- i18n 英文界面
+- 设置 - 个人设置，展示提交图表统计（每周提交量热力图）

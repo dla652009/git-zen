@@ -1,0 +1,24 @@
+# Node
+node_modules
+*.log
+pnpm-debug.log*
+
+# Build output
+dist
+
+# Tauri / Rust
+src-tauri/target
+src-tauri/gen/schemas
+
+# Env
+.env
+.env.*
+!.env.example
+*.local
+
+# Editor / OS
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db

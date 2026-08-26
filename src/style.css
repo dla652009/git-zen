@@ -1,0 +1,155 @@
+@import "tailwindcss";
+
+/* shadcn token；默认暗色（深空灰底 + 紫罗兰主色），其余主题用 [data-theme] 覆盖 */
+:root {
+  --background: #101014;
+  --foreground: #e8e8ee;
+  --card: #17171d;
+  --muted: #1f1f27;
+  --muted-foreground: #9494a1;
+  --border: #2a2a34;
+  --primary: #8b7ff5;
+  --primary-foreground: #12101c;
+  --secondary: #1f1f27;
+  --secondary-foreground: #e8e8ee;
+  --destructive: #f26d78;
+  --scrollbar-thumb: #33333f;
+  --radius: 0.375rem;
+  --diff-add-bg: #223326;
+  --diff-add-text: #7fd88f;
+  --diff-del-bg: #3a2226;
+  --diff-del-text: #ff9ba3;
+}
+
+[data-theme="light"],
+[data-theme="github-light"] {
+  --background: #fafafa;
+  --foreground: #1c1c23;
+  --card: #ffffff;
+  --muted: #f0f0f4;
+  --muted-foreground: #767680;
+  --border: #e4e4ea;
+  --primary: #6d5ef0;
+  --primary-foreground: #ffffff;
+  --secondary: #f0f0f4;
+  --secondary-foreground: #1c1c23;
+  --destructive: #d5484f;
+  --scrollbar-thumb: #c9c9d2;
+  --diff-add-bg: #e3f4e8;
+  --diff-add-text: #1a7f37;
+  --diff-del-bg: #fce8ea;
+  --diff-del-text: #c53038;
+}
+
+[data-theme="catppuccin-mocha"] {
+  --background: #1e1e2e;
+  --foreground: #cdd6f4;
+  --card: #181825;
+  --muted: #313244;
+  --muted-foreground: #9399b2;
+  --border: #45475a;
+  --primary: #a6e3a1;
+  --primary-foreground: #1e1e2e;
+  --secondary: #313244;
+  --secondary-foreground: #cdd6f4;
+  --destructive: #f38ba8;
+  --scrollbar-thumb: #52576e;
+  --diff-add-bg: #2a3530;
+  --diff-add-text: #a6e3a1;
+  --diff-del-bg: #3d2a33;
+  --diff-del-text: #f38ba8;
+}
+
+[data-theme="catppuccin-latte"] {
+  --background: #eff1f5;
+  --foreground: #4c4f69;
+  --card: #e6e9ef;
+  --muted: #ccd0da;
+  --muted-foreground: #7c7f93;
+  --border: #bcc0cc;
+  --primary: #40a02b;
+  --primary-foreground: #eff1f5;
+  --secondary: #ccd0da;
+  --secondary-foreground: #4c4f69;
+  --destructive: #d20f39;
+  --scrollbar-thumb: #b4bacb;
+  --diff-add-bg: #d3e8d3;
+  --diff-add-text: #40a02b;
+  --diff-del-bg: #eccada;
+  --diff-del-text: #d20f39;
+}
+
+[data-theme="one-dark"] {
+  --background: #282c34;
+  --foreground: #abb2bf;
+  --card: #21252b;
+  --muted: #3a3f4b;
+  --muted-foreground: #7f848e;
+  --border: #3e4451;
+  --primary: #98c379;
+  --primary-foreground: #282c34;
+  --secondary: #3a3f4b;
+  --secondary-foreground: #abb2bf;
+  --destructive: #e06c75;
+  --scrollbar-thumb: #4b5262;
+  --diff-add-bg: #243021;
+  --diff-add-text: #98c379;
+  --diff-del-bg: #33262a;
+  --diff-del-text: #e06c75;
+}
+
+[data-theme="github-dark"] {
+  --background: #0d1117;
+  --foreground: #e6edf3;
+  --card: #161b22;
+  --muted: #21262d;
+  --muted-foreground: #8b949e;
+  --border: #30363d;
+  --primary: #238636;
+  --primary-foreground: #ffffff;
+  --secondary: #21262d;
+  --secondary-foreground: #e6edf3;
+  --destructive: #da3633;
+  --scrollbar-thumb: #3d444d;
+  --diff-add-bg: #12261e;
+  --diff-add-text: #3fb950;
+  --diff-del-bg: #2d1517;
+  --diff-del-text: #f85149;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-destructive: var(--destructive);
+  --radius-md: var(--radius);
+}
+
+body {
+  @apply bg-background text-foreground antialiased select-none;
+  overflow: hidden; /* 字体/字号由 settings.ts 写到 html 上，不写死 */
+}
+html,
+body,
+#app {
+  height: 100%;
+}
+
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
