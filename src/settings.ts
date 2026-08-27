@@ -9,6 +9,8 @@ export interface Settings {
   aiBaseUrl: string; // OpenAI 兼容入口，如 https://api.openai.com/v1 或 http://localhost:11434/v1
   aiApiKey: string;
   aiModel: string;
+  aiCommitLang: string; // AI 生成提交信息的语言：中文 / English
+  aiEnabled: string; // "on" / "off"，AI 功能总开关
 }
 
 export const THEMES = [
@@ -26,12 +28,15 @@ const KEY = "gz.settings";
 
 const DEFAULTS: Settings = {
   theme: "dark",
-  fontFamily: '"Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif',
+  fontFamily:
+    '"Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif',
   fontSize: 13,
   branchPrefix: "",
   aiBaseUrl: "https://api.openai.com/v1",
   aiApiKey: "",
   aiModel: "gpt-4o-mini",
+  aiCommitLang: "中文",
+  aiEnabled: "on",
 };
 
 function load(): Settings {

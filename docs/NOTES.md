@@ -13,6 +13,12 @@
 
 ## 坑与决策记录
 
+### Windows spawn git 必须加 CREATE_NO_WINDOW
+
+GUI 应用（windows_subsystem="windows"）里 std::process::Command 启动控制台程序
+（git.exe）会弹黑框：dev 模式父进程在终端里看不出，打包后每次 git 调用都闪窗。
+run() 已统一加 creation_flags(CREATE_NO_WINDOW)。以后任何新增的子进程调用都要带。
+
 ### Tauri command 必须 async + spawn_blocking
 
 Tauri v2 的同步 #[tauri::command] 跑在主线程：任何 git CLI 慢调用（大仓库 log、
@@ -101,6 +107,12 @@ git_push 先普通 push，失败且 stderr 含 no upstream/no tracking informati
 否则 Conventional Commits、祈使语气无尾句号、跟随仓库主导语言、只基于 diff 不臆造。
 实现上 genCommitMsg 会把最近 10 条 subject 拼进 user prompt 作风格参考。
 
+### computed setter 背后的存储必须响应式
+
+writable computed 的 setter 写普通 Map/对象不会触发任何失效——请求成功、无报错、
+但界面永远不更新（AI 生成提交信息回归就栽在这）。per-key 草稿这类结构用
+`reactive(new Map())` + computed get/set。
+
 ### Vue 模板事件传参的隐坑
 
 @click="fn" 会把 MouseEvent 作为第一参数传入。带布尔形参的处理函数必须写成
@@ -114,6 +126,16 @@ ai.ts 提供 aiCacheRead/Write/Delete（localStorage gz.ai.* bucket，FIFO 上�
 - review bucket：键 repo::分支，Push 成功后删除
 - explain bucket：commit 用 hash 键永久有效；工作区文件用 路径+暂存模式 键
 注意 DiffViewer 缓存命中只预填解释面板，diff 主区照常请求加载。
+
+### AI 流式输出（已取消）
+
+曾实现过 Rust ai_stream SSE 转发方案，因部分模型/中转不支持 SSE 而回退，
+统一用非流式 aiComplete + Spinner。若将来重做：plugin-http 的 fetch 会整体缓冲
+拿不到 chunk，必须 Rust 侧转发 SSE；且 `tauri_plugin_http::reqwest` re-export
+版本必须与显式依赖一致（混装 0.12/0.13 会导致 .json() 等方法丢失）。
+
+**注意**：@click="fn" 会把 MouseEvent 传成首参，处理函数带布尔形参时模板要写
+fn() 或函数内严格 === true 判断（AI Review 缓存曾踩过）。
 
 ### WebView2 的 HTML5 拖拽（已弃用）
 

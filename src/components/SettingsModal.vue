@@ -4,7 +4,7 @@ import { X, Palette, UserCog, Keyboard, User, Bot, Plus } from "@lucide/vue";
 import { THEMES, settings, type Settings } from "../settings";
 import * as api from "../gitApi";
 import { aiVerify } from "../ai";
-import { Button, Input, Spinner } from "@/components/ui";
+import { Button, Input, Spinner, Select, Switch } from "@/components/ui";
 
 const props = defineProps<{ repo: string; initialTab?: string }>();
 const emit = defineEmits<{ close: [] }>();
@@ -68,6 +68,24 @@ const SHORTCUTS: [string, string][] = [
   ["双击分支", "切换 / 建立跟踪分支"],
   ["双击历史行", "查看该提交的 diff"],
   ["Esc", "关闭弹窗"],
+];
+
+// AI 开关（Switch 用 boolean，与 draft.aiEnabled 'on'/'off' 互转）
+const aiOn = computed({
+  get: () => draft.aiEnabled === "on",
+  set: (v: boolean) => (draft.aiEnabled = v ? "on" : "off"),
+});
+
+// 热门字体选项（未安装的字体浏览器会自动回退，不会白屏）
+const FONT_OPTIONS = [
+  { value: '"Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif', label: "默认（现代系统字体）" },
+  { value: '"Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif', label: "Segoe UI Variable" },
+  { value: '"Microsoft YaHei", "PingFang SC", sans-serif', label: "微软雅黑" },
+  { value: '"Inter", "Noto Sans SC", sans-serif', label: "Inter" },
+  { value: '"MiSans", "Segoe UI", sans-serif', label: "MiSans" },
+  { value: '"HarmonyOS Sans SC", "Segoe UI", sans-serif', label: "HarmonyOS Sans" },
+  { value: '"Source Han Sans SC", "Noto Sans SC", sans-serif', label: "思源黑体" },
+  { value: 'Consolas, "Cascadia Code", monospace', label: "等宽 · Consolas" },
 ];
 
 // 分支前缀：存储为逗号分隔字符串；tag 式编辑
@@ -155,7 +173,11 @@ const NAV = [
           <template v-else-if="tab === 'ai'">
             <section>
               <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">AI 服务（OpenAI 兼容协议）</h3>
-              <div class="space-y-3">
+              <div class="mb-4 flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2">
+                <span class="text-xs">启用 AI 功能</span>
+                <Switch v-model="aiOn" />
+              </div>
+              <div :class="['space-y-3', aiOn ? '' : 'pointer-events-none opacity-40']">
                 <div class="flex items-center gap-3">
                   <label class="w-16 shrink-0 text-xs text-muted-foreground">Base URL</label>
                   <Input v-model="draft.aiBaseUrl" placeholder="https://api.openai.com/v1" />
@@ -167,6 +189,17 @@ const NAV = [
                 <div class="flex items-center gap-3">
                   <label class="w-16 shrink-0 text-xs text-muted-foreground">模型</label>
                   <Input v-model="draft.aiModel" placeholder="gpt-4o-mini / deepseek-chat / qwen2.5 …" />
+                </div>
+                <div class="flex items-center gap-3">
+                  <label class="w-16 shrink-0 text-xs text-muted-foreground">提交语言</label>
+                  <Select
+                    v-model="draft.aiCommitLang"
+                    class="w-40"
+                    :options="[
+                      { value: '中文', label: '中文' },
+                      { value: 'English', label: 'English' },
+                    ]"
+                  />
                 </div>
               </div>
               <p class="mt-2 text-[11px] text-muted-foreground">
@@ -202,7 +235,10 @@ const NAV = [
               <div class="space-y-3">
                 <div class="flex items-center gap-3">
                   <label class="w-16 shrink-0 text-xs text-muted-foreground">UI 字体</label>
-                  <Input v-model="draft.fontFamily" placeholder='如 "Cascadia Code", 微软雅黑' />
+                  <Select
+                    v-model="draft.fontFamily"
+                    :options="FONT_OPTIONS"
+                  />
                 </div>
                 <div class="flex items-center gap-3">
                   <label class="w-16 shrink-0 text-xs text-muted-foreground">字号</label>

@@ -6,3 +6,4 @@ export { default as Tooltip } from "./Tooltip.vue";
 export { default as Spinner } from "./Spinner.vue";
 export { default as Select } from "./Select.vue";
 export { default as Md } from "./Md.vue";
+export { default as Switch } from "./Switch.vue";

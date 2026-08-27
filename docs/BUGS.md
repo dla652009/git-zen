@@ -8,6 +8,7 @@
       所有 git CLI 阻塞调用（log/status 大仓库慢、push/pull/fetch 网络慢）都会冻住 WebView → 假死。
       修复：全部 22 个命令改 `async fn` + `spawn_blocking` 下放线程池，主线程只管 UI
 - [x] 操作期间容易卡死 → 同根因同修复；push/pull 网络操作不再阻塞 UI，只影响各自按钮的 Spinner
+- [x] Command ai_stream not found → 根因：ai_stream 写进了 git.rs 但**漏注册** lib.rs 的 invoke_handler。已补注册
 
 ## Diff 功能
 
@@ -23,6 +24,9 @@
 - [x] 设置 UI 太丑 → codex 风格左右布局：左侧分类导航（外观/个性化），右侧内容区，底部固定操作条
 - [x] 去除 diff 样式设置 → 已移除；diff 颜色回归各主题内置配色，applySettings 会清掉旧版本写入的覆盖
 - [x] 分支前缀多个 → 个性化改为 tag 式编辑器（回车/逗号添加、×删除），存储仍是逗号分隔串；创建分支弹窗下拉自动同步；下拉换自研 ui/Select 组件（吃 token 样式）
+- [x] 功能开关置顶 + Switch 组件 + 关闭时隐藏按钮 → 新增 ui/Switch.vue（shadcn 风格滑块）；
+      AI 页顶部独立卡片放开关，关闭时下方配置项变灰禁用；
+      关闭时隐藏 Sparkles/Bot/Review 三个入口（不再是点击后提示）
 
 ## 分支区（左侧栏）
 
@@ -52,7 +56,9 @@
 - [x] 提交是提交，而不是提交并推送 → 真相：代码从未 push，是「分支无远程上游时没有任何提示」造成误导。两步修复：① Push 按钮遇无上游自动 `push -u origin <分支>`；② 状态栏对无上游分支常驻「当前分支尚未推送到远程」徽标。上一条的 `-c alias.commit=commit` 别名防御保留（无害且防劫持）
 - [x] 未暂存区整目录折叠成 src/ 且 diff 报 os error 5 → 根因：git status 默认把未跟踪目录折叠成 `src/`（路径是目录当然读不了）。status 加 `-uall` 展开为逐个文件；已暂存区正常是因为暂存文件本来就是逐个列的
 - [x] 提交/Pull/Push loading → run() 记录当前操作名，Pull/Push 按钮图标切换成 Spinner；提交按钮显示「处理中...」+ Spinner
-- [ ] commit message 输入框的内容需要每个选项卡下的仓库单独保存
+- [x] 提交草稿按仓库隔离 → message 改为 Map<repo, 草稿> 的 computed 读写，切选项卡互不串；提交成功清空对应仓库的草稿。
+      **后续回归**：普通 Map 在 computed setter 里写入不触发响应式失效，导致 AI 生成结果不渲染（无报错无结果）。
+      已改 reactive(new Map()) 修复——computed setter 背后的存储必须响应式
 
 ## 仓库选项卡
 
@@ -91,3 +97,5 @@
       Review/新建/设置/打开本就有；AI 功能按钮与文件/分支行均已是 Tooltip 组件
 - [x] tooltip 贴边截断 → 三级回退：右侧放不下→翻左侧；两侧都放不下→水平居中于鼠标且放到鼠标正上方；
       垂直贴底同理上翻。不再只压缩宽度
+- [x] 默认字体现代化 → 默认栈换成 Segoe UI Variable Text（Win11 原生，平滑清晰），回退 Segoe UI/雅黑
+- [x] 字体输入框改下拉 → ui/Select 组件，8 个热门选项（默认/Segoe UI Variable/雅黑/Inter/MiSans/HarmonyOS Sans/思源黑体/等宽），未安装的字体自动回退不会白屏

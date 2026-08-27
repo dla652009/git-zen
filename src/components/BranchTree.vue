@@ -114,7 +114,7 @@ function toggle(path: string) {
           <Tooltip v-if="!n.branch!.current" text="合并到当前分支">
             <GitMerge class="size-3.5 hover:text-primary" @click.stop="emit('merge', n.branch!)" />
           </Tooltip>
-          <Tooltip v-if="!n.branch!.current" text="把当前分支合并到该分支（会切过去）">
+          <Tooltip v-if="!n.branch!.current" text="把当前分支合并到该分支">
             <GitPullRequestArrow class="size-3.5 hover:text-primary" @click.stop="emit('mergeInto', n.branch!)" />
           </Tooltip>
           <Pencil class="size-3.5 hover:text-primary" @click.stop="startRename(n)" />

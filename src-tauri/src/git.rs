@@ -2,13 +2,24 @@ use serde::Serialize;
 use std::process::Command;
 
 fn run(repo: &str, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
-        .current_dir(repo)
+    let mut cmd = Command::new("git");
+    cmd.current_dir(repo)
         // 中文等非 ASCII 路径不转成八进制转义，否则展示和回传 pathspec 都会坏
         .args(["-c", "core.quotepath=false"])
         .args(args)
         // fail fast instead of hanging on credential prompt; system credential helper still works
-        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_TERMINAL_PROMPT", "0");
+
+    // GUI 应用（windows_subsystem="windows"）里 spawn 控制台程序会弹黑框，
+    // 打包后尤其明显（dev 模式父进程在终端里看不出）。必须禁止创建控制台窗口。
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let out = cmd
         .output()
         .map_err(|e| format!("无法启动 git: {e}"))?;
     if out.status.success() {

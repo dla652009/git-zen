@@ -329,10 +329,17 @@ const reviewText = ref("");
 const reviewErr = ref("");
 // 结果持久化在 localStorage（gz.ai.review），重启后仍可二次查看
 const REVIEW_BUCKET = "review";
+function reviewCacheGet(key: string): string | undefined {
+  return aiCacheRead(REVIEW_BUCKET, key);
+}
+function reviewCacheSet(key: string, text: string) {
+  aiCacheWrite(REVIEW_BUCKET, key, text);
+}
 function reviewKey(): string {
   return `${repo.value}::${status.value?.branch ?? ""}`;
 }
 function aiConfigured(): boolean {
+  if (settings.aiEnabled !== "on") return false; // AI 总开关关闭时全部入口引导去设置
   return !!(settings.aiBaseUrl.trim() && (settings.aiApiKey.trim() || settings.aiBaseUrl.includes("localhost")));
 }
 async function startReview(regen: boolean | Event = false) {
@@ -346,7 +353,7 @@ async function startReview(regen: boolean | Event = false) {
   }
   if (reviewBusy.value || !status.value?.ahead) return;
   const key = reviewKey();
-  const cached = aiCacheRead(REVIEW_BUCKET, key);
+  const cached = reviewCacheGet(key);
   if (!forceRegen && cached !== undefined) {
     // 已有报告直接展示，附重新生成按钮
     reviewText.value = cached;
@@ -360,8 +367,11 @@ async function startReview(regen: boolean | Event = false) {
   reviewErr.value = "";
   try {
     const d = await api.diffUnpushed(repo.value);
-    reviewText.value = await aiComplete(AI_PROMPTS.reviewUnpushed.system, clipForAI(d));
-    aiCacheWrite(REVIEW_BUCKET, key, reviewText.value);
+    reviewText.value = await aiComplete(
+      AI_PROMPTS.reviewUnpushed.system,
+      clipForAI(d),
+    );
+    reviewCacheSet(key, reviewText.value);
   } catch (e) {
     reviewErr.value = String(e).replace(/^Error: /, "");
   } finally {
@@ -628,7 +638,7 @@ onMounted(async () => {
         Push
       </Button>
       <Button
-        v-if="status?.ahead"
+        v-if="status?.ahead && settings.aiEnabled === 'on'"
         size="sm"
         :disabled="busy || reviewBusy"
         title="AI Review 未推送的提交"

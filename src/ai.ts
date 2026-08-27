@@ -29,19 +29,19 @@ function statusToText(status: number): string {
   }
 }
 
+// 非流式调用：部分模型/中转不支持 SSE，统一一次性返回 + 前端 Spinner
 export async function aiComplete(
   system: string,
   user: string,
 ): Promise<string> {
   if (!settings.aiBaseUrl.trim()) throw new Error("未配置 AI Base URL");
-  const url = settings.aiBaseUrl.replace(/\/+$/, "") + "/chat/completions";
+  const url = `${settings.aiBaseUrl.replace(/\/+$/, "")}/chat/completions`;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
   if (settings.aiApiKey.trim())
     headers.Authorization = `Bearer ${settings.aiApiKey}`;
 
-  // 插件可能不支持 AbortSignal，超时用竞态兜底
   let timedOut = false;
   const timer = setTimeout(() => (timedOut = true), TIMEOUT_MS);
   let res: Response;
@@ -65,10 +65,32 @@ export async function aiComplete(
     );
   }
   clearTimeout(timer);
-  if (!res.ok) throw new Error(statusToText(res.status));
-  const data = (await res.json()) as {
-    choices?: { message?: { content?: string } }[];
-  };
+  if (!res.ok) {
+    // 把服务端返回的真实原因带出来（如 model not found / 配额不足），否则无法定位生成失败的原因
+    const body = await res.text().catch(() => "");
+    let detail = "";
+    if (body) {
+      try {
+        const j = JSON.parse(body);
+        detail = (j?.error?.message as string) ?? body.slice(0, 300);
+      } catch {
+        detail = body.slice(0, 300);
+      }
+    }
+    throw new Error(
+      `${statusToText(res.status)}${detail ? `：${detail}` : ""}`,
+    );
+  }
+  let data: { choices?: { message?: { content?: string } }[] };
+  try {
+    data = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+  } catch {
+    throw new Error(
+      "AI 返回了无法解析的内容（非 JSON），请检查 Base URL 是否正确",
+    );
+  }
   const content = data.choices?.[0]?.message?.content?.trim();
   if (!content) throw new Error("AI 返回了空内容");
   return content;
@@ -76,7 +98,7 @@ export async function aiComplete(
 
 // 设置保存时的轻量验通（显式传参，验的是草稿值不是已存值）
 export async function aiVerify(baseUrl: string, apiKey: string): Promise<void> {
-  const url = baseUrl.replace(/\/+$/, "") + "/models";
+  const url = `${baseUrl.replace(/\/+$/, "")}/models`;
   const headers: Record<string, string> = {};
   if (apiKey.trim()) headers.Authorization = `Bearer ${apiKey}`;
   let res: Response;
@@ -94,7 +116,8 @@ export const AI_PROMPTS = {
     // 吸收 src/ai/skills/git-commit-message/SKILL.md 的规范：
     // 跟随仓库既有风格，风格不明显时用 Conventional Commits；祈使语气、无尾句号、
     // 不硬凑 type/scope、跟随仓库主导语言；只基于 diff 本身，不臆造行为。
-    system: `你是资深工程师。根据给定的暂存区 diff 写一条 Git 提交信息。
+    system(lang: string) {
+      return `你是资深工程师。根据给定的暂存区 diff 写一条 Git 提交信息。
 
 规则：
 1. 优先参考「仓库近期提交」的风格惯例；风格不明显时采用 Conventional Commits：type(scope): 主题。
@@ -104,7 +127,8 @@ export const AI_PROMPTS = {
 5. 跟随仓库主导语言（若近期提交主要是中文则用中文，英文则用英文）。
 6. 只基于 diff 描述真实行为，不要臆造变更未实现的内容。
 
-只输出提交信息本身，不要任何解释或 Markdown 标记。`,
+只输出提交信息本身，不要任何解释或 Markdown 标记。提交信息语言：${lang}。`;
+    },
   },
   explainDiff: {
     system:

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, type Component } from "vue";
+import { ref, computed, reactive, type Component } from "vue";
 import {
   Plus,
   Undo2,
@@ -14,6 +14,7 @@ import * as api from "../gitApi";
 import type { Status, StatusFile } from "../gitApi";
 import type { DiffTarget } from "./DiffViewer.vue";
 import { AI_PROMPTS, aiComplete, clipForAI } from "../ai";
+import { settings } from "../settings";
 import { Button, Textarea, Tooltip, Spinner } from "@/components/ui";
 
 const props = defineProps<{
@@ -32,7 +33,13 @@ const emit = defineEmits<{
 // 未暂存文件右键菜单
 const fileCtx = ref<{ x: number; y: number; f: StatusFile } | null>(null);
 
-const message = ref("");
+// 提交信息草稿按仓库隔离（切选项卡互不串）。
+// 注意必须是 reactive Map：computed setter 写入才能触发响应式失效，否则 AI 生成结果不会渲染
+const drafts = reactive(new Map<string, string>());
+const message = computed({
+  get: () => drafts.get(props.repo) ?? "",
+  set: (v: string) => drafts.set(props.repo, v),
+});
 
 const staged = computed(() =>
   (props.status?.files ?? []).filter((f) => f.x !== " " && f.x !== "?")
@@ -83,6 +90,10 @@ const aiBusy = ref(false);
 const aiErr = ref("");
 async function genCommitMsg() {
   if (aiBusy.value) return;
+  if (settings.aiEnabled !== "on") {
+    aiErr.value = "AI 功能已关闭：设置 → AI 页可开启";
+    return;
+  }
   if (!staged.value.length) {
     aiErr.value = "先暂存文件，AI 才有 diff 可读";
     return;
@@ -101,7 +112,10 @@ async function genCommitMsg() {
       .map((c) => c.subject)
       .join("\n");
     const user = `【仓库近期提交风格】\n${recentLog || "（无历史提交）"}\n\n【暂存区 diff】\n${clipForAI(d)}`;
-    message.value = await aiComplete(AI_PROMPTS.commitMessage.system, user);
+    message.value = await aiComplete(
+      AI_PROMPTS.commitMessage.system(settings.aiCommitLang),
+      user,
+    );
   } catch (e) {
     aiErr.value = String(e).replace(/^Error: /, "");
   } finally {

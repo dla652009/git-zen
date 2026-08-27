@@ -97,12 +97,14 @@
       `git_diff_unpushed`（`@{upstream}..HEAD`）；报告弹窗按【问题/风险/建议】分节输出
 - [x] **未配置引导**：三个入口在 aiConfigured() 为 false 时点击 → 自动打开设置并定位到 AI 页
 
-### 明确不做（AI 相关 YAGNI）
+### M6.3 功能优化（已完成）
 
-- [-] 本地大模型内置/下载（体积违背轻量目标；要本地就用 Ollama 填 Base URL）
-- [-] 流式打字机输出（v1 非流式 + Spinner 即可，反馈好了再上）
-- [-] 冲突解决建议（合并冲突仍引导终端）
-- [-] 对话式多轮 Agent（git 操作保持确定性执行，AI 只产文本）
+- [x] **提交信息语言配置**：设置 AI 页新增「提交语言」下拉（中文/English），存 `aiCommitLang`；
+      提示词 `AI_PROMPTS.commitMessage.system(lang)` 按语言注入
+- [x] **AI 功能开关**：设置 AI 页「功能开关」下拉（开启/关闭，默认开启），存 `aiEnabled`；
+      关闭时三个 AI 入口分别提示/引导设置，`aiConfigured()` 一并校验
+- [-] ~~流式打字机输出~~（已取消：部分模型/中转不支持 SSE 流式，非流式兼容性最好；
+      ai_stream/aiStream 及 reqwest、futures-util 依赖已全部回退，Spinner 非流式方案保留）
 
 ## 需求池（无需关注，后面排期）
 
@@ -117,6 +119,5 @@
 - hunk 级暂存：diff 弹窗内按块 stage/unstage
 - 文件列表目录树/平铺双视图切换
 - worktree 支持（列出/切换工作树）
-- commit message 模板支持（读 .gitcommittemplate 或配置）
 - i18n 英文界面
 - 设置 - 个人设置，展示提交图表统计（每周提交量热力图）

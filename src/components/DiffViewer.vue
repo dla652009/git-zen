@@ -4,6 +4,7 @@ import { X, ChevronDown, ChevronsDownUp, ChevronsUpDown, Bot } from "@lucide/vue
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite } from "../ai";
+import { settings } from "../settings";
 import { FileDown } from "@lucide/vue";
 
 const savedTip = ref(false);
@@ -85,12 +86,19 @@ const explainBusy = ref(false);
 const explainErr = ref("");
 const explainText = ref("");
 async function loadExplain() {
+  if (settings.aiEnabled !== "on") {
+    explainErr.value = "AI 功能已关闭：设置 → AI 页可开启";
+    return;
+  }
   explainBusy.value = true;
   explainErr.value = "";
+  explainText.value = "";
   try {
-    const out = await aiComplete(AI_PROMPTS.explainDiff.system, clipForAI(text.value));
-    explainText.value = out;
-    aiCacheWrite("explain", explainId(), out);
+    explainText.value = await aiComplete(
+      AI_PROMPTS.explainDiff.system,
+      clipForAI(text.value),
+    );
+    aiCacheWrite("explain", explainId(), explainText.value);
   } catch (e) {
     explainErr.value = String(e).replace(/^Error: /, "");
   } finally {
@@ -188,7 +196,14 @@ function toggleAll() {
           {{ commit ? `${commit.author} · ${commit.date}` : file?.cached ? "已暂存的变更" : "工作区变更" }}
         </span>
         <span class="flex-1" />
-        <Button variant="ghost" size="sm" title="AI 解释这段变更" :disabled="explainBusy" @click="explain">
+        <Button
+          v-if="settings.aiEnabled === 'on'"
+          variant="ghost"
+          size="sm"
+          title="AI 解释这段变更"
+          :disabled="explainBusy"
+          @click="explain"
+        >
           <Spinner v-if="explainBusy" :size="14" />
           <Bot v-else class="size-3.5 text-primary" />
         </Button>
