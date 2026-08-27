@@ -76,6 +76,35 @@
 
 ## M6 AI 拓展
 
+架构前提（先做，后面的功能全靠它）：
+
+### M6.1 基础设施
+
+- [ ] 接入 `tauri-plugin-http`：让前端 fetch 能跨域调 AI API（capabilities 里放开 `https:*`）；
+      不在 Rust 侧自研 HTTP client，业务逻辑全部留在 TS
+- [ ] 设置新增「AI」页：Base URL（默认 `https://api.openai.com/v1`）/ API Key / Model 三字段，
+      OpenAI 兼容协议（OpenAI/DeepSeek/Kimi/Groq/本地 Ollama 通吃）；
+      Key 存 localStorage（桌面单机可接受，页面注明风险）；保存前用一次轻量请求验通
+- [ ] 通用封装 `aiComplete(system, userPrompt)`：统一错误映射（401→Key 无效 / 429→限频 /
+      超时→网络不通）、diff 超长自动截断（~16KB）、二进制段剔除；所有 AI 功能只许调它
+
+### M6.2 功能点（全部只读：仅消费 diff/log 文本，不写工作区）
+
+- [ ] **AI 生成提交信息**：提交框旁 Sparkles 按钮，取暂存区 diff 生成「≤50 字主题 + 可选正文」，
+      写入输入框供人工修改后再提交（不自动提交）
+- [ ] **AI 解释变更**：DiffViewer 头部按钮，对当前文件/commit patch 输出中文要点解读，
+      结果以折叠面板内嵌在弹窗底部
+- [ ] **AI Review 未推送提交**：ahead > 0 时工具栏出现按钮，把未推送范围的 diff 交给模型，
+      按「问题/风险/建议」分节输出报告弹窗
+- [ ] 以上三处入口在未配置 AI 时点击 → 自动打开设置的 AI 页引导配置
+
+### 明确不做（AI 相关 YAGNI）
+
+- [-] 本地大模型内置/下载（体积违背轻量目标；要本地就用 Ollama 填 Base URL）
+- [-] 流式打字机输出（v1 非流式 + Spinner 即可，反馈好了再上）
+- [-] 冲突解决建议（合并冲突仍引导终端）
+- [-] 对话式多轮 Agent（git 操作保持确定性执行，AI 只产文本）
+
 ## 需求池（无需关注，后面排期）
 
 来自 M5 的存量：

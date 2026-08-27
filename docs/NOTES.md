@@ -31,6 +31,12 @@ CLI 输出即真相：认证走系统 credential helper、ssh 走系统配置，
 
 ### Tauri 图标
 
+换图标后必须 `cargo clean`（或删 target/*/build）再重新构建：Windows 图标在编译期
+经 tauri-build 嵌进 exe 资源段，增量编译检测不到 .ico 内容变化，dev 窗口和 release
+都会是旧图标。另外任务栏/资源管理器还有一层 Windows 图标缓存会撒谎——重建后还显示
+旧图的话执行 `ie4uinit.exe -show` 或重启 explorer。cargo clean 若报拒绝访问，先杀掉
+残留的 git-zen.exe / rust-analyzer 句柄再清。
+
 `tauri.conf.json` 引用 `icons/icon.ico`，缺文件 Windows 构建会挂。
 当前是脚本生成的纯色占位图，出正式包前换真图标。
 
@@ -89,5 +95,6 @@ HTML5 DnD 在 WebView2 里不可靠：补了 dataTransfer.setData 后 drop 仍�
 中点比较实时换位 → mouseup 收尾 + 吞掉补偿 click）。以后需要拖拽一律用这套，别碰 DnD API。
 
 注意两个细节：
+
 - mousedown 要 preventDefault 防止触发文字选中拖拽
 - 拖完松手浏览器会补发一次 click，用 suppressClick + setTimeout(0) 吞掉

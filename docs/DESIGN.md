@@ -25,6 +25,9 @@ git-zen 的对策：
   - 少一个重型依赖，编译快
 - **环境变量 `GIT_TERMINAL_PROMPT=0`**：需要密码时快速失败而不是挂死 UI
 - **vue-draggable-plus**：列表拖拽排序统一用它，不自研 DnD
+- **AI 能力（M6 规划）**：tauri-plugin-http 解决跨域，前端 TS 直调 OpenAI 兼容协议
+  （Base URL 可配，通吃 OpenAI/DeepSeek/Ollama）；所有功能只读 diff/log 产文本，
+  不写工作区；Key 存 localStorage
 
 ## 3. 架构
 
