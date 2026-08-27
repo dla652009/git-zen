@@ -14,8 +14,10 @@ import {
   GitBranchPlus,
   Cloud,
   X,
+  Bot,
 } from "@lucide/vue";
 import * as api from "./gitApi";
+import { AI_PROMPTS, aiComplete, clipForAI } from "./ai";
 import type { Status, LogEntry, Branch } from "./gitApi";
 import { settings } from "./settings";
 import { Button, Input, Spinner } from "@/components/ui";
@@ -306,6 +308,7 @@ const filter = ref("");
 type DiffState = { kind: "file"; target: DiffTarget } | { kind: "commit"; target: CommitTarget };
 const diffState = ref<DiffState | null>(null);
 const showSettings = ref(false);
+const showSettingsTab = ref<string | undefined>(undefined);
 
 // 历史行右键菜单：复制 hash / checkout / revert
 const commitCtx = ref<{ x: number; y: number; c: LogEntry } | null>(null);
@@ -316,11 +319,42 @@ function onCommitMenu(p: { x: number; y: number; c: LogEntry }) {
   commitCtx.value = p;
 }
 
+// ---- AI Review 未推送提交（ahead>0 时工具栏出按钮）----
+const reviewBusy = ref(false);
+const reviewOpen = ref(false);
+const reviewText = ref("");
+const reviewErr = ref("");
+function aiConfigured(): boolean {
+  return !!(settings.aiBaseUrl.trim() && (settings.aiApiKey.trim() || settings.aiBaseUrl.includes("localhost")));
+}
+async function startReview() {
+  if (!aiConfigured()) {
+    // 未配置 → 直接引导到设置 AI 页
+    showSettingsTab.value = "ai";
+    showSettings.value = true;
+    return;
+  }
+  if (reviewBusy.value || !status.value?.ahead) return;
+  reviewOpen.value = true;
+  reviewBusy.value = true;
+  reviewText.value = "";
+  reviewErr.value = "";
+  try {
+    const d = await api.diffUnpushed(repo.value);
+    reviewText.value = await aiComplete(AI_PROMPTS.reviewUnpushed.system, clipForAI(d));
+  } catch (e) {
+    reviewErr.value = String(e).replace(/^Error: /, "");
+  } finally {
+    reviewBusy.value = false;
+  }
+}
+
 // ---- 分支树：本地 / 按远程前缀分组，可折叠 ----
 const collapsedGroups = ref(new Set<string>());
 function toggleGroup(g: string) {
   const next = new Set(collapsedGroups.value);
-  next.has(g) ? next.delete(g) : next.add(g);
+  if (next.has(g)) next.delete(g);
+  else next.add(g);
   collapsedGroups.value = next;
 }
 // 分支模糊搜索：过滤后建树（匹配叶子保留，祖先自动带上）
@@ -352,7 +386,8 @@ const remoteGroups = computed(() => {
 const openRemotes = ref(new Set<string>());
 function toggleRemote(p: string) {
   const next = new Set(openRemotes.value);
-  next.has(p) ? next.delete(p) : next.add(p);
+  if (next.has(p)) next.delete(p);
+  else next.add(p);
   openRemotes.value = next;
 }
 // 远程组内去掉远程前缀再建树，避免顶层重复出现 origin
@@ -544,6 +579,17 @@ onMounted(async () => {
         <Spinner v-if="runningAction === 'push'" :size="14" />
         <ArrowUpFromLine v-else class="size-3.5" />
         Push
+      </Button>
+      <Button
+        v-if="status?.ahead"
+        size="sm"
+        :disabled="busy || reviewBusy"
+        title="AI Review 未推送的提交"
+        @click="startReview"
+      >
+        <Spinner v-if="reviewBusy" :size="14" />
+        <Bot v-else class="size-3.5 text-primary" />
+        Review {{ status.ahead }}
       </Button>
       <Button
         variant="ghost"
@@ -787,7 +833,36 @@ onMounted(async () => {
     </div>
 
     <!-- 设置弹窗 -->
-    <SettingsModal v-if="showSettings" :repo="repo" @close="showSettings = false" />
+    <!-- AI Review 报告弹窗 -->
+    <div
+      v-if="reviewOpen"
+      class="fixed inset-0 z-30 flex items-center justify-center bg-black/50"
+      @click.self="reviewOpen = false"
+    >
+      <div class="flex max-h-[80vh] w-[640px] flex-col rounded-lg border border-border bg-card shadow-xl">
+        <header class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
+          <Bot class="size-4 text-primary" />
+          <span class="font-medium">AI Review · 未推送的 {{ status?.ahead }} 个提交</span>
+          <span class="flex-1" />
+          <Button variant="ghost" size="icon" @click="reviewOpen = false"><X class="size-4" /></Button>
+        </header>
+        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-[13px] leading-relaxed">
+          <Spinner v-if="reviewBusy" label="AI 正在审查未推送的变更…" />
+          <div v-else-if="reviewErr" class="text-destructive">{{ reviewErr }}</div>
+          <div v-else class="whitespace-pre-wrap">{{ reviewText }}</div>
+        </div>
+        <footer class="flex shrink-0 justify-end border-t border-border px-4 py-2.5">
+          <Button variant="secondary" size="sm" @click="reviewOpen = false">关闭</Button>
+        </footer>
+      </div>
+    </div>
+
+    <SettingsModal
+      v-if="showSettings"
+      :repo="repo"
+      :initial-tab="showSettingsTab"
+      @close="showSettings = false"
+    />
 
     <footer class="flex items-center gap-3 border-t border-border px-3 py-1 text-xs text-muted-foreground">
       <span>{{ status?.branch ?? "—" }}</span>

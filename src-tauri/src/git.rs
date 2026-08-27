@@ -230,14 +230,14 @@ pub async fn git_branches(repo: String) -> Result<Vec<Branch>, String> {
 // ---------- diff / fetch ----------
 
 #[tauri::command]
-pub async fn git_diff(repo: String, path: String, cached: bool) -> Result<String, String> {
+pub async fn git_diff(repo: String, paths: Vec<String>, cached: bool) -> Result<String, String> {
     offload(move || {
         let mut args = vec!["diff", "--no-color"];
         if cached {
             args.push("--cached");
         }
         args.push("--");
-        args.push(&path);
+        args.extend(paths.iter().map(|s| s.as_str()));
         run(&repo, &args)
     })
     .await
@@ -353,6 +353,13 @@ pub async fn git_revert(repo: String, hash: String) -> Result<(), String> {
         )
         .map(|_| ())
     })
+    .await
+}
+
+/// 未推送提交的合并 diff（upstream..HEAD）；ahead=0 时按钮不出现，无需处理无上游错误分支
+#[tauri::command]
+pub async fn git_diff_unpushed(repo: String) -> Result<String, String> {
+    offload(move || run(&repo, &["diff", "--no-color", "@{upstream}..HEAD"]))
     .await
 }
 

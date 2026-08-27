@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from "vue";
-import { X, ChevronDown, ChevronsDownUp, ChevronsUpDown } from "@lucide/vue";
+import { X, ChevronDown, ChevronsDownUp, ChevronsUpDown, Bot } from "@lucide/vue";
 import * as api from "../gitApi";
+import { AI_PROMPTS, aiComplete, clipForAI } from "../ai";
 import { Button, Spinner } from "@/components/ui";
 
 export interface DiffTarget {
@@ -37,7 +38,7 @@ onMounted(async () => {
       // 未跟踪文件没有 git diff，后端读文件内容合成“全新增”预览
       text.value = props.file.untracked
         ? await api.diffUntracked(props.repo, props.file.path)
-        : await api.diff(props.repo, props.file.path, props.file.cached);
+        : await api.diff(props.repo, [props.file.path], props.file.cached);
     }
   } catch (e) {
     err.value = String(e);
@@ -45,6 +46,27 @@ onMounted(async () => {
     loading.value = false;
   }
 });
+
+// AI 解释变更：直接消费已加载的 patch 文本
+const explainBusy = ref(false);
+const explainErr = ref("");
+const explainText = ref("");
+async function explain() {
+  if (explainBusy.value || !text.value.trim()) return;
+  explainBusy.value = true;
+  explainErr.value = "";
+  explainText.value = "";
+  try {
+    explainText.value = await aiComplete(
+      AI_PROMPTS.explainDiff.system,
+      clipForAI(text.value)
+    );
+  } catch (e) {
+    explainErr.value = String(e).replace(/^Error: /, "");
+  } finally {
+    explainBusy.value = false;
+  }
+}
 
 function onKey(e: KeyboardEvent) {
   if (e.key === "Escape") emit("close");
@@ -107,13 +129,14 @@ const sections = computed<Section[]>(() => {
 const collapsed = ref(new Set<string>());
 function toggle(file: string) {
   const next = new Set(collapsed.value);
-  next.has(file) ? next.delete(file) : next.add(file);
+  if (next.has(file)) next.delete(file);
+  else next.add(file);
   collapsed.value = next;
 }
 // 全部收起 ⇄ 全部展开，单按钮切换
 const allCollapsed = computed(() => sections.value.length > 0 && collapsed.value.size === sections.value.length);
 function toggleAll() {
-  allCollapsed.value ? (collapsed.value = new Set()) : (collapsed.value = new Set(sections.value.map((s) => s.file)));
+  collapsed.value = allCollapsed.value ? new Set() : new Set(sections.value.map((s) => s.file));
 }
 </script>
 
@@ -129,6 +152,10 @@ function toggleAll() {
           {{ commit ? `${commit.author} · ${commit.date}` : file?.cached ? "已暂存的变更" : "工作区变更" }}
         </span>
         <span class="flex-1" />
+        <Button variant="ghost" size="sm" title="AI 解释这段变更" :disabled="explainBusy" @click="explain">
+          <Spinner v-if="explainBusy" :size="14" />
+          <Bot v-else class="size-3.5 text-primary" />
+        </Button>
         <template v-if="sections.length > 1">
           <Button variant="ghost" size="sm" :title="allCollapsed ? '全部展开' : '全部收起'" @click="toggleAll">
             <ChevronsUpDown v-if="allCollapsed" class="size-3.5" />
@@ -168,6 +195,16 @@ function toggleAll() {
             >{{ l.text || " " }}</span></pre>
           </div>
         </template>
+      </div>
+
+      <!-- AI 解释面板 -->
+      <div
+        v-if="explainBusy || explainErr || explainText"
+        class="max-h-[35%] shrink-0 overflow-y-auto border-t border-border px-3 py-2"
+      >
+        <Spinner v-if="explainBusy" label="AI 分析中…" />
+        <div v-else-if="explainErr" class="text-[11px] text-destructive">{{ explainErr }}</div>
+        <div v-else class="whitespace-pre-wrap font-sans text-xs leading-relaxed">{{ explainText }}</div>
       </div>
     </div>
   </div>

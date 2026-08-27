@@ -38,8 +38,10 @@ export const log = (repo: string, skip?: number) =>
   invoke<LogEntry[]>("git_log", { repo, skip: skip ?? null });
 export const branches = (repo: string) =>
   invoke<Branch[]>("git_branches", { repo });
-export const diff = (repo: string, path: string, cached: boolean) =>
-  invoke<string>("git_diff", { repo, path, cached });
+export const diff = (repo: string, paths: string[], cached: boolean) =>
+  invoke<string>("git_diff", { repo, paths, cached });
+export const diffUnpushed = (repo: string) =>
+  invoke<string>("git_diff_unpushed", { repo });
 export const fetchAll = (repo: string) => invoke<void>("git_fetch", { repo });
 export const show = (repo: string, hash: string) =>
   invoke<string>("git_show", { repo, hash });

@@ -95,6 +95,12 @@ git_push 先普通 push，失败且 stderr 含 no upstream/no tracking informati
 `push -u origin <分支>`。分支名由前端从 status.branch 传入。Branch.upstream 为空串
 即"远程还没有这个分支"，状态栏据此常驻提示。
 
+### AI 生成提交信息遵循 git-commit-message 规范
+
+提示词已吸收 src/ai/skills/git-commit-message/SKILL.md：跟随仓库近期提交风格优先、
+否则 Conventional Commits、祈使语气无尾句号、跟随仓库主导语言、只基于 diff 不臆造。
+实现上 genCommitMsg 会把最近 10 条 subject 拼进 user prompt 作风格参考。
+
 ### WebView2 的 HTML5 拖拽（已弃用）
 
 HTML5 DnD 在 WebView2 里不可靠：补了 dataTransfer.setData 后 drop 仍时灵时不灵。

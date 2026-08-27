@@ -1,16 +1,23 @@
 <script setup lang="ts">
 import { reactive, ref, onMounted } from "vue";
-import { X, Palette, UserCog, Keyboard, User } from "@lucide/vue";
+import { X, Palette, UserCog, Keyboard, User, Bot } from "@lucide/vue";
 import { THEMES, settings, type Settings } from "../settings";
 import * as api from "../gitApi";
-import { Button, Input } from "@/components/ui";
+import { aiVerify } from "../ai";
+import { Button, Input, Spinner } from "@/components/ui";
 
-const props = defineProps<{ repo: string }>();
+const props = defineProps<{ repo: string; initialTab?: string }>();
 const emit = defineEmits<{ close: [] }>();
 
 // 草稿编辑，保存才写回（写回后 watcher 自动持久化+生效）
 const draft = reactive<Settings>({ ...settings });
-const tab = ref<"user" | "appearance" | "personal" | "shortcuts">("user");
+const tab = ref<"user" | "ai" | "appearance" | "personal" | "shortcuts">(
+  (props.initialTab as "user" | "ai" | "appearance" | "personal" | "shortcuts") || "user"
+);
+
+// AI 配置验通
+const verifying = ref(false);
+const verifyErr = ref("");
 
 // 用户信息是仓库级 git config，不属于应用设置，单独存取
 const userName = ref("");
@@ -26,7 +33,20 @@ onMounted(async () => {
   }
 });
 
-function save() {
+async function save() {
+  // AI 配了 Key 才验通；失败不关弹窗，展示错误
+  if (draft.aiBaseUrl.trim() && draft.aiApiKey.trim()) {
+    verifyErr.value = "";
+    verifying.value = true;
+    try {
+      await aiVerify(draft.aiBaseUrl, draft.aiApiKey);
+    } catch (e) {
+      verifyErr.value = String(e).replace(/^Error: /, "");
+      verifying.value = false;
+      return;
+    }
+    verifying.value = false;
+  }
   Object.assign(settings, draft);
   if (props.repo && (userName.value.trim() || userEmail.value.trim())) {
     api.configUser(props.repo, userName.value.trim(), userEmail.value.trim()).catch(() => {});
@@ -52,6 +72,7 @@ const SHORTCUTS: [string, string][] = [
 
 const NAV = [
   { id: "user", label: "用户信息", icon: User },
+  { id: "ai", label: "AI", icon: Bot },
   { id: "appearance", label: "外观", icon: Palette },
   { id: "personal", label: "个性化", icon: UserCog },
   { id: "shortcuts", label: "快捷键", icon: Keyboard },
@@ -102,6 +123,31 @@ const NAV = [
               </div>
               <p class="mt-2 text-[11px] text-muted-foreground">
                 保存到当前仓库的 git config（{{ props.repo || "未选择仓库" }}）
+              </p>
+            </section>
+          </template>
+
+          <!-- AI -->
+          <template v-else-if="tab === 'ai'">
+            <section>
+              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">AI 服务（OpenAI 兼容协议）</h3>
+              <div class="space-y-3">
+                <div class="flex items-center gap-3">
+                  <label class="w-16 shrink-0 text-xs text-muted-foreground">Base URL</label>
+                  <Input v-model="draft.aiBaseUrl" placeholder="https://api.openai.com/v1" />
+                </div>
+                <div class="flex items-center gap-3">
+                  <label class="w-16 shrink-0 text-xs text-muted-foreground">API Key</label>
+                  <Input v-model="draft.aiApiKey" type="password" placeholder="sk-…（本地 Ollama 可留空）" />
+                </div>
+                <div class="flex items-center gap-3">
+                  <label class="w-16 shrink-0 text-xs text-muted-foreground">模型</label>
+                  <Input v-model="draft.aiModel" placeholder="gpt-4o-mini / deepseek-chat / qwen2.5 …" />
+                </div>
+              </div>
+              <p class="mt-2 text-[11px] text-muted-foreground">
+                兼容 OpenAI/DeepSeek/Kimi 等任意兼容服务；本地 Ollama 填
+                http://localhost:11434/v1 且 Key 留空。Key 存本机 localStorage，不会上传。
               </p>
             </section>
           </template>
@@ -173,9 +219,13 @@ const NAV = [
         </div>
 
         <!-- 底部操作条 -->
-        <footer class="flex shrink-0 justify-end gap-2 border-t border-border px-4 py-2.5">
-          <Button variant="ghost" size="sm" @click="emit('close')">取消</Button>
-          <Button variant="default" size="sm" @click="save">保存</Button>
+        <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-2.5">
+          <span v-if="verifyErr" class="mr-auto text-[11px] text-destructive">{{ verifyErr }}</span>
+          <Button variant="ghost" size="sm" :disabled="verifying" @click="emit('close')">取消</Button>
+          <Button variant="default" size="sm" :disabled="verifying" @click="save">
+            <Spinner v-if="verifying" :size="14" />
+            {{ verifying ? "验通中…" : "保存" }}
+          </Button>
         </footer>
       </div>
     </div>

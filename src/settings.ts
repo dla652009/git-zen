@@ -6,6 +6,9 @@ export interface Settings {
   fontFamily: string;
   fontSize: number;
   branchPrefix: string;
+  aiBaseUrl: string; // OpenAI 兼容入口，如 https://api.openai.com/v1 或 http://localhost:11434/v1
+  aiApiKey: string;
+  aiModel: string;
 }
 
 export const THEMES = [
@@ -26,6 +29,9 @@ const DEFAULTS: Settings = {
   fontFamily: '"Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif',
   fontSize: 13,
   branchPrefix: "",
+  aiBaseUrl: "https://api.openai.com/v1",
+  aiApiKey: "",
+  aiModel: "gpt-4o-mini",
 };
 
 function load(): Settings {

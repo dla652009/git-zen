@@ -38,13 +38,13 @@
 - [x] **启动/打开仓库后台 fetch 一次**：静默刷 ahead/behind，失败不打扰
 - [x] **rename 显示**：porcelain `old -> new` 拆成删除线+箭头样式
 
-## M4.1 日常可用 - 补充（已完成）
+### M4.1 日常可用 - 补充（已完成）
 
 - [x] **commit 级 diff**：点历史行弹窗看整个 commit 的 patch（多文件，文件名分段标题）；后端 `git_show(repo, hash)`，hash 做了十六进制校验
 - [x] **分支双击切换**：本地/远程分支都改为双击触发，hover 提示已更新
 - [x] **滚动自动加载**：历史区滚到底部距底 60px 自动拉下一页（loading 防抖防重复触发），按钮已移除
 
-## M4.2 日常可用 - 实用内容（已完成）
+### M4.2 日常可用 - 实用内容（已完成）
 
 - [x] **仓库选项卡**：工具栏下方标签行，持久化所有导入过的仓库；单击切换、双击重命名、X 关闭、拖动排序
 - [x] **本地分支删除/重命名**：叶子 hover 出 GitMerge/Pencil/Trash2 图标；删除走确认框且用 `-d` 安全删（未合并会拒绝）；重命名行内编辑回车保存
@@ -54,7 +54,7 @@
 - [x] **侧边栏拖宽**：两侧把手拖拽调整宽度（左 140-420 / 右 240-520），localStorage 持久化
 - [x] **Spinner**：新增 `ui/Spinner.vue`（lucide LoaderCircle + animate-spin），历史区遮罩与 diff 弹窗加载态已换用，后续 loading 统一用它
 
-## M4.3 日常可用 - 实用内容2（已完成）
+### M4.3 日常可用 - 实用内容2（已完成）
 
 - [x] **合并当前分支到某分支**：本地非当前分支 hover 出 GitPullRequestArrow 图标；流程=切到目标→merge 当前→成功切回，冲突则停在目标待解决（确认框写明流程）
 - [x] **选项卡拖动换库**：改用 vue-draggable-plus（SortableJS），150ms 动画，v-model 自动同步排序；自研鼠标拖拽方案已移除
@@ -74,29 +74,28 @@
 - [x] **历史区右键菜单**：复制 hash / checkout 该提交（detached HEAD 确认）/ revert（反向提交确认）
 - [x] **窗口标题徽标**：有未推送提交时窗口标题显示 `(↑N) git-zen`
 
-## M6 AI 拓展
+## M6 AI 拓展（已完成）
 
 架构前提（先做，后面的功能全靠它）：
 
-### M6.1 基础设施
+### M6.1 基础设施（已完成）
 
-- [ ] 接入 `tauri-plugin-http`：让前端 fetch 能跨域调 AI API（capabilities 里放开 `https:*`）；
-      不在 Rust 侧自研 HTTP client，业务逻辑全部留在 TS
-- [ ] 设置新增「AI」页：Base URL（默认 `https://api.openai.com/v1`）/ API Key / Model 三字段，
-      OpenAI 兼容协议（OpenAI/DeepSeek/Kimi/Groq/本地 Ollama 通吃）；
-      Key 存 localStorage（桌面单机可接受，页面注明风险）；保存前用一次轻量请求验通
-- [ ] 通用封装 `aiComplete(system, userPrompt)`：统一错误映射（401→Key 无效 / 429→限频 /
-      超时→网络不通）、diff 超长自动截断（~16KB）、二进制段剔除；所有 AI 功能只许调它
+- [x] **tauri-plugin-http 接入**：capabilities 放行 `https://**` 与 `http://**`（兼容本地 Ollama）；
+      业务逻辑全部在前端 TS，Rust 零新增 HTTP 代码
+- [x] **设置「AI」页**（Bot 图标）：Base URL / API Key / Model 三字段；配了 Key 时保存前用 `/models`
+      轻量请求验通，失败不关弹窗展示原因；页面上注明 Key 仅存本机 localStorage
+- [x] **通用封装 `src/ai.ts`**：aiComplete() 30s 超时竞态、HTTP 状态→人话映射（401/403/404/429/5xx）、
+      clipForAI() 截断 16KB 并标注原文长度；提示词集中在 AI_PROMPTS，功能只许走这里
 
-### M6.2 功能点（全部只读：仅消费 diff/log 文本，不写工作区）
+### M6.2 功能点（已完成，全部只读：仅消费 diff/log 文本，不写工作区）
 
-- [ ] **AI 生成提交信息**：提交框旁 Sparkles 按钮，取暂存区 diff 生成「≤50 字主题 + 可选正文」，
-      写入输入框供人工修改后再提交（不自动提交）
-- [ ] **AI 解释变更**：DiffViewer 头部按钮，对当前文件/commit patch 输出中文要点解读，
-      结果以折叠面板内嵌在弹窗底部
-- [ ] **AI Review 未推送提交**：ahead > 0 时工具栏出现按钮，把未推送范围的 diff 交给模型，
-      按「问题/风险/建议」分节输出报告弹窗
-- [ ] 以上三处入口在未配置 AI 时点击 → 自动打开设置的 AI 页引导配置
+- [x] **AI 生成提交信息**：提交框右上 Sparkles 按钮（无暂存时禁用），暂存区多文件合并 diff →
+      ≤50 字主题+要点正文写入输入框供人工修改后再提交；错误显示在提交框下方
+- [x] **AI 解释变更**：DiffViewer 头部 Bot 按钮，对当前文件/commit patch 输出中文要点解读，
+      结果面板内嵌弹窗底部（35% 高度上限独立滚动）
+- [x] **AI Review 未推送提交**：ahead > 0 时工具栏出现「Review N」按钮；后端新命令
+      `git_diff_unpushed`（`@{upstream}..HEAD`）；报告弹窗按【问题/风险/建议】分节输出
+- [x] **未配置引导**：三个入口在 aiConfigured() 为 false 时点击 → 自动打开设置并定位到 AI 页
 
 ### 明确不做（AI 相关 YAGNI）
 

@@ -1,9 +1,19 @@
 <script setup lang="ts">
 import { ref, computed, type Component } from "vue";
-import { Plus, Undo2, FilePlus, FilePen, FileMinus, FileQuestion, FileSymlink } from "@lucide/vue";
+import {
+  Plus,
+  Undo2,
+  FilePlus,
+  FilePen,
+  FileMinus,
+  FileQuestion,
+  FileSymlink,
+  Sparkles,
+} from "@lucide/vue";
 import * as api from "../gitApi";
 import type { Status, StatusFile } from "../gitApi";
 import type { DiffTarget } from "./DiffViewer.vue";
+import { AI_PROMPTS, aiComplete, clipForAI } from "../ai";
 import { Button, Textarea, Tooltip, Spinner } from "@/components/ui";
 
 const props = defineProps<{
@@ -66,6 +76,37 @@ function doCommit() {
     await api.commit(props.repo, message.value);
     message.value = "";
   });
+}
+
+// ---- AI 生成提交信息：暂存区 diff → 提交框，人工可改后再提交（不自动提交）----
+const aiBusy = ref(false);
+const aiErr = ref("");
+async function genCommitMsg() {
+  if (aiBusy.value) return;
+  if (!staged.value.length) {
+    aiErr.value = "先暂存文件，AI 才有 diff 可读";
+    return;
+  }
+  aiBusy.value = true;
+  aiErr.value = "";
+  try {
+    const d = await api.diff(
+      props.repo,
+      staged.value.map((f) => f.path.split(" -> ").pop()!),
+      true
+    );
+    // 取最近提交推断本仓库的信息风格（SKILL.md：优先跟随既有惯例）
+    const recentLog = (await api.log(props.repo))
+      .slice(0, 10)
+      .map((c) => c.subject)
+      .join("\n");
+    const user = `【仓库近期提交风格】\n${recentLog || "（无历史提交）"}\n\n【暂存区 diff】\n${clipForAI(d)}`;
+    message.value = await aiComplete(AI_PROMPTS.commitMessage.system, user);
+  } catch (e) {
+    aiErr.value = String(e).replace(/^Error: /, "");
+  } finally {
+    aiBusy.value = false;
+  }
 }
 </script>
 
@@ -169,12 +210,27 @@ function doCommit() {
 
     <!-- 提交区：固定底部卡片 -->
     <div class="shrink-0 space-y-2 border-t border-border bg-card/60 p-3">
-      <Textarea
-        v-model="message"
-        rows="4"
-        placeholder="提交信息…  Ctrl+⏎ 提交"
-        @keydown.ctrl.enter="canCommit && doCommit()"
-      />
+      <div class="relative">
+        <Textarea
+          v-model="message"
+          rows="4"
+          placeholder="提交信息…  Ctrl+⏎ 提交"
+          @keydown.ctrl.enter="canCommit && doCommit()"
+        />
+        <Tooltip text="AI 根据暂存区变更生成提交信息">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="absolute top-1.5 right-1.5 h-6 w-6"
+            :disabled="aiBusy || !staged.length || busy"
+            @click="genCommitMsg"
+          >
+            <Spinner v-if="aiBusy" :size="13" />
+            <Sparkles v-else class="size-3.5 text-primary" />
+          </Button>
+        </Tooltip>
+      </div>
+      <div v-if="aiErr" class="text-[11px] leading-relaxed text-destructive">{{ aiErr }}</div>
       <Button variant="default" class="w-full" :disabled="!canCommit" @click="doCommit">
         <Spinner v-if="busy" :size="14" />
         {{ busy ? "处理中…" : `提交${staged.length ? ` (${staged.length})` : ""}` }}
