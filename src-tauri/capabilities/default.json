@@ -7,6 +7,10 @@
     "core:default",
     "dialog:default",
     {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://**" }, { "url": "http://**" }]
+    },
+    {
       "identifier": "http:default",
       "allow": [{ "url": "https://**" }, { "url": "http://**" }]
     }

@@ -34,14 +34,28 @@ export interface Branch {
 import { invoke } from "@tauri-apps/api/core";
 
 export const status = (repo: string) => invoke<Status>("git_status", { repo });
-export const log = (repo: string, skip?: number) =>
-  invoke<LogEntry[]>("git_log", { repo, skip: skip ?? null });
+export const log = (
+  repo: string,
+  skip?: number,
+  all?: boolean,
+  filePath?: string,
+) =>
+  invoke<LogEntry[]>("git_log", {
+    repo,
+    skip: skip ?? null,
+    all: all ?? null,
+    filePath: filePath ?? null,
+  });
+export const remoteUrl = (repo: string) =>
+  invoke<string>("git_remote_url", { repo });
 export const branches = (repo: string) =>
   invoke<Branch[]>("git_branches", { repo });
 export const diff = (repo: string, paths: string[], cached: boolean) =>
   invoke<string>("git_diff", { repo, paths, cached });
 export const diffUnpushed = (repo: string) =>
   invoke<string>("git_diff_unpushed", { repo });
+export const showFile = (repo: string, hash: string, path: string) =>
+  invoke<string>("git_show_file", { repo, hash, path });
 export const fetchAll = (repo: string) => invoke<void>("git_fetch", { repo });
 export const show = (repo: string, hash: string) =>
   invoke<string>("git_show", { repo, hash });

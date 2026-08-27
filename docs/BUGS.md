@@ -27,6 +27,8 @@
 - [x] 功能开关置顶 + Switch 组件 + 关闭时隐藏按钮 → 新增 ui/Switch.vue（shadcn 风格滑块）；
       AI 页顶部独立卡片放开关，关闭时下方配置项变灰禁用；
       关闭时隐藏 Sparkles/Bot/Review 三个入口（不再是点击后提示）
+- [x] 新增远程 tab → 设置导航新增「远程」（Globe 图标）；「仓库网页链接」从个性化移入并更名
+      「远程仓库路径」，默认填充 origin URL（与 origin 相同保存时视为自动推断）
 
 ## 分支区（左侧栏）
 
@@ -36,6 +38,7 @@
 - [x] 本地分支 ahead/behind 展示 → 后端 `%(upstream:track)` 解析，分支名旁 ↑N（蓝）↓M（黄）小字。首版解析器没剥 `[ahead 1]` 的方括号导致永远为 0，已实测修复
 - [x] 合并到该分支后不切回 → 流程改为：切到目标 → merge 当前 → 留在目标分支；确认框文案同步
 - [x] 远程分支删除 → 远程叶子 hover 出删除图标（仅删除，无重命名/合并），确认后 `push origin --delete <分支>`；新后端命令 `git_push_delete`。本地分支的删/改名/合并操作不变
+- [ ] 展开/收起本地的折叠分支（dla/xxx）,origin 的会同步展开/收起。需要独立控制
 
 ## commit 历史区（中间）
 
@@ -59,6 +62,14 @@
 - [x] 提交草稿按仓库隔离 → message 改为 Map<repo, 草稿> 的 computed 读写，切选项卡互不串；提交成功清空对应仓库的草稿。
       **后续回归**：普通 Map 在 computed setter 里写入不触发响应式失效，导致 AI 生成结果不渲染（无报错无结果）。
       已改 reactive(new Map()) 修复——computed setter 背后的存储必须响应式
+- [x] 提交并推送改勾选框 → 移除推送小按钮，提交区新增「提交后推送到远程」勾选框（默认不勾）；
+      一切由提交按钮控制：勾选=提交并推送（无上游自动 -u），未勾选=仅提交
+- [x] 文件历史改双栏弹窗报 `--follow requires exactly one pathspec` → **根因：参数顺序**——
+      `--pretty=format:...` 被放在了 `-- path` 之后，git 把它当第二个 pathspec。已把 --pretty 挪到 `--` 之前，
+      并在临时仓库实测（含重命名追踪 --follow 正常）。已移除"进入历史区文件模式"（顶栏 chip 已删），右键改为「查看文件变更历史」：
+      新组件 FileHistoryModal 双栏展示——左侧该文件提交列表（--follow 追踪重命名），
+      右侧选中提交中此文件的 +/- 着色 diff（新后端命令 git_show_file）；
+      解析逻辑抽为 lib/patch.ts 供 DiffViewer 体系复用
 
 ## 仓库选项卡
 

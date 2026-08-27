@@ -54,6 +54,7 @@ git-zen 的对策：
 │  stage / unstage / commit / push / pull / checkout │
 │  branch_create / branch_delete(-d/-D) / rename / merge│
 │  push_delete(远程删支) / get_user / config_user        │
+│  remote_url / write_file / diff_unpushed / ai_stream  │
 │  discard(丢弃) / revert                               │
 └──────────────────────────────────────────────────┘
 ```

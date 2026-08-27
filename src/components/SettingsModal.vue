@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref, onMounted } from "vue";
-import { X, Palette, UserCog, Keyboard, User, Bot, Plus } from "@lucide/vue";
+import { X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe } from "@lucide/vue";
 import { THEMES, settings, type Settings } from "../settings";
 import * as api from "../gitApi";
 import { aiVerify } from "../ai";
@@ -11,7 +11,7 @@ const emit = defineEmits<{ close: [] }>();
 
 // 草稿编辑，保存才写回（写回后 watcher 自动持久化+生效）
 const draft = reactive<Settings>({ ...settings });
-const tab = ref<"user" | "ai" | "appearance" | "personal" | "shortcuts">(
+const tab = ref<"user" | "ai" | "appearance" | "personal" | "remote" | "shortcuts">(
   (props.initialTab as "user" | "ai" | "appearance" | "personal" | "shortcuts") || "user"
 );
 
@@ -19,10 +19,25 @@ const tab = ref<"user" | "ai" | "appearance" | "personal" | "shortcuts">(
 const verifying = ref(false);
 const verifyErr = ref("");
 
+// 仓库网页链接：按仓库存 localStorage（gz.remoteLinks），留空自动推断
+const remoteLink = ref("");
+const originUrl = ref("");
+
 // 用户信息是仓库级 git config，不属于应用设置，单独存取
 const userName = ref("");
 const userEmail = ref("");
 onMounted(async () => {
+  const custom =
+    (JSON.parse(localStorage.getItem("gz.remoteLinks") ?? "{}") as Record<string, string>)[props.repo] ?? "";
+  if (props.repo) {
+    try {
+      originUrl.value = await api.remoteUrl(props.repo);
+    } catch {
+      /* 无远程时静默 */
+    }
+  }
+  // 默认填充 origin URL；用户改过则显示自定义值
+  remoteLink.value = custom || originUrl.value;
   if (!props.repo) return;
   try {
     const [n, e] = await api.getUser(props.repo);
@@ -50,6 +65,16 @@ async function save() {
   Object.assign(settings, draft);
   if (props.repo && (userName.value.trim() || userEmail.value.trim())) {
     api.configUser(props.repo, userName.value.trim(), userEmail.value.trim()).catch(() => {});
+  }
+  // 仓库链接写回 per-repo map
+  const links = JSON.parse(localStorage.getItem("gz.remoteLinks") ?? "{}") as Record<string, string>;
+  const link = remoteLink.value.trim();
+  if (props.repo) {
+    // 与 origin 相同 → 视为自动推断（存空）
+    if (link && link !== originUrl.value) links[props.repo] = link;
+    else delete links[props.repo];
+    localStorage.setItem("gz.remoteLinks", JSON.stringify(links));
+    remoteLink.value = link;
   }
   emit("close");
 }
@@ -117,6 +142,7 @@ const NAV = [
   { id: "ai", label: "AI", icon: Bot },
   { id: "appearance", label: "外观", icon: Palette },
   { id: "personal", label: "个性化", icon: UserCog },
+  { id: "remote", label: "远程", icon: Globe },
   { id: "shortcuts", label: "快捷键", icon: Keyboard },
 ] as const;
 </script>
@@ -274,6 +300,19 @@ const NAV = [
               </div>
               <p class="mt-2 text-[11px] text-muted-foreground">
                 新建分支弹窗的前缀下拉会同步这里；名字已含前缀时不重复加。
+              </p>
+            </section>
+
+          </template>
+
+          <!-- 远程 -->
+          <template v-else-if="tab === 'remote'">
+            <section>
+              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">远程仓库路径</h3>
+              <Input v-model="remoteLink" :placeholder="originUrl || '未配置 origin 远程'" />
+              <p class="mt-2 text-[11px] text-muted-foreground">
+                默认填充 origin URL（{{ originUrl || "未配置" }}），可改为任意网页链接；
+                主页状态栏「远程」按钮会打开它。清空保存则恢复自动推断。
               </p>
             </section>
           </template>

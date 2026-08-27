@@ -134,15 +134,30 @@ pub struct LogEntry {
 }
 
 #[tauri::command]
-pub async fn git_log(repo: String, skip: Option<u32>) -> Result<Vec<LogEntry>, String> {
+pub async fn git_log(
+    repo: String,
+    skip: Option<u32>,
+    all: Option<bool>,
+    file_path: Option<String>,
+) -> Result<Vec<LogEntry>, String> {
     offload(move || {
-        let args = [
+        let mut args = vec![
             "log".to_string(),
             format!("--skip={}", skip.unwrap_or(0)),
             "--max-count=300".to_string(),
             "--date=relative".to_string(),
+            // --pretty 必须在 -- pathspec 之前，否则会被当成第二个路径（--follow 报 exactly one pathspec）
             "--pretty=format:%H%x1f%P%x1f%s%x1f%an%x1f%ad%x1f%D".to_string(),
         ];
+        if all.unwrap_or(false) {
+            args.push("--all".to_string());
+        }
+        if let Some(fp) = file_path {
+            // --follow 追踪重命名前的历史；与 --all 互斥（文件历史固定当前分支）
+            args.push("--follow".to_string());
+            args.push("--".to_string());
+            args.push(fp);
+        }
         let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
         let out = match run(&repo, &arg_refs) {
             Ok(o) => o,
@@ -374,6 +389,18 @@ pub async fn git_diff_unpushed(repo: String) -> Result<String, String> {
     .await
 }
 
+/// origin 远程的 URL（无远程返回空串）；前端据此推断网页链接
+#[tauri::command]
+pub async fn git_remote_url(repo: String) -> Result<String, String> {
+    offload(move || {
+        Ok(run(&repo, &["remote", "get-url", "origin"])
+            .unwrap_or_default()
+            .trim()
+            .to_string())
+    })
+    .await
+}
+
 // ---------- actions ----------
 
 #[tauri::command]
@@ -486,6 +513,18 @@ pub async fn git_push_delete(repo: String, remote: String, name: String) -> Resu
             return Err("远程名和分支名不能为空".into());
         }
         run(&repo, &["push", &remote, "--delete", &name]).map(|_| ())
+    })
+    .await
+}
+
+/// 单个 commit 中单个文件的 patch（文件历史弹窗右侧用）
+#[tauri::command]
+pub async fn git_show_file(repo: String, hash: String, path: String) -> Result<String, String> {
+    offload(move || {
+        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err("非法的 commit hash".into());
+        }
+        run(&repo, &["show", "--no-color", "--format=", &hash, "--", &path])
     })
     .await
 }

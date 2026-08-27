@@ -9,6 +9,7 @@ import {
   FileQuestion,
   FileSymlink,
   Sparkles,
+  History,
 } from "@lucide/vue";
 import * as api from "../gitApi";
 import type { Status, StatusFile } from "../gitApi";
@@ -28,10 +29,11 @@ const emit = defineEmits<{
   action: [fn: () => Promise<unknown>];
   openDiff: [target: DiffTarget];
   discard: [target: DiffTarget]; // 右键丢弃更改（App 侧二次确认）
+  fileHistory: [path: string]; // 右键查看该文件历史
 }>();
 
 // 未暂存文件右键菜单
-const fileCtx = ref<{ x: number; y: number; f: StatusFile } | null>(null);
+const fileCtx = ref<{ x: number; y: number; f: StatusFile; cached: boolean } | null>(null);
 
 // 提交信息草稿按仓库隔离（切选项卡互不串）。
 // 注意必须是 reactive Map：computed setter 写入才能触发响应式失效，否则 AI 生成结果不会渲染
@@ -78,10 +80,14 @@ const canCommit = computed(
   () => !props.busy && staged.value.length > 0 && message.value.trim().length > 0
 );
 
+// 勾选「提交后推送到远程」时，提交完自动 push（无上游自动 -u）
+const pushAfterCommit = ref(false);
+
 function doCommit() {
   emit("action", async () => {
     await api.commit(props.repo, message.value);
     message.value = "";
+    if (pushAfterCommit.value) await api.push(props.repo, props.status?.branch ?? "");
   });
 }
 
@@ -146,6 +152,7 @@ async function genCommitMsg() {
         :key="'s' + f.path"
         class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 whitespace-nowrap hover:bg-muted"
         @dblclick="emit('openDiff', { path: f.path.split(' -> ').pop()!, cached: true, untracked: false })"
+        @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: true }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
         <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（双击查看变更）`">
@@ -186,7 +193,7 @@ async function genCommitMsg() {
         :key="'u' + f.path"
         class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 whitespace-nowrap hover:bg-muted"
         @dblclick="emit('openDiff', { path: f.path, cached: false, untracked: f.x === '?' })"
-        @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f }"
+        @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: false }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
         <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（双击查看变更）`">
@@ -208,6 +215,19 @@ async function genCommitMsg() {
         :style="{ left: fileCtx.x + 'px', top: fileCtx.y + 'px' }"
       >
         <button
+          class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs hover:bg-muted"
+          @click.stop="
+            () => {
+              const p = fileCtx!.f.path.split(' -> ').pop()!;
+              fileCtx = null;
+              emit('fileHistory', p);
+            }
+          "
+        >
+          查看文件变更历史
+        </button>
+        <button
+          v-if="!fileCtx!.cached"
           class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs text-destructive hover:bg-muted"
           @click.stop="
             () => {
@@ -217,7 +237,7 @@ async function genCommitMsg() {
             }
           "
         >
-          {{ fileCtx.f.x === "?" ? "删除文件" : "丢弃更改（不可恢复）" }}
+          {{ fileCtx.f.x === '?' ? '删除文件' : '丢弃更改（不可恢复）' }}
         </button>
       </div>
     </div>
@@ -246,6 +266,10 @@ async function genCommitMsg() {
         </Tooltip>
       </div>
       <div v-if="aiErr" class="text-[11px] leading-relaxed text-destructive">{{ aiErr }}</div>
+      <label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+        <input v-model="pushAfterCommit" type="checkbox" class="accent-[var(--primary)]" />
+        提交后推送到远程
+      </label>
       <Button variant="default" class="w-full" :disabled="!canCommit" @click="doCommit">
         <Spinner v-if="busy" :size="14" />
         {{ busy ? "处理中…" : `提交${staged.length ? ` (${staged.length})` : ""}` }}

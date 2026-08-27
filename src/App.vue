@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, watch, nextTick } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   FolderOpen,
   RefreshCw,
@@ -15,6 +16,7 @@ import {
   Cloud,
   X,
   Bot,
+  ExternalLink,
 } from "@lucide/vue";
 import * as api from "./gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, aiCacheDelete } from "./ai";
@@ -27,6 +29,7 @@ import ChangesPanel from "./components/ChangesPanel.vue";
 import DiffViewer from "./components/DiffViewer.vue";
 import type { DiffTarget, CommitTarget } from "./components/DiffViewer.vue";
 import SettingsModal from "./components/SettingsModal.vue";
+import FileHistoryModal from "./components/FileHistoryModal.vue";
 import BranchTree from "./components/BranchTree.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { buildNodes } from "./branchTree";
@@ -99,12 +102,26 @@ function cachePut(path: string, data: RepoCache) {
   }
 }
 
+// 历史视图范围：当前分支 / 所有分支
+const historyMode = ref<"current" | "all">("current");
+// 文件变更历史弹窗（单文件 --follow）
+const fileHistoryModal = ref<string | null>(null);
+const remoteRaw = ref(""); // origin 的 URL（git remote get-url）
+const remoteLink = ref(""); // 用户在设置里自定义的网页链接（留空自动推断）
+
+// 统一的历史拉取入口：带上 视图范围（--all）与文件历史（--follow -- path）
+function fetchLog(skip = 0) {
+  return api.log(repo.value, skip, historyMode.value === "all" ? true : undefined);
+}
+
 async function refresh() {
   if (!repo.value) return;
+  remoteLink.value =
+    (JSON.parse(localStorage.getItem("gz.remoteLinks") ?? "{}") as Record<string, string>)[repo.value] ?? "";
   try {
     const [s, l, b] = await Promise.all([
       api.status(repo.value),
-      api.log(repo.value),
+      fetchLog(0),
       api.branches(repo.value),
     ]);
     status.value = s;
@@ -131,7 +148,7 @@ async function loadMorePage() {
   if (!repo.value || !canLoadMore.value || filter.value || loadingMore.value) return;
   loadingMore.value = true;
   try {
-    const next = await api.log(repo.value, commits.value.length);
+    const next = await fetchLog(commits.value.length);
     commits.value.push(...next);
     canLoadMore.value = next.length >= 300;
   } catch (e) {
@@ -153,6 +170,39 @@ function fetchOnce() {
   api.fetchAll(repo.value)
     .then(() => api.branches(repo.value))
     .catch(() => {});
+  api.remoteUrl(repo.value)
+    .then((u) => (remoteRaw.value = u))
+    .catch(() => {});
+}
+
+// 视图范围 / 文件历史变化 → 重载当前历史（两段式：遮罩先盖）
+watch(historyMode, () => {
+  if (!repo.value) return;
+  historyLoading.value = true;
+  nextTick().then(async () => {
+    try {
+      const l = await fetchLog(0);
+      commits.value = l;
+      canLoadMore.value = l.length >= 300;
+    } finally {
+      historyLoading.value = false;
+    }
+  });
+});
+
+// 远程网页链接：自定义优先，否则从 origin URL 推断（git@host:path → https://host/path）
+const remoteWebUrl = computed(() => {
+  const link = remoteLink.value.trim();
+  if (link) return link;
+  const u = remoteRaw.value;
+  if (!u) return "";
+  let m = u.match(/^git@([^:]+):(.+?)(?:\.git)?$/);
+  if (m) return `https://${m[1]}/${m[2]}`;
+  m = u.match(/^(https?:\/\/\S+?)(?:\.git)?$/);
+  return m ? m[1] : "";
+});
+function openRemote() {
+  if (remoteWebUrl.value) openUrl(remoteWebUrl.value).catch(() => {});
 }
 
 const runningAction = ref("");
@@ -218,6 +268,9 @@ async function activate(path: string) {
   commits.value = [];
   branchList.value = [];
   canLoadMore.value = false;
+  fileHistoryModal.value = null;
+  remoteRaw.value = "";
+  remoteLink.value = "";
 
   // LRU 命中：秒开缓存快照，后台静默刷新轻量数据
   const cached = cacheGet(path);
@@ -244,7 +297,7 @@ async function activate(path: string) {
     commits.value = [];
     canLoadMore.value = false;
     await nextTick();
-    const l = await api.log(path);
+    const l = await fetchLog(0);
     if (seq !== activateSeq) return;
     commits.value = l;
     canLoadMore.value = l.length >= 300;
@@ -764,9 +817,20 @@ onMounted(async () => {
 
       <!-- 历史 -->
       <section class="flex min-w-0 flex-1 flex-col">
-        <div class="relative border-b border-border px-2 py-1.5">
-          <Search class="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <Input v-model="filter" placeholder="搜索提交信息 / 作者…" class="h-7 pl-8 text-xs" />
+        <div class="flex items-center gap-2 border-b border-border px-2 py-1.5">
+          <!-- 视图范围：当前分支 / 所有分支 -->
+          <Select
+            v-model="historyMode"
+            class="h-7 w-24 shrink-0 text-xs"
+            :options="[
+              { value: 'current', label: '当前分支' },
+              { value: 'all', label: '所有分支' },
+            ]"
+          />
+          <div class="relative min-w-0 flex-1">
+            <Search class="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input v-model="filter" placeholder="搜索提交信息 / 作者…" class="h-7 pl-8 text-xs" />
+          </div>
         </div>
         <div class="relative min-h-0 flex-1 overflow-y-auto" @scroll="onHistoryScroll">
           <!-- 切换分支时的 loading 遮罩 -->
@@ -808,6 +872,7 @@ onMounted(async () => {
           :busy="busy"
           @action="(fn: () => Promise<unknown>) => run(fn)"
           @open-diff="(t: DiffTarget) => (diffState = { kind: 'file', target: t })"
+          @file-history="(p: string) => (fileHistoryModal = p)"
           @discard="(t: DiffTarget) =>
             openConfirm({
               title: t.untracked ? '删除未跟踪文件' : '丢弃更改',
@@ -892,6 +957,14 @@ onMounted(async () => {
     </div>
 
     <!-- 设置弹窗 -->
+    <!-- 文件变更历史弹窗（左提交列表 / 右文件diff） -->
+    <FileHistoryModal
+      v-if="fileHistoryModal"
+      :repo="repo"
+      :path="fileHistoryModal"
+      @close="fileHistoryModal = null"
+    />
+
     <!-- AI Review 报告弹窗 -->
     <div
       v-if="reviewOpen"
@@ -932,6 +1005,17 @@ onMounted(async () => {
       <span>{{ status?.branch ?? "—" }}</span>
       <span class="flex-1" />
       <span v-if="status">{{ status.files.length }} 个变更文件</span>
+      <Button
+        v-if="remoteWebUrl"
+        variant="ghost"
+        size="sm"
+        class="h-5 gap-1 px-1.5 text-[11px]"
+        :title="`打开远程仓库网页：${remoteWebUrl}`"
+        @click="openRemote"
+      >
+        <ExternalLink class="size-3" />
+        远程
+      </Button>
       <Badge v-if="currentBranchNoUpstream" variant="warning" class="cursor-default">
         当前分支尚未推送到远程
       </Badge>

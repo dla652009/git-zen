@@ -104,20 +104,55 @@
 - [x] **AI 功能开关**：设置 AI 页「功能开关」下拉（开启/关闭，默认开启），存 `aiEnabled`；
       关闭时三个 AI 入口分别提示/引导设置，`aiConfigured()` 一并校验
 - [-] ~~流式打字机输出~~（已取消：部分模型/中转不支持 SSE 流式，非流式兼容性最好；
-      ai_stream/aiStream 及 reqwest、futures-util 依赖已全部回退，Spinner 非流式方案保留）
+  ai_stream/aiStream 及 reqwest、futures-util 依赖已全部回退，Spinner 非流式方案保留）
+
+## M7 功能拓展
+
+### 7.1（已完成）
+
+- [x] **提交并推送**：提交按钮右侧附加推送按钮（ArrowUpFromLine），一次完成提交+推送；
+      复用 git_push 的无上游自动 `-u`，填写了 AI 信息或手写均可
+- [x] **远程链接配置 + 打开**：设置-个性化新增「仓库网页链接」（按仓库存 localStorage，留空自动从
+      origin URL 推断——支持 git@host:path 与 https 两种形式）；状态栏新增「远程」按钮
+      （ExternalLink 图标），点击经 tauri-plugin-opener 在浏览器打开
+- [x] **历史视图范围切换**：搜索框左侧下拉「当前分支 / 所有分支」（ui/Select）；
+      后端 git_log 加 `--all` 参数；切换走遮罩两段式重载，滚动分页同样生效
+- [x] **单文件历史视图**：文件右键 →「查看文件历史」（暂存区/未暂存都支持，rename 取新路径）；
+      后端 git_log 加 `--follow -- path`；历史区顶部显示文件 chip（显示短名 + × 退出），
+      与视图范围切换互斥（文件历史固定当前分支）
 
 ## 需求池（无需关注，后面排期）
 
-来自 M5 的存量：
+### Git 核心补全
 
+- tag 管理：列表/创建/删除/推送 tag（目前完全没有 tag 支持，是最明显的缺口）
 - stash 列表/弹出/恢复
 - amend 上次提交 / 撤销上次提交（reset --soft HEAD~1）
-- rebase / cherry-pick（交互复杂度高，终端更顺手）
+- blame 视图：每行最后修改者/提交
+- 右键「加入 .gitignore」（自动追加对应行）
+- cherry-pick（右键菜单，交互简单化只做单提交）
+- 多 remote 支持：push/pull 时可选 remote（目前写死 origin）
 
-新增想法：
+### 效率
 
 - hunk 级暂存：diff 弹窗内按块 stage/unstage
 - 文件列表目录树/平铺双视图切换
-- worktree 支持（列出/切换工作树）
+- 任意两个提交的 range diff 对比（历史区选中两个节点）
+- 提交信息模板（读仓库 .gitmessage 或自定义）
+- 拖拽文件到暂存区批量 stage
+- 历史区按文件路径过滤
+
+### AI 拓展（衔接 M6）
+
+- AI 生成 Release Notes：选 tag/提交范围，汇总成 changelog
+- AI 从 CONTRIBUTING.md/仓库文档学习提交规范（不只靠近期提交推断）
+- AI 总结单文件的演进历史（这个文件为什么长成这样）
+- AI 冲突解读：冲突时展示双方意图说明（只读，不做交互式解决）
+
+### 体验
+
+- 提交统计热力图（每周提交量，设置-个人页）
 - i18n 英文界面
-- 设置 - 个人设置，展示提交图表统计（每周提交量热力图）
+- 自定义主题色（目前固定紫罗兰）
+- worktree 支持（列出/切换工作树）
+- GitHub/GitLab 集成：PR 列表、CI 状态徽标（需 token，较重）
