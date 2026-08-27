@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { reactive, ref, onMounted } from "vue";
-import { X, Palette, UserCog, Keyboard, User, Bot } from "@lucide/vue";
+import { computed, reactive, ref, onMounted } from "vue";
+import { X, Palette, UserCog, Keyboard, User, Bot, Plus } from "@lucide/vue";
 import { THEMES, settings, type Settings } from "../settings";
 import * as api from "../gitApi";
 import { aiVerify } from "../ai";
@@ -69,6 +69,30 @@ const SHORTCUTS: [string, string][] = [
   ["双击历史行", "查看该提交的 diff"],
   ["Esc", "关闭弹窗"],
 ];
+
+// 分支前缀：存储为逗号分隔字符串；tag 式编辑
+const prefixInput = ref("");
+const prefixList = computed(() =>
+  draft.branchPrefix
+    .split(/[,，]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+);
+function addPrefix() {
+  const v = prefixInput.value.trim().replace(/[,，]/g, "");
+  if (!v) return;
+  const list = prefixList.value;
+  if (!list.includes(v)) {
+    list.push(v);
+    draft.branchPrefix = list.join(",");
+  }
+  prefixInput.value = "";
+}
+function removePrefix(p: string) {
+  draft.branchPrefix = prefixList.value
+    .filter((x: string) => x !== p)
+    .join(",");
+}
 
 const NAV = [
   { id: "user", label: "用户信息", icon: User },
@@ -192,11 +216,29 @@ const NAV = [
           <!-- 个性化 -->
           <template v-else-if="tab === 'personal'">
             <section>
-              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">创建分支前缀</h3>
-              <div class="flex items-center gap-3">
-                <Input v-model="draft.branchPrefix" placeholder="如 feat/（留空不使用）" />
+              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">分支前缀（可多个）</h3>
+              <!-- tag 式编辑：回车/逗号添加，点 × 删除；存储仍是逗号分隔字符串，创建弹窗下拉自动同步 -->
+              <div class="flex min-h-[32px] flex-wrap items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5">
+                <span
+                  v-for="p in prefixList"
+                  :key="p"
+                  class="flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary"
+                >
+                  {{ p }}
+                  <X class="size-3 cursor-pointer hover:text-destructive" @click="removePrefix(p)" />
+                </span>
+                <input
+                  v-model="prefixInput"
+                  placeholder="输入前缀后回车，如 feat/"
+                  class="min-w-[140px] flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
+                  @keydown.enter.prevent="addPrefix"
+                  @keydown.,.prevent="addPrefix"
+                  @blur="addPrefix"
+                />
               </div>
-              <p class="mt-2 text-[11px] text-muted-foreground">新建分支时自动补在名字前面；已含前缀则不重复加。</p>
+              <p class="mt-2 text-[11px] text-muted-foreground">
+                新建分支弹窗的前缀下拉会同步这里；名字已含前缀时不重复加。
+              </p>
             </section>
           </template>
 

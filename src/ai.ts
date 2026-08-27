@@ -115,3 +115,36 @@ export const AI_PROMPTS = {
       "你是严格的 code reviewer。审查以下未推送的提交变更，用中文按三节输出：【问题】明确的 bug 或逻辑错误；【风险】潜在隐患（边界/并发/安全/性能）；【建议】可选的改进。每节若无内容写「无明显问题」。不要复述 diff。",
   },
 };
+
+// ---- AI 结果本地缓存（localStorage，FIFO 上限 30 条）----
+// Review 按 repo::分支 键存（推送成功后调 aiCacheDelete 清除）；
+// DiffViewer 解释按 repo::路径(或commit hash) 键存。
+const AI_CACHE_LIMIT = 30;
+
+function loadBucket(bucket: string): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(`gz.ai.${bucket}`) ?? "{}");
+  } catch {
+    return {};
+  }
+}
+
+export function aiCacheRead(bucket: string, id: string): string | undefined {
+  return loadBucket(bucket)[id];
+}
+
+export function aiCacheWrite(bucket: string, id: string, text: string): void {
+  const b = loadBucket(bucket);
+  b[id] = text;
+  const keys = Object.keys(b);
+  if (keys.length > AI_CACHE_LIMIT) delete b[keys[0]]; // FIFO 淘汰最旧
+  localStorage.setItem(`gz.ai.${bucket}`, JSON.stringify(b));
+}
+
+export function aiCacheDelete(bucket: string, id: string): void {
+  const b = loadBucket(bucket);
+  if (id in b) {
+    delete b[id];
+    localStorage.setItem(`gz.ai.${bucket}`, JSON.stringify(b));
+  }
+}

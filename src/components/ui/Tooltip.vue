@@ -18,12 +18,22 @@ async function place(e: MouseEvent) {
   const el = tipEl.value;
   if (!el) return;
   const r = el.getBoundingClientRect();
-  let { x, y } = pos.value;
-  if (x + r.width > window.innerWidth - 8) x = Math.max(8, window.innerWidth - r.width - 8);
-  if (y + r.height > window.innerHeight - 8) {
-    // 翻到鼠标上方
-    y = Math.max(8, e.clientY - r.height - 12);
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  let x = e.clientX + 16;
+  let y = e.clientY + 18;
+  if (x + r.width > vw - 8) {
+    // 右侧放不下 → 试左侧
+    const lx = e.clientX - r.width - 16;
+    if (lx >= 8) {
+      x = lx;
+    } else {
+      // 两侧都放不下 → 水平贴边收敛 + 换到鼠标正上方
+      x = Math.max(8, Math.min(vw - r.width - 8, e.clientX - r.width / 2));
+      y = Math.max(8, e.clientY - r.height - 12);
+    }
   }
+  if (y + r.height > vh - 8) y = Math.max(8, e.clientY - r.height - 12);
   if (pos.value.x !== x || pos.value.y !== y) pos.value = { x, y };
 }
 

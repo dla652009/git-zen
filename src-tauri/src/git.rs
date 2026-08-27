@@ -478,3 +478,10 @@ pub async fn git_push_delete(repo: String, remote: String, name: String) -> Resu
     })
     .await
 }
+
+/// 把文本写入指定路径（AI 报告/解释导出用；路径来自系统保存对话框）
+#[tauri::command]
+pub async fn git_write_file(path: String, content: String) -> Result<(), String> {
+    offload(move || std::fs::write(&path, content).map_err(|e| format!("写入失败: {e}")))
+    .await
+}

@@ -1,9 +1,30 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from "vue";
 import { X, ChevronDown, ChevronsDownUp, ChevronsUpDown, Bot } from "@lucide/vue";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../gitApi";
-import { AI_PROMPTS, aiComplete, clipForAI } from "../ai";
-import { Button, Spinner } from "@/components/ui";
+import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite } from "../ai";
+import { FileDown } from "@lucide/vue";
+
+const savedTip = ref(false);
+async function saveExplainToFile() {
+  if (!explainText.value) return;
+  const base = props.commit ? `AI-explain-${props.commit.hash.slice(0, 8)}` : `AI-explain-${props.file!.path.split(/[\/]/).pop()}`;
+  const target = await saveDialog({
+    title: "保存 AI 解释",
+    defaultPath: `${base}.md`,
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+  if (!target) return;
+  try {
+    await api.writeTextFile(target, explainText.value);
+    savedTip.value = true;
+    setTimeout(() => (savedTip.value = false), 2000);
+  } catch (e) {
+    err.value = String(e).replace(/^Error: /, "");
+  }
+}
+import { Button, Spinner, Md } from "@/components/ui";
 
 export interface DiffTarget {
   path: string;
@@ -30,6 +51,18 @@ const text = ref("");
 const loading = ref(true);
 const err = ref("");
 
+// 解释结果本地缓存：commit 用 hash 键（不可变，永久有效）；文件用 路径+模式 键（可能过期，可重生成）
+function explainId(): string {
+  return props.commit
+    ? `${props.repo}::commit::${props.commit.hash}`
+    : `${props.repo}::${props.file!.cached ? "s" : "w"}::${props.file!.path}`;
+}
+onMounted(() => {
+  // 缓存命中：直接预填解释面板，diff 主区照常加载；可点 Bot 按钮重新生成覆盖
+  const saved = aiCacheRead("explain", explainId());
+  if (saved !== undefined) explainText.value = saved;
+});
+
 onMounted(async () => {
   try {
     if (props.commit) {
@@ -47,25 +80,28 @@ onMounted(async () => {
   }
 });
 
-// AI 解释变更：直接消费已加载的 patch 文本
+// AI 解释变更：直接消费已加载的 patch 文本；结果写入 localStorage 二次打开秒显
 const explainBusy = ref(false);
 const explainErr = ref("");
 const explainText = ref("");
-async function explain() {
-  if (explainBusy.value || !text.value.trim()) return;
+async function loadExplain() {
   explainBusy.value = true;
   explainErr.value = "";
-  explainText.value = "";
   try {
-    explainText.value = await aiComplete(
-      AI_PROMPTS.explainDiff.system,
-      clipForAI(text.value)
-    );
+    const out = await aiComplete(AI_PROMPTS.explainDiff.system, clipForAI(text.value));
+    explainText.value = out;
+    aiCacheWrite("explain", explainId(), out);
   } catch (e) {
     explainErr.value = String(e).replace(/^Error: /, "");
   } finally {
     explainBusy.value = false;
   }
+}
+async function explain() {
+  if (explainBusy.value || !text.value.trim()) return;
+  explainErr.value = "";
+  explainText.value = "";
+  await loadExplain();
 }
 
 function onKey(e: KeyboardEvent) {
@@ -202,9 +238,16 @@ function toggleAll() {
         v-if="explainBusy || explainErr || explainText"
         class="max-h-[35%] shrink-0 overflow-y-auto border-t border-border px-3 py-2"
       >
+        <div class="mb-1 flex items-center gap-2">
+          <span class="text-[11px] uppercase tracking-wider text-muted-foreground">AI 解释</span>
+          <Button variant="ghost" size="sm" class="h-5 px-1.5 text-[11px]" :disabled="!explainText" @click="saveExplainToFile">
+            <FileDown class="size-3" />{{ savedTip ? "已保存 ✓" : "保存到本地" }}
+          </Button>
+          <span class="flex-1" />
+        </div>
         <Spinner v-if="explainBusy" label="AI 分析中…" />
         <div v-else-if="explainErr" class="text-[11px] text-destructive">{{ explainErr }}</div>
-        <div v-else class="whitespace-pre-wrap font-sans text-xs leading-relaxed">{{ explainText }}</div>
+        <Md v-else :source="explainText" class="text-xs" />
       </div>
     </div>
   </div>

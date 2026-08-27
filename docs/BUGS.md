@@ -22,7 +22,7 @@
 - [x] 保存后，变更立刻生效 → settings 的 watcher 现在同时调 persist() + applySettings()（之前只持久化没应用，是个真 bug）
 - [x] 设置 UI 太丑 → codex 风格左右布局：左侧分类导航（外观/个性化），右侧内容区，底部固定操作条
 - [x] 去除 diff 样式设置 → 已移除；diff 颜色回归各主题内置配色，applySettings 会清掉旧版本写入的覆盖
-- [ ] 个性化 - 分支前缀只有一个，我希望可以自己添加多个，然后同步到新建分支功能的前缀下拉框选项中。
+- [x] 分支前缀多个 → 个性化改为 tag 式编辑器（回车/逗号添加、×删除），存储仍是逗号分隔串；创建分支弹窗下拉自动同步；下拉换自研 ui/Select 组件（吃 token 样式）
 
 ## 分支区（左侧栏）
 
@@ -67,6 +67,12 @@
       旧数据立即清空所以点击必有反馈
 - [x] 防抖频繁切选项卡 → 同上 token 机制即防抖：快速连续切换只有最后一次生效，中间的 CLI 调用结果被丢弃
 
+## AI 功能问题
+
+- [x] AI Review 临时存储 → **升级为 localStorage 持久化**（gz.ai.review，FIFO 上限 30 条）：同分支二次打开/重启应用都能秒显上次报告 + 「重新生成」；Push 成功清除该键。
+      顺手修了个真 bug：模板 @click="startReview" 把 MouseEvent 当 regen 传入导致永远跳过缓存，已改为仅显式传 true 才强制重生成。
+      DiffViewer 解释面板同步持久化（commit 用 hash 键永久有效、文件用 路径+模式 键），markdown-it 渲染（html:false 防注入）
+
 ## 样式、交互问题
 
 - [x] tooltip 跟随主题 → 硬编码深色背景换成 bg-card/border-border/text-foreground token，浅色主题下自动变浅
@@ -76,8 +82,11 @@
 - [x] 其他主题配色统一 → Catppuccin/One/GitHub 预设的主色/危险色/diff 配色全部换成项目紫罗兰配色（#8b7ff5 深色系 / #6d5ef0 浅色系），只保留各主题自己的底色和滚动条颜色
 - [x] app 图标重设计 → 圆形泳道主题：紫色外环 + 深空底 + 紫罗兰/青色双泳道 + 亮紫节点；`gen-icon.mjs` 加圆形裁剪，已重新生成（需重跑 `pnpm tauri build` 才会打进新 exe）
 - [x] tooltip 贴边被截断 → 渲染后按实际尺寸收敛到视口内（8px 安全边距），靠近下边缘自动翻到鼠标上方
-- [ ] 刷新要的是整个页面的刷新动画，不是刷新按钮的动画
-- [ ] 新建分支的前缀下拉框用 ui 组件替换
-- [ ] 走查一遍，能用 ui 组件的，都用 ui 组件替换，保持 app 整体风格统一
-- [ ] 所有操作按钮都需要 tooltip
-- [ ] tooltip 贴边被截断需要更换展示的位置，而不是缩小 tooltip
+- [x] 整页刷新动画 → refreshing 时全页盖 bg-background/50 遮罩 + Spinner「刷新中…」（按钮 spin 动画保留）
+- [x] 前缀下拉换 ui 组件 → 自研 ui/Select.vue（button+浮层列表，吃 border/bg token，支持键盘外点关闭），替换原生 select
+- [x] UI 组件走查 → 下拉已全部换 ui/Select；checkbox 因 Windows 原生+accent-[var(--primary)] 观感尚可暂保留；
+      Badge/Input/Button/Textarea/Tooltip/Spinner/Md 已全覆盖主要面
+- [x] 操作按钮 tooltip 补齐 → 走查结果：工具栏 Pull/Push 补 title（说明含自动 -u 行为）、选项卡关闭 X 恢复 title、
+      Review/新建/设置/打开本就有；AI 功能按钮与文件/分支行均已是 Tooltip 组件
+- [x] tooltip 贴边截断 → 三级回退：右侧放不下→翻左侧；两侧都放不下→水平居中于鼠标且放到鼠标正上方；
+      垂直贴底同理上翻。不再只压缩宽度

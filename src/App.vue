@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import {
   FolderOpen,
   RefreshCw,
@@ -17,10 +17,10 @@ import {
   Bot,
 } from "@lucide/vue";
 import * as api from "./gitApi";
-import { AI_PROMPTS, aiComplete, clipForAI } from "./ai";
+import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, aiCacheDelete } from "./ai";
 import type { Status, LogEntry, Branch } from "./gitApi";
 import { settings } from "./settings";
-import { Button, Input, Spinner } from "@/components/ui";
+import { Button, Input, Spinner, Md, Select } from "@/components/ui";
 import { Badge } from "@/components/ui";
 import HistoryGraph from "./components/HistoryGraph.vue";
 import ChangesPanel from "./components/ChangesPanel.vue";
@@ -66,7 +66,7 @@ function humanize(raw: string): { msg: string; detail?: string } {
   return hit ? { msg: hit[1], detail: s } : { msg: s };
 }
 
-// 刷新按钮动画
+// 刷新按钮动画 + 整页刷新遮罩
 const refreshing = ref(false);
 async function doRefresh() {
   refreshing.value = true;
@@ -163,6 +163,8 @@ async function run(fn: () => Promise<unknown>, name = "") {
   try {
     await fn();
     await refresh();
+    // 推送成功 → 清掉该分支的 AI Review 缓存（已推送不再保留）
+    if (name === "push") aiCacheDelete(REVIEW_BUCKET, reviewKey());
   } catch (e) {
     showError(String(e));
   } finally {
@@ -320,14 +322,22 @@ function onCommitMenu(p: { x: number; y: number; c: LogEntry }) {
 }
 
 // ---- AI Review 未推送提交（ahead>0 时工具栏出按钮）----
+// 结果按 repo+分支 临时保存：切回来能二次查看；推送成功后清除
 const reviewBusy = ref(false);
 const reviewOpen = ref(false);
 const reviewText = ref("");
 const reviewErr = ref("");
+// 结果持久化在 localStorage（gz.ai.review），重启后仍可二次查看
+const REVIEW_BUCKET = "review";
+function reviewKey(): string {
+  return `${repo.value}::${status.value?.branch ?? ""}`;
+}
 function aiConfigured(): boolean {
   return !!(settings.aiBaseUrl.trim() && (settings.aiApiKey.trim() || settings.aiBaseUrl.includes("localhost")));
 }
-async function startReview() {
+async function startReview(regen: boolean | Event = false) {
+  // 注意：模板 @click 不带参时会把 MouseEvent 传进来，只有显式传 true 才算强制重生成
+  const forceRegen = regen === true;
   if (!aiConfigured()) {
     // 未配置 → 直接引导到设置 AI 页
     showSettingsTab.value = "ai";
@@ -335,6 +345,15 @@ async function startReview() {
     return;
   }
   if (reviewBusy.value || !status.value?.ahead) return;
+  const key = reviewKey();
+  const cached = aiCacheRead(REVIEW_BUCKET, key);
+  if (!forceRegen && cached !== undefined) {
+    // 已有报告直接展示，附重新生成按钮
+    reviewText.value = cached;
+    reviewErr.value = "";
+    reviewOpen.value = true;
+    return;
+  }
   reviewOpen.value = true;
   reviewBusy.value = true;
   reviewText.value = "";
@@ -342,10 +361,29 @@ async function startReview() {
   try {
     const d = await api.diffUnpushed(repo.value);
     reviewText.value = await aiComplete(AI_PROMPTS.reviewUnpushed.system, clipForAI(d));
+    aiCacheWrite(REVIEW_BUCKET, key, reviewText.value);
   } catch (e) {
     reviewErr.value = String(e).replace(/^Error: /, "");
   } finally {
     reviewBusy.value = false;
+  }
+}
+
+const reviewSaved = ref(false);
+async function saveReviewToFile() {
+  if (!reviewText.value) return;
+  const target = await saveDialog({
+    title: "保存 AI Review 报告",
+    defaultPath: `AI-review-${status.value?.branch ?? "branch"}-${new Date().toISOString().slice(0, 10)}.md`,
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+  if (!target) return;
+  try {
+    await api.writeTextFile(target, reviewText.value);
+    reviewSaved.value = true;
+    setTimeout(() => (reviewSaved.value = false), 2000);
+  } catch (e) {
+    showError(String(e));
   }
 }
 
@@ -558,7 +596,16 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="flex h-full flex-col">
+  <div class="relative flex h-full flex-col">
+    <!-- 整页刷新遮罩（点刷新按钮时盖全页，替代仅按钮动画） -->
+    <Transition name="fade">
+      <div
+        v-if="refreshing"
+        class="absolute inset-0 z-20 grid place-items-center bg-background/50 text-sm"
+      >
+        <Spinner label="刷新中…" />
+      </div>
+    </Transition>
     <header class="flex items-center gap-2 border-b border-border px-3 py-2">
       <Button variant="ghost" size="sm" title="打开仓库" @click="openRepo">
         <FolderOpen class="size-4" />
@@ -570,12 +617,12 @@ onMounted(async () => {
       <span class="flex-1" />
       <Badge v-if="status?.behind" variant="warning">↓{{ status.behind }}</Badge>
       <Badge v-if="status?.ahead" variant="info">↑{{ status.ahead }}</Badge>
-      <Button size="sm" :disabled="!repo || busy" @click="run(() => api.pull(repo), 'pull')">
+      <Button size="sm" title="拉取远程更新并合并到当前分支" :disabled="!repo || busy" @click="run(() => api.pull(repo), 'pull')">
         <Spinner v-if="runningAction === 'pull'" :size="14" />
         <ArrowDownToLine v-else class="size-3.5" />
         Pull
       </Button>
-      <Button size="sm" :disabled="!repo || busy" @click="run(() => api.push(repo, status?.branch ?? ''), 'push')">
+      <Button size="sm" title="推送本地提交到远程（无上游时自动建立跟踪）" :disabled="!repo || busy" @click="run(() => api.push(repo, status?.branch ?? ''), 'push')">
         <Spinner v-if="runningAction === 'push'" :size="14" />
         <ArrowUpFromLine v-else class="size-3.5" />
         Push
@@ -637,6 +684,7 @@ onMounted(async () => {
         {{ r.name }}
         <X
           class="size-3 opacity-0 transition-opacity group-hover/tab:opacity-60 hover:!opacity-100 hover:text-destructive"
+          title="关闭"
           @mousedown.stop
           @click.stop="closeTab(i)"
         />
@@ -769,13 +817,14 @@ onMounted(async () => {
       <div class="w-[400px] rounded-lg border border-border bg-card p-4 shadow-xl">
         <div class="mb-2 font-medium">新建分支</div>
         <div class="flex gap-2">
-          <select
+          <Select
             v-model="newBranchPrefix"
-            class="h-8 shrink-0 rounded-md border border-border bg-background px-1.5 text-xs outline-none"
-          >
-            <option value="">无前缀</option>
-            <option v-for="p in prefixes" :key="p" :value="p">{{ p }}</option>
-          </select>
+            class="w-32 shrink-0"
+            :options="[
+              { value: '', label: '无前缀' },
+              ...prefixes.map((p: string) => ({ value: p, label: p })),
+            ]"
+          />
           <Input v-model="newBranchName" placeholder="分支名" @keyup.enter="confirmCreateBranch" />
         </div>
         <p class="mt-2 text-[11px] text-muted-foreground">
@@ -849,9 +898,14 @@ onMounted(async () => {
         <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-[13px] leading-relaxed">
           <Spinner v-if="reviewBusy" label="AI 正在审查未推送的变更…" />
           <div v-else-if="reviewErr" class="text-destructive">{{ reviewErr }}</div>
-          <div v-else class="whitespace-pre-wrap">{{ reviewText }}</div>
+          <Md v-else :source="reviewText" />
         </div>
-        <footer class="flex shrink-0 justify-end border-t border-border px-4 py-2.5">
+        <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-2.5">
+          <span v-if="reviewSaved" class="mr-auto text-[11px] text-primary">已保存 ✓</span>
+          <Button variant="secondary" size="sm" :disabled="reviewBusy || !reviewText" @click="saveReviewToFile">保存到本地</Button>
+          <Button variant="secondary" size="sm" :disabled="reviewBusy || !status?.ahead" @click="startReview(true)">
+            重新生成
+          </Button>
           <Button variant="secondary" size="sm" @click="reviewOpen = false">关闭</Button>
         </footer>
       </div>

@@ -101,6 +101,20 @@ git_push 先普通 push，失败且 stderr 含 no upstream/no tracking informati
 否则 Conventional Commits、祈使语气无尾句号、跟随仓库主导语言、只基于 diff 不臆造。
 实现上 genCommitMsg 会把最近 10 条 subject 拼进 user prompt 作风格参考。
 
+### Vue 模板事件传参的隐坑
+
+@click="fn" 会把 MouseEvent 作为第一参数传入。带布尔形参的处理函数必须写成
+@click="fn()" 或在函数内严格判断 === true——否则参数是 truthy 的 event 对象，
+AI Review 缓存跳过就是这个原因。
+
+### AI 结果本地缓存
+
+ai.ts 提供 aiCacheRead/Write/Delete（localStorage gz.ai.* bucket，FIFO 上限 30 条）：
+
+- review bucket：键 repo::分支，Push 成功后删除
+- explain bucket：commit 用 hash 键永久有效；工作区文件用 路径+暂存模式 键
+注意 DiffViewer 缓存命中只预填解释面板，diff 主区照常请求加载。
+
 ### WebView2 的 HTML5 拖拽（已弃用）
 
 HTML5 DnD 在 WebView2 里不可靠：补了 dataTransfer.setData 后 drop 仍时灵时不灵。

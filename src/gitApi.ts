@@ -76,3 +76,5 @@ export const discard = (repo: string, path: string, untracked: boolean) =>
   invoke<void>("git_discard", { repo, path, untracked });
 export const revert = (repo: string, hash: string) =>
   invoke<void>("git_revert", { repo, hash });
+export const writeTextFile = (path: string, content: string) =>
+  invoke<void>("git_write_file", { path, content });
