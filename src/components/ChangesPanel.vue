@@ -214,10 +214,11 @@ async function genCommitMsg() {
         <Textarea
           v-model="message"
           rows="4"
+          class="pr-9"
           placeholder="提交信息…  Ctrl+⏎ 提交"
           @keydown.ctrl.enter="canCommit && doCommit()"
         />
-        <Tooltip text="AI 根据暂存区变更生成提交信息">
+        <Tooltip text="AI 生成提交信息">
           <Button
             variant="ghost"
             size="icon"

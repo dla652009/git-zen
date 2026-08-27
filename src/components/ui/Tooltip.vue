@@ -1,57 +1,60 @@
 <script setup lang="ts">
 import { ref, nextTick } from "vue";
 
-// 自定义 tooltip：跟随鼠标、支持多行（\n）、Teleport 到 body 不被 overflow 裁剪。
-// 外层 display:contents，不影响宿主的 flex/truncate 布局。
-// 位置在渲染后按实际尺寸收敛到视口内，贴边不再被截断；贴近下边缘时翻到鼠标上方。
+// 自定义 tooltip：锚定触发元素（不跟随鼠标，避免滚动/嵌套场景错位），
+// 默认显示在触发元素下方左对齐；贴边/贴底自动翻转到上方或收敛进视口。
+// 外层 display:contents，不影响宿主的 flex/truncate 布局；Teleport 到 body 防 overflow 裁剪。
 const props = defineProps<{ text: string }>();
 
 const show = ref(false);
 const pos = ref({ x: 0, y: 0 });
+const hostEl = ref<HTMLElement | null>(null);
 const tipEl = ref<HTMLElement | null>(null);
-let lastEvent: MouseEvent | null = null;
 
-async function place(e: MouseEvent) {
-  lastEvent = e;
-  pos.value = { x: e.clientX + 16, y: e.clientY + 18 };
+// 宿主槽位里的第一个真实元素作为锚点
+function anchor(): DOMRect | null {
+  const first = hostEl.value?.firstElementChild as HTMLElement | null;
+  return first?.getBoundingClientRect() ?? null;
+}
+
+async function place() {
+  const a = anchor();
+  if (!a) return;
   await nextTick();
   const el = tipEl.value;
   if (!el) return;
   const r = el.getBoundingClientRect();
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  let x = e.clientX + 16;
-  let y = e.clientY + 18;
-  if (x + r.width > vw - 8) {
-    // 右侧放不下 → 试左侧
-    const lx = e.clientX - r.width - 16;
-    if (lx >= 8) {
-      x = lx;
-    } else {
-      // 两侧都放不下 → 水平贴边收敛 + 换到鼠标正上方
-      x = Math.max(8, Math.min(vw - r.width - 8, e.clientX - r.width / 2));
-      y = Math.max(8, e.clientY - r.height - 12);
-    }
-  }
-  if (y + r.height > vh - 8) y = Math.max(8, e.clientY - r.height - 12);
-  if (pos.value.x !== x || pos.value.y !== y) pos.value = { x, y };
+  let x = a.left;
+  let y = a.bottom + 6;
+  if (x + r.width > vw - 8) x = Math.max(8, vw - r.width - 8); // 右溢出收敛
+  if (y + r.height > vh - 8) y = Math.max(8, a.top - r.height - 6); // 底部放不下 → 翻上方
+  if (y < 8) y = 8;
+  pos.value = { x, y };
 }
 
-function enter(e: MouseEvent) {
+function enter() {
   show.value = true;
-  place(e);
-}
-function move(e: MouseEvent) {
-  if (!show.value) return;
-  place(e);
+  place();
 }
 function leave() {
+  show.value = false;
+}
+// 面板滚动时锚点会移动，直接隐藏最省心
+function onScroll() {
   show.value = false;
 }
 </script>
 
 <template>
-  <span class="contents" @mouseenter="enter" @mousemove="move" @mouseleave="leave">
+  <span
+    ref="hostEl"
+    class="contents"
+    @mouseenter="enter"
+    @mouseleave="leave"
+    @scroll.capture="onScroll"
+  >
     <slot />
     <Teleport to="body">
       <Transition name="tt">

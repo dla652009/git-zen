@@ -51,7 +51,8 @@
 - [x] 已暂存节头新增「全部取消暂存」按钮
 - [x] 提交是提交，而不是提交并推送 → 真相：代码从未 push，是「分支无远程上游时没有任何提示」造成误导。两步修复：① Push 按钮遇无上游自动 `push -u origin <分支>`；② 状态栏对无上游分支常驻「当前分支尚未推送到远程」徽标。上一条的 `-c alias.commit=commit` 别名防御保留（无害且防劫持）
 - [x] 未暂存区整目录折叠成 src/ 且 diff 报 os error 5 → 根因：git status 默认把未跟踪目录折叠成 `src/`（路径是目录当然读不了）。status 加 `-uall` 展开为逐个文件；已暂存区正常是因为暂存文件本来就是逐个列的
-- [x] 提交/Pull/Push loading → run() 记录当前操作名，Pull/Push 按钮图标切换成 Spinner；提交按钮显示「处理中…」+ Spinner
+- [x] 提交/Pull/Push loading → run() 记录当前操作名，Pull/Push 按钮图标切换成 Spinner；提交按钮显示「处理中...」+ Spinner
+- [ ] commit message 输入框的内容需要每个选项卡下的仓库单独保存
 
 ## 仓库选项卡
 
