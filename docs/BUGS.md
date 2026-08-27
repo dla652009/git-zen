@@ -2,6 +2,13 @@
 
 > 缺陷和优化点的记录，任务完成后修复这里的内容。
 
+## T0 阻塞问题
+
+- [x] 刚进入/切换选项卡加载仓库概率卡死、窗口无响应 → **根因**：Tauri v2 同步 command 在主线程执行，
+      所有 git CLI 阻塞调用（log/status 大仓库慢、push/pull/fetch 网络慢）都会冻住 WebView → 假死。
+      修复：全部 22 个命令改 `async fn` + `spawn_blocking` 下放线程池，主线程只管 UI
+- [x] 操作期间容易卡死 → 同根因同修复；push/pull 网络操作不再阻塞 UI，只影响各自按钮的 Spinner
+
 ## Diff 功能
 
 - [x] Merge 的 diff 不展示 → `git show -m --first-parent`，对比第一父提交（已实测验证）
@@ -68,3 +75,4 @@
 - [x] 其他主题配色统一 → Catppuccin/One/GitHub 预设的主色/危险色/diff 配色全部换成项目紫罗兰配色（#8b7ff5 深色系 / #6d5ef0 浅色系），只保留各主题自己的底色和滚动条颜色
 - [x] app 图标重设计 → 圆形泳道主题：紫色外环 + 深空底 + 紫罗兰/青色双泳道 + 亮紫节点；`gen-icon.mjs` 加圆形裁剪，已重新生成（需重跑 `pnpm tauri build` 才会打进新 exe）
 - [x] tooltip 贴边被截断 → 渲染后按实际尺寸收敛到视口内（8px 安全边距），靠近下边缘自动翻到鼠标上方
+- [ ] 刷新要的是整个页面的刷新动画，不是刷新按钮的动画

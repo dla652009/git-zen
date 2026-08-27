@@ -13,6 +13,13 @@
 
 ## 坑与决策记录
 
+### Tauri command 必须 async + spawn_blocking
+
+Tauri v2 的同步 #[tauri::command] 跑在主线程：任何 git CLI 慢调用（大仓库 log、
+网络 push/pull/fetch）都会冻住整个窗口（假死、无响应）。git.rs 已全部改为
+`async fn` + `offload()`（内部 spawn_blocking）。**以后新增命令一律照此写**，
+直接同步写法就是给 T0 埋雷。
+
 ### 为什么不用 libgit2 / git2 crate
 
 CLI 输出即真相：认证走系统 credential helper、ssh 走系统配置，零适配成本。
