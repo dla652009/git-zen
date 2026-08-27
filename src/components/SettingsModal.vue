@@ -1,17 +1,36 @@
 <script setup lang="ts">
-import { reactive, ref } from "vue";
-import { X, Palette, UserCog, Keyboard } from "@lucide/vue";
+import { reactive, ref, onMounted } from "vue";
+import { X, Palette, UserCog, Keyboard, User } from "@lucide/vue";
 import { THEMES, settings, type Settings } from "../settings";
+import * as api from "../gitApi";
 import { Button, Input } from "@/components/ui";
 
+const props = defineProps<{ repo: string }>();
 const emit = defineEmits<{ close: [] }>();
 
 // 草稿编辑，保存才写回（写回后 watcher 自动持久化+生效）
 const draft = reactive<Settings>({ ...settings });
-const tab = ref<"appearance" | "personal" | "shortcuts">("appearance");
+const tab = ref<"user" | "appearance" | "personal" | "shortcuts">("user");
+
+// 用户信息是仓库级 git config，不属于应用设置，单独存取
+const userName = ref("");
+const userEmail = ref("");
+onMounted(async () => {
+  if (!props.repo) return;
+  try {
+    const [n, e] = await api.getUser(props.repo);
+    userName.value = n;
+    userEmail.value = e;
+  } catch {
+    /* 无仓库或非 git 目录时静默 */
+  }
+});
 
 function save() {
   Object.assign(settings, draft);
+  if (props.repo && (userName.value.trim() || userEmail.value.trim())) {
+    api.configUser(props.repo, userName.value.trim(), userEmail.value.trim()).catch(() => {});
+  }
   emit("close");
 }
 
@@ -32,6 +51,7 @@ const SHORTCUTS: [string, string][] = [
 ];
 
 const NAV = [
+  { id: "user", label: "用户信息", icon: User },
   { id: "appearance", label: "外观", icon: Palette },
   { id: "personal", label: "个性化", icon: UserCog },
   { id: "shortcuts", label: "快捷键", icon: Keyboard },
@@ -66,8 +86,28 @@ const NAV = [
         </header>
 
         <div class="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
+          <!-- 用户信息（仓库级） -->
+          <template v-if="tab === 'user'">
+            <section>
+              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">提交者信息</h3>
+              <div class="space-y-3">
+                <div class="flex items-center gap-3">
+                  <label class="w-16 shrink-0 text-xs text-muted-foreground">名字</label>
+                  <Input v-model="userName" placeholder="提交历史中显示的名字" />
+                </div>
+                <div class="flex items-center gap-3">
+                  <label class="w-16 shrink-0 text-xs text-muted-foreground">邮箱</label>
+                  <Input v-model="userEmail" placeholder="you@example.com" />
+                </div>
+              </div>
+              <p class="mt-2 text-[11px] text-muted-foreground">
+                保存到当前仓库的 git config（{{ props.repo || "未选择仓库" }}）
+              </p>
+            </section>
+          </template>
+
           <!-- 外观 -->
-          <template v-if="tab === 'appearance'">
+          <template v-else-if="tab === 'appearance'">
             <section>
               <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">主题</h3>
               <div class="grid grid-cols-4 gap-1.5">

@@ -4,7 +4,7 @@ import { Plus, Undo2, FilePlus, FilePen, FileMinus, FileQuestion, FileSymlink } 
 import * as api from "../gitApi";
 import type { Status, StatusFile } from "../gitApi";
 import type { DiffTarget } from "./DiffViewer.vue";
-import { Button, Textarea, Tooltip } from "@/components/ui";
+import { Button, Textarea, Tooltip, Spinner } from "@/components/ui";
 
 const props = defineProps<{
   repo: string;
@@ -16,7 +16,11 @@ const props = defineProps<{
 const emit = defineEmits<{
   action: [fn: () => Promise<unknown>];
   openDiff: [target: DiffTarget];
+  discard: [target: DiffTarget]; // 右键丢弃更改（App 侧二次确认）
 }>();
+
+// 未暂存文件右键菜单
+const fileCtx = ref<{ x: number; y: number; f: StatusFile } | null>(null);
 
 const message = ref("");
 
@@ -127,6 +131,7 @@ function doCommit() {
         :key="'u' + f.path"
         class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 whitespace-nowrap hover:bg-muted"
         @dblclick="emit('openDiff', { path: f.path, cached: false, untracked: f.x === '?' })"
+        @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
         <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（双击查看变更）`">
@@ -141,6 +146,27 @@ function doCommit() {
       <li v-if="!unstaged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
     </ul>
 
+    <!-- 未暂存文件右键菜单：丢弃更改 -->
+    <div v-if="fileCtx" class="fixed inset-0 z-30" @click="fileCtx = null" @contextmenu.prevent="fileCtx = null">
+      <div
+        class="fixed min-w-[150px] rounded-md border border-border bg-card py-1 shadow-xl"
+        :style="{ left: fileCtx.x + 'px', top: fileCtx.y + 'px' }"
+      >
+        <button
+          class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs text-destructive hover:bg-muted"
+          @click.stop="
+            () => {
+              const f = fileCtx!.f;
+              fileCtx = null;
+              emit('discard', { path: f.path, cached: false, untracked: f.x === '?' });
+            }
+          "
+        >
+          {{ fileCtx.f.x === "?" ? "删除文件" : "丢弃更改（不可恢复）" }}
+        </button>
+      </div>
+    </div>
+
     <!-- 提交区：固定底部卡片 -->
     <div class="shrink-0 space-y-2 border-t border-border bg-card/60 p-3">
       <Textarea
@@ -150,7 +176,8 @@ function doCommit() {
         @keydown.ctrl.enter="canCommit && doCommit()"
       />
       <Button variant="default" class="w-full" :disabled="!canCommit" @click="doCommit">
-        提交{{ staged.length ? ` (${staged.length})` : "" }}
+        <Spinner v-if="busy" :size="14" />
+        {{ busy ? "处理中…" : `提交${staged.length ? ` (${staged.length})` : ""}` }}
       </Button>
     </div>
   </div>

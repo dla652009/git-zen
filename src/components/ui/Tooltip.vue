@@ -1,31 +1,53 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { ref, nextTick } from "vue";
 
 // 自定义 tooltip：跟随鼠标、支持多行（\n）、Teleport 到 body 不被 overflow 裁剪。
 // 外层 display:contents，不影响宿主的 flex/truncate 布局。
+// 位置在渲染后按实际尺寸收敛到视口内，贴边不再被截断；贴近下边缘时翻到鼠标上方。
 const props = defineProps<{ text: string }>();
 
 const show = ref(false);
 const pos = ref({ x: 0, y: 0 });
+const tipEl = ref<HTMLElement | null>(null);
+let lastEvent: MouseEvent | null = null;
+
+async function place(e: MouseEvent) {
+  lastEvent = e;
+  pos.value = { x: e.clientX + 16, y: e.clientY + 18 };
+  await nextTick();
+  const el = tipEl.value;
+  if (!el) return;
+  const r = el.getBoundingClientRect();
+  let { x, y } = pos.value;
+  if (x + r.width > window.innerWidth - 8) x = Math.max(8, window.innerWidth - r.width - 8);
+  if (y + r.height > window.innerHeight - 8) {
+    // 翻到鼠标上方
+    y = Math.max(8, e.clientY - r.height - 12);
+  }
+  if (pos.value.x !== x || pos.value.y !== y) pos.value = { x, y };
+}
 
 function enter(e: MouseEvent) {
-  move(e);
   show.value = true;
+  place(e);
 }
 function move(e: MouseEvent) {
-  // 靠右半屏时翻到鼠标左侧，避免溢出窗口
-  const flip = e.clientX > window.innerWidth * 0.62;
-  pos.value = { x: flip ? e.clientX - 14 : e.clientX + 16, y: e.clientY + 18 };
+  if (!show.value) return;
+  place(e);
+}
+function leave() {
+  show.value = false;
 }
 </script>
 
 <template>
-  <span class="contents" @mouseenter="enter" @mousemove="move" @mouseleave="show = false">
+  <span class="contents" @mouseenter="enter" @mousemove="move" @mouseleave="leave">
     <slot />
     <Teleport to="body">
       <Transition name="tt">
         <div
           v-if="show"
+          ref="tipEl"
           class="pointer-events-none fixed z-50 max-w-[380px] whitespace-pre-line rounded-md border border-border bg-card px-2.5 py-1.5 text-left text-xs leading-relaxed text-foreground shadow-lg"
           :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
         >

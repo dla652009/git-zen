@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from "vue";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   FolderOpen,
@@ -10,6 +11,7 @@ import {
   Settings as SettingsIcon,
   ChevronDown,
   GitBranch,
+  GitBranchPlus,
   Cloud,
   X,
 } from "@lucide/vue";
@@ -62,6 +64,39 @@ function humanize(raw: string): { msg: string; detail?: string } {
   return hit ? { msg: hit[1], detail: s } : { msg: s };
 }
 
+// 刷新按钮动画
+const refreshing = ref(false);
+async function doRefresh() {
+  refreshing.value = true;
+  try {
+    await refresh();
+  } finally {
+    refreshing.value = false;
+  }
+}
+
+// ---- 仓库数据 LRU 缓存（最多 5 个）：切回最近访问的仓库秒开 ----
+interface RepoCache {
+  status: Status;
+  commits: LogEntry[];
+  branchList: Branch[];
+}
+const repoCache = new Map<string, RepoCache>();
+function cacheGet(path: string): RepoCache | null {
+  const c = repoCache.get(path);
+  if (!c) return null;
+  repoCache.delete(path);
+  repoCache.set(path, c); // 触摸，保 LRU 顺序
+  return c;
+}
+function cachePut(path: string, data: RepoCache) {
+  repoCache.delete(path);
+  repoCache.set(path, data);
+  while (repoCache.size > 5) {
+    repoCache.delete(repoCache.keys().next().value!);
+  }
+}
+
 async function refresh() {
   if (!repo.value) return;
   try {
@@ -74,10 +109,18 @@ async function refresh() {
     commits.value = l;
     branchList.value = b;
     canLoadMore.value = l.length >= 300;
+    cachePut(repo.value, { status: s, commits: l, branchList: b });
   } catch (e) {
     showError(String(e));
   }
 }
+
+// 窗口标题显示未推送数
+function updateTitle() {
+  const a = status.value?.ahead ?? 0;
+  getCurrentWindow().setTitle(a > 0 ? `(↑${a}) git-zen` : "git-zen");
+}
+watch(status, updateTitle);
 
 const canLoadMore = ref(false);
 const loadingMore = ref(false);
@@ -110,8 +153,11 @@ function fetchOnce() {
     .catch(() => {});
 }
 
-async function run(fn: () => Promise<unknown>) {
+const runningAction = ref("");
+
+async function run(fn: () => Promise<unknown>, name = "") {
   busy.value = true;
+  runningAction.value = name;
   try {
     await fn();
     await refresh();
@@ -119,6 +165,7 @@ async function run(fn: () => Promise<unknown>) {
     showError(String(e));
   } finally {
     busy.value = false;
+    runningAction.value = "";
   }
 }
 
@@ -155,32 +202,59 @@ function switchRepo(path: string) {
 
 // 切换仓库：两段式刷新——先拉轻量数据（status/branches）让侧栏/状态栏立即就位，
 // 再拉 log 渲染泳道图，期间盖 loading 遮罩。避免等全部数据才响应。
+// seq token：频繁切换时旧请求直接作废，不互相覆盖（防抖+防竞态）
+let activateSeq = 0;
 async function activate(path: string) {
+  const seq = ++activateSeq;
   repo.value = path;
   localStorage.setItem("gz.repo", path);
   filter.value = "";
+  // 先切换：立刻清掉旧仓库数据，UI 马上呈现新选项卡的空态+loading
+  status.value = null;
+  commits.value = [];
+  branchList.value = [];
+  canLoadMore.value = false;
+
+  // LRU 命中：秒开缓存快照，后台静默刷新轻量数据
+  const cached = cacheGet(path);
+  if (cached) {
+    status.value = cached.status;
+    commits.value = cached.commits;
+    branchList.value = cached.branchList;
+    canLoadMore.value = cached.commits.length >= 300;
+    fetchOnce();
+    api.branches(path)
+      .then((b) => seq === activateSeq && (branchList.value = b))
+      .catch(() => {});
+    return;
+  }
+
   historyLoading.value = true;
   await nextTick();
+  if (seq !== activateSeq) return;
   try {
     const [s, b] = await Promise.all([api.status(path), api.branches(path)]);
+    if (seq !== activateSeq) return;
     status.value = s;
     branchList.value = b;
     commits.value = [];
     canLoadMore.value = false;
     await nextTick();
     const l = await api.log(path);
+    if (seq !== activateSeq) return;
     commits.value = l;
     canLoadMore.value = l.length >= 300;
   } catch (e) {
-    showError(String(e));
+    if (seq === activateSeq) showError(String(e));
   } finally {
-    historyLoading.value = false;
+    if (seq === activateSeq) historyLoading.value = false;
   }
   fetchOnce();
 }
 
 function closeTab(i: number) {
   const wasActive = repos.value[i].path === repo.value;
+  repoCache.delete(repos.value[i].path); // 关闭的选项卡不占 LRU 名额
   repos.value.splice(i, 1);
   if (wasActive) {
     const next = repos.value[0]?.path ?? "";
@@ -233,6 +307,15 @@ type DiffState = { kind: "file"; target: DiffTarget } | { kind: "commit"; target
 const diffState = ref<DiffState | null>(null);
 const showSettings = ref(false);
 
+// 历史行右键菜单：复制 hash / checkout / revert
+const commitCtx = ref<{ x: number; y: number; c: LogEntry } | null>(null);
+function copyHash(hash: string) {
+  navigator.clipboard.writeText(hash).catch(() => showError("复制失败"));
+}
+function onCommitMenu(p: { x: number; y: number; c: LogEntry }) {
+  commitCtx.value = p;
+}
+
 // ---- 分支树：本地 / 按远程前缀分组，可折叠 ----
 const collapsedGroups = ref(new Set<string>());
 function toggleGroup(g: string) {
@@ -240,7 +323,14 @@ function toggleGroup(g: string) {
   next.has(g) ? next.delete(g) : next.add(g);
   collapsedGroups.value = next;
 }
-const localBranches = computed(() => branchList.value.filter((b) => !b.remote));
+// 分支模糊搜索：过滤后建树（匹配叶子保留，祖先自动带上）
+const branchFilter = ref("");
+function matchBranches(list: Branch[]): Branch[] {
+  const q = branchFilter.value.trim().toLowerCase();
+  if (!q) return list;
+  return list.filter((b) => b.name.toLowerCase().includes(q));
+}
+const localBranches = computed(() => matchBranches(branchList.value.filter((b) => !b.remote)));
 // 当前分支在远程不存在（无上游）→ 状态栏提示，Push 时也会自动 -u 建立跟踪
 const currentBranchNoUpstream = computed(() => {
   const b = branchList.value.find((x) => x.current && !x.remote);
@@ -249,14 +339,14 @@ const currentBranchNoUpstream = computed(() => {
 const localNodes = computed(() => buildNodes(localBranches.value));
 const remoteGroups = computed(() => {
   const map = new Map<string, Branch[]>();
-  for (const b of branchList.value.filter((x) => x.remote)) {
+  for (const b of matchBranches(branchList.value).filter((x) => x.remote)) {
     // 过滤 origin/HEAD 符号引用和无效名（曾导致空分支项，切换报 empty pathspec）
     if (!b.name.includes("/") || b.name.endsWith("/HEAD")) continue;
     const p = b.name.split("/")[0];
     if (!map.has(p)) map.set(p, []);
     map.get(p)!.push(b);
   }
-  return [...map.entries()];
+  return [...map.entries()].filter(([, list]) => list.length > 0);
 });
 // 远程组默认收起：记「展开」集合而不是折叠集合
 const openRemotes = ref(new Set<string>());
@@ -271,6 +361,32 @@ function remoteNodes(prefix: string): BNode[] {
   return buildNodes(
     list.map((b) => ({ ...b, name: b.name.slice(prefix.length + 1) }))
   );
+}
+
+// ---- 创建分支：工具栏按钮 → 弹窗（可选前缀，基于当前分支，创建即切换）----
+const prefixes = computed(() =>
+  settings.branchPrefix
+    .split(/[,，]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+);
+const showCreateBranch = ref(false);
+const newBranchPrefix = ref("");
+const newBranchName = ref("");
+
+function openCreateBranch() {
+  if (!repo.value) return;
+  newBranchName.value = "";
+  newBranchPrefix.value = prefixes.value[0] ?? "";
+  showCreateBranch.value = true;
+}
+function confirmCreateBranch() {
+  const raw = newBranchName.value.trim();
+  if (!raw || busy.value) return;
+  const p = newBranchPrefix.value;
+  const full = p && !raw.startsWith(p) ? p + raw : raw;
+  showCreateBranch.value = false;
+  run(() => api.branchCreate(repo.value, full));
 }
 
 // ---- 切换分支：乐观更新选中态 + 历史区 loading，失败由 refresh 回滚真实状态 ----
@@ -306,6 +422,16 @@ function openConfirm(s: ConfirmState) {
 }
 
 function askDelete(b: Branch) {
+  if (b.remote) {
+    const remote = b.name.split("/")[0];
+    const short = b.name.replace(/^[^/]+\//, "");
+    openConfirm({
+      title: "删除远程分支",
+      body: `确认删除远程分支 ${b.name}？该操作直接作用于远程仓库。`,
+      ok: () => api.pushDelete(repo.value, remote, short),
+    });
+    return;
+  }
   openConfirm({
     title: "删除分支",
     body: `确认删除本地分支 ${b.name}？`,
@@ -409,14 +535,27 @@ onMounted(async () => {
       <span class="flex-1" />
       <Badge v-if="status?.behind" variant="warning">↓{{ status.behind }}</Badge>
       <Badge v-if="status?.ahead" variant="info">↑{{ status.ahead }}</Badge>
-      <Button size="sm" :disabled="!repo || busy" @click="run(() => api.pull(repo))">
-        <ArrowDownToLine class="size-3.5" /> Pull
+      <Button size="sm" :disabled="!repo || busy" @click="run(() => api.pull(repo), 'pull')">
+        <Spinner v-if="runningAction === 'pull'" :size="14" />
+        <ArrowDownToLine v-else class="size-3.5" />
+        Pull
       </Button>
-      <Button size="sm" :disabled="!repo || busy" @click="run(() => api.push(repo, status?.branch ?? ''))">
-        <ArrowUpFromLine class="size-3.5" /> Push
+      <Button size="sm" :disabled="!repo || busy" @click="run(() => api.push(repo, status?.branch ?? ''), 'push')">
+        <Spinner v-if="runningAction === 'push'" :size="14" />
+        <ArrowUpFromLine v-else class="size-3.5" />
+        Push
       </Button>
-      <Button variant="ghost" size="icon" title="刷新" :disabled="!repo || busy" @click="refresh">
-        <RefreshCw class="size-4" />
+      <Button
+        variant="ghost"
+        size="icon"
+        title="刷新"
+        :disabled="!repo || busy || refreshing"
+        @click="doRefresh"
+      >
+        <RefreshCw class="size-4" :class="refreshing && 'animate-spin'" />
+      </Button>
+      <Button variant="ghost" size="icon" title="新建分支" :disabled="!repo || busy" @click="openCreateBranch">
+        <GitBranchPlus class="size-4" />
       </Button>
       <Button variant="ghost" size="icon" title="设置" @click="showSettings = true">
         <SettingsIcon class="size-4" />
@@ -467,21 +606,13 @@ onMounted(async () => {
         <div class="px-3 pt-3 pb-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
           分支
         </div>
-        <form
-          class="px-2.5 pb-2"
-          @submit.prevent="
-            (e) => {
-              const input = (e.target as HTMLFormElement).querySelector('input')!;
-              const raw = input.value.trim();
-              if (!raw) return;
-              const p = settings.branchPrefix;
-              const name = p && !raw.startsWith(p) ? p + raw : raw;
-              run(() => api.branchCreate(repo, name)).then(() => (input.value = ''));
-            }
-          "
-        >
-          <Input type="text" :placeholder="settings.branchPrefix ? settings.branchPrefix + '… ⏎' : '新分支名 ⏎'" />
-        </form>
+        <!-- 分支模糊搜索（创建分支在工具栏按钮） -->
+        <div class="relative px-2.5 pb-2">
+          <Search
+            class="pointer-events-none absolute top-1/2 left-4.5 size-3.5 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input v-model="branchFilter" placeholder="搜索分支…" class="h-7 pl-7 text-xs" />
+        </div>
         <!-- 本地分支组：一级栏，图标+强调 -->
         <div
           class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium select-none hover:bg-muted"
@@ -548,6 +679,7 @@ onMounted(async () => {
             :commits="commits"
             :filter="filter"
             @open-commit="(c: LogEntry) => (diffState = { kind: 'commit', target: c })"
+            @commit-menu="onCommitMenu"
           />
           <div v-else-if="repo" class="grid h-full place-items-center text-muted-foreground">
             暂无提交
@@ -572,12 +704,90 @@ onMounted(async () => {
           :busy="busy"
           @action="(fn: () => Promise<unknown>) => run(fn)"
           @open-diff="(t: DiffTarget) => (diffState = { kind: 'file', target: t })"
+          @discard="(t: DiffTarget) =>
+            openConfirm({
+              title: t.untracked ? '删除未跟踪文件' : '丢弃更改',
+              body: `确认${t.untracked ? '删除' : '丢弃'} ${t.path}？此操作不可恢复。`,
+              ok: () => api.discard(repo, t.path, t.untracked),
+            })"
         />
       </aside>
     </div>
 
+    <!-- 创建分支弹窗 -->
+    <div
+      v-if="showCreateBranch"
+      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      @click.self="showCreateBranch = false"
+    >
+      <div class="w-[400px] rounded-lg border border-border bg-card p-4 shadow-xl">
+        <div class="mb-2 font-medium">新建分支</div>
+        <div class="flex gap-2">
+          <select
+            v-model="newBranchPrefix"
+            class="h-8 shrink-0 rounded-md border border-border bg-background px-1.5 text-xs outline-none"
+          >
+            <option value="">无前缀</option>
+            <option v-for="p in prefixes" :key="p" :value="p">{{ p }}</option>
+          </select>
+          <Input v-model="newBranchName" placeholder="分支名" @keyup.enter="confirmCreateBranch" />
+        </div>
+        <p class="mt-2 text-[11px] text-muted-foreground">
+          基于当前分支 {{ status?.branch || "—" }} 创建并自动切换。
+        </p>
+        <div class="mt-3 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" @click="showCreateBranch = false">取消</Button>
+          <Button variant="default" size="sm" :disabled="!newBranchName.trim() || busy" @click="confirmCreateBranch">
+            创建
+          </Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 历史行右键菜单 -->
+    <div v-if="commitCtx" class="fixed inset-0 z-40" @click="commitCtx = null" @contextmenu.prevent="commitCtx = null">
+      <div
+        class="fixed min-w-[170px] rounded-md border border-border bg-card py-1 shadow-xl"
+        :style="{ left: commitCtx.x + 'px', top: commitCtx.y + 'px' }"
+      >
+        <button
+          v-for="item in [
+            { label: '复制 hash', fn: () => copyHash(commitCtx!.c.hash) },
+            {
+              label: 'Checkout 到该提交',
+              fn: () =>
+                openConfirm({
+                  title: 'Checkout 提交',
+                  body: `将进入 detached HEAD 状态（${commitCtx!.c.hash.slice(0, 10)}），后续可切回任意分支。`,
+                  ok: () => api.checkout(repo, commitCtx!.c.hash.slice(0, 10)),
+                }),
+            },
+            {
+              label: 'Revert 该提交',
+              fn: () =>
+                openConfirm({
+                  title: 'Revert 提交',
+                  body: `确认 revert「${commitCtx!.c.subject}」？会生成一个反向提交。`,
+                  ok: () => api.revert(repo, commitCtx!.c.hash),
+                }),
+            },
+          ]"
+          :key="item.label"
+          class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs hover:bg-muted"
+          @click.stop="
+            () => {
+              item.fn();
+              commitCtx = null;
+            }
+          "
+        >
+          {{ item.label }}
+        </button>
+      </div>
+    </div>
+
     <!-- 设置弹窗 -->
-    <SettingsModal v-if="showSettings" @close="showSettings = false" />
+    <SettingsModal v-if="showSettings" :repo="repo" @close="showSettings = false" />
 
     <footer class="flex items-center gap-3 border-t border-border px-3 py-1 text-xs text-muted-foreground">
       <span>{{ status?.branch ?? "—" }}</span>

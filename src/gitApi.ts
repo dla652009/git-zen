@@ -64,3 +64,13 @@ export const branchRename = (repo: string, oldName: string, newName: string) =>
   invoke<void>("git_branch_rename", { repo, old: oldName, new: newName });
 export const merge = (repo: string, name: string) =>
   invoke<void>("git_merge", { repo, name });
+export const pushDelete = (repo: string, remote: string, name: string) =>
+  invoke<void>("git_push_delete", { repo, remote, name });
+export const getUser = (repo: string) =>
+  invoke<[string, string]>("git_get_user", { repo });
+export const configUser = (repo: string, name: string, email: string) =>
+  invoke<void>("git_config_user", { repo, name, email });
+export const discard = (repo: string, path: string, untracked: boolean) =>
+  invoke<void>("git_discard", { repo, path, untracked });
+export const revert = (repo: string, hash: string) =>
+  invoke<void>("git_revert", { repo, hash });

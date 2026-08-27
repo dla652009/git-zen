@@ -37,7 +37,8 @@ pub struct Status {
 
 #[tauri::command]
 pub fn git_status(repo: String) -> Result<Status, String> {
-    let out = run(&repo, &["status", "--porcelain=v1", "-b"])?;
+    // -uall：未跟踪目录展开成逐个文件（默认会把整个目录折叠成 src/ 导致无法 diff）
+    let out = run(&repo, &["status", "--porcelain=v1", "-b", "-uall"])?;
     let mut st = Status {
         branch: String::new(),
         ahead: 0,
@@ -107,7 +108,7 @@ pub struct LogEntry {
 
 #[tauri::command]
 pub fn git_log(repo: String, skip: Option<u32>) -> Result<Vec<LogEntry>, String> {
-    let args = vec![
+    let args = [
         "log".to_string(),
         format!("--skip={}", skip.unwrap_or(0)),
         "--max-count=300".to_string(),
@@ -250,7 +251,9 @@ pub fn git_diff_untracked(repo: String, path: String) -> Result<String, String> 
     let p = Path::new(&repo).join(&path);
     let bytes = std::fs::read(&p).map_err(|e| format!("读取文件失败: {e}"))?;
     if bytes.contains(&0) {
-        return Ok(format!("diff --git a/{path} b/{path}\n（二进制文件，无法预览内容）").into());
+        return Ok(format!(
+            "diff --git a/{path} b/{path}\n（二进制文件，无法预览内容）"
+        ));
     }
     let content = String::from_utf8_lossy(&bytes);
     let mut out = format!("diff --git a/{path} b/{path}\n@@ 新文件 @@\n");
@@ -260,6 +263,55 @@ pub fn git_diff_untracked(repo: String, path: String) -> Result<String, String> 
         out.push('\n');
     }
     Ok(out)
+}
+
+/// 读取/保存当前仓库的提交者信息（仓库级 git config）
+#[tauri::command]
+pub fn git_get_user(repo: String) -> Result<(String, String), String> {
+    let n = run(&repo, &["config", "user.name"]).unwrap_or_default();
+    let e = run(&repo, &["config", "user.email"]).unwrap_or_default();
+    Ok((n.trim().to_string(), e.trim().to_string()))
+}
+
+#[tauri::command]
+pub fn git_config_user(repo: String, name: String, email: String) -> Result<(), String> {
+    if !name.trim().is_empty() {
+        run(&repo, &["config", "user.name", name.trim()])?;
+    }
+    if !email.trim().is_empty() {
+        run(&repo, &["config", "user.email", email.trim()])?;
+    }
+    Ok(())
+}
+
+/// 丢弃更改：已跟踪文件 checkout -- 恢复；未跟踪文件直接删除（目录递归）
+#[tauri::command]
+pub fn git_discard(repo: String, path: String, untracked: bool) -> Result<(), String> {
+    if untracked {
+        use std::path::Path;
+        let p = Path::new(&repo).join(&path);
+        if p.is_dir() {
+            std::fs::remove_dir_all(&p).map_err(|e| format!("删除失败: {e}"))?
+        } else {
+            std::fs::remove_file(&p).map_err(|e| format!("删除失败: {e}"))?
+        }
+        Ok(())
+    } else {
+        run(&repo, &["checkout", "--", &path]).map(|_| ())
+    }
+}
+
+/// revert 指定提交（生成反向提交）
+#[tauri::command]
+pub fn git_revert(repo: String, hash: String) -> Result<(), String> {
+    if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("非法的 commit hash".into());
+    }
+    run(
+        &repo,
+        &["-c", "alias.revert=revert", "revert", "--no-edit", &hash],
+    )
+    .map(|_| ())
 }
 
 // ---------- actions ----------
@@ -343,4 +395,13 @@ pub fn git_branch_rename(repo: String, old: String, new: String) -> Result<(), S
 #[tauri::command]
 pub fn git_merge(repo: String, name: String) -> Result<(), String> {
     run(&repo, &["merge", "--no-edit", &name]).map(|_| ())
+}
+
+/// 删除远程分支：git push <remote> --delete <name>
+#[tauri::command]
+pub fn git_push_delete(repo: String, remote: String, name: String) -> Result<(), String> {
+    if remote.trim().is_empty() || name.trim().is_empty() {
+        return Err("远程名和分支名不能为空".into());
+    }
+    run(&repo, &["push", &remote, "--delete", &name]).map(|_| ())
 }

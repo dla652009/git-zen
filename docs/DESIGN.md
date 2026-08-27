@@ -41,7 +41,8 @@ git-zen 的对策：
 │  ├ HistoryGraph     泳道图+搜索过滤+滚动分页          │
 │  ├ ChangesPanel     暂存区/提交框（点击看diff）        │
 │  ├ DiffViewer       文件级/commit级 diff，分段折叠    │
-│  └ SettingsModal    codex风设置：主题/字体/前缀        │
+│  ├ ChangesPanel     暂存区/提交框（双击看diff,右键丢弃） │
+│  └ SettingsModal    codex风设置：用户/主题/字体/前缀    │
 ├──────────────────────────────────────────────────┤
 │ Rust 后端 (src-tauri/src/git.rs)                  │
 │  每个 command = 一次 git CLI 调用                   │
@@ -49,6 +50,8 @@ git-zen 的对策：
 │  fetch / show(hash校验, -m --first-parent)          │
 │  stage / unstage / commit / push / pull / checkout │
 │  branch_create / branch_delete(-d/-D) / rename / merge│
+│  push_delete(远程删支) / get_user / config_user        │
+│  discard(丢弃) / revert                               │
 └──────────────────────────────────────────────────┘
 ```
 

@@ -104,16 +104,22 @@ function toggle(path: string) {
         <span v-if="n.branch!.behind" class="text-amber-400/80">↓{{ n.branch!.behind }}</span>
       </span>
       <span v-if="manage" class="ml-auto flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/li:opacity-100">
-        <template v-if="!n.branch!.current">
-          <Tooltip text="合并到当前分支">
-            <GitMerge class="size-3.5 hover:text-primary" @click.stop="emit('merge', n.branch!)" />
-          </Tooltip>
-          <Tooltip text="把当前分支合并到该分支（会临时切过去）">
-            <GitPullRequestArrow class="size-3.5 hover:text-primary" @click.stop="emit('mergeInto', n.branch!)" />
+        <template v-if="n.branch!.remote">
+          <!-- 远程分支只支持删除（直接作用于远程） -->
+          <Tooltip text="删除远程分支">
+            <Trash2 class="size-3.5 hover:text-destructive" @click.stop="emit('delete', n.branch!)" />
           </Tooltip>
         </template>
-        <Pencil class="size-3.5 hover:text-primary" @click.stop="startRename(n)" />
-        <Trash2 class="size-3.5 hover:text-destructive" @click.stop="emit('delete', n.branch!)" />
+        <template v-else>
+          <Tooltip v-if="!n.branch!.current" text="合并到当前分支">
+            <GitMerge class="size-3.5 hover:text-primary" @click.stop="emit('merge', n.branch!)" />
+          </Tooltip>
+          <Tooltip v-if="!n.branch!.current" text="把当前分支合并到该分支（会切过去）">
+            <GitPullRequestArrow class="size-3.5 hover:text-primary" @click.stop="emit('mergeInto', n.branch!)" />
+          </Tooltip>
+          <Pencil class="size-3.5 hover:text-primary" @click.stop="startRename(n)" />
+          <Trash2 class="size-3.5 hover:text-destructive" @click.stop="emit('delete', n.branch!)" />
+        </template>
       </span>
     </li>
   </template>
