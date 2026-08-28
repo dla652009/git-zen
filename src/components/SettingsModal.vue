@@ -27,15 +27,17 @@ const originUrl = ref("");
 const userName = ref("");
 const userEmail = ref("");
 onMounted(async () => {
-  const custom =
-    (JSON.parse(localStorage.getItem("gz.remoteLinks") ?? "{}") as Record<string, string>)[props.repo] ?? "";
   if (props.repo) {
     try {
       originUrl.value = await api.remoteUrl(props.repo);
-    } catch {
-      /* 无远程时静默 */
+    } catch (e) {
+      // 不再完全静默：无远程/命令失败时在输入框 placeholder 可见（空串 → placeholder 提示）
+      originUrl.value = "";
+      console.warn("[git-zen] 读取 origin 失败:", e);
     }
   }
+  const custom =
+    (JSON.parse(localStorage.getItem("gz.remoteLinks") ?? "{}") as Record<string, string>)[props.repo] ?? "";
   // 默认填充 origin URL；用户改过则显示自定义值
   remoteLink.value = custom || originUrl.value;
   if (!props.repo) return;

@@ -30,7 +30,9 @@ pub fn run() {
             git::git_discard,
             git::git_revert,
             git::git_diff_unpushed,
-            git::git_write_file
+            git::git_write_file,
+            git::git_remote_url,
+            git::git_show_file
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

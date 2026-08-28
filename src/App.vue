@@ -808,7 +808,9 @@ onMounted(async () => {
             v-if="openRemotes.has(prefix)"
             v-model="collapsedGroups"
             :nodes="remoteNodes(prefix)"
+            manage
             @switch="switchBranch"
+            @delete="askDelete"
           />
         </template>
       </aside>

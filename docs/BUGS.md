@@ -9,6 +9,8 @@
       修复：全部 22 个命令改 `async fn` + `spawn_blocking` 下放线程池，主线程只管 UI
 - [x] 操作期间容易卡死 → 同根因同修复；push/pull 网络操作不再阻塞 UI，只影响各自按钮的 Spinner
 - [x] Command ai_stream not found → 根因：ai_stream 写进了 git.rs 但**漏注册** lib.rs 的 invoke_handler。已补注册
+- [x] `Command git_show_file not found` → 又是**漏注册 lib.rs**（第三次：ai_stream/git_remote_url/git_show_file）。
+      已补注册。以后 git.rs 新增命令后必须立即对账 lib.rs invoke_handler（NOTES.md 教训条目已存在）
 
 ## Diff 功能
 
@@ -28,7 +30,9 @@
       AI 页顶部独立卡片放开关，关闭时下方配置项变灰禁用；
       关闭时隐藏 Sparkles/Bot/Review 三个入口（不再是点击后提示）
 - [x] 新增远程 tab → 设置导航新增「远程」（Globe 图标）；「仓库网页链接」从个性化移入并更名
-      「远程仓库路径」，默认填充 origin URL（与 origin 相同保存时视为自动推断）
+      「远程仓库路径」，默认填充 origin URL（与 origin 相同保存时视为自动推断）。
+      首次打开输入框为空 → console 显示 `Command git_remote_url not found`：
+      **命令漏注册 lib.rs**（与 ai_stream 同款失误，cargo check 不报错），已补注册
 
 ## 分支区（左侧栏）
 
@@ -41,6 +45,9 @@
 - [x] 本地/远程折叠状态联动 → 根因：两侧共用 collapsedGroups 集合且折叠键相同——本地 dla/xxx
       与 origin/dla/xxx 剥前缀后键都是 "dla"。修复：buildNodes 加 keyPrefix 命名空间
       （local: / remote:origin:），两侧折叠状态完全独立
+- [x] 删除远程分支功能入口缺失 → 功能代码早就有（BranchTree 远程叶子 Trash2 + askDelete + git_push_delete
+      均已注册），但 **App.vue 的远程 BranchTree 忘传 manage prop** → 图标区不渲染 → 用户看不到入口。
+      已补传 manage；刷新后展开 origin 组，hover 远程分支即出删除图标（走确认框直接作用于远程）
 
 ## commit 历史区（中间）
 

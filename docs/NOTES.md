@@ -19,6 +19,13 @@ GUI 应用（windows_subsystem="windows"）里 std::process::Command 启动控�
 （git.exe）会弹黑框：dev 模式父进程在终端里看不出，打包后每次 git 调用都闪窗。
 run() 已统一加 creation_flags(CREATE_NO_WINDOW)。以后任何新增的子进程调用都要带。
 
+### 新增 command 必须注册 lib.rs invoke_handler（已踩三次，血泪）
+
+写了 #[tauri::command] 但忘在 lib.rs `invoke_handler` 列表里登记 → 前端报
+`Command xxx not found`，且 **cargo check 不报错**（Rust 侧看是合法代码），
+只有运行时才炸。ai_stream、git_remote_url 都栽过。
+**自检习惯**：git.rs 加新 pub 命令后，立刻去 lib.rs 加一行；或 grep 对账。
+
 ### Tauri command 必须 async + spawn_blocking
 
 Tauri v2 的同步 #[tauri::command] 跑在主线程：任何 git CLI 慢调用（大仓库 log、
