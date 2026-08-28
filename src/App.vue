@@ -471,7 +471,7 @@ const currentBranchNoUpstream = computed(() => {
   const b = branchList.value.find((x) => x.current && !x.remote);
   return !!b && !b.upstream;
 });
-const localNodes = computed(() => buildNodes(localBranches.value));
+const localNodes = computed(() => buildNodes(localBranches.value, "local:"));
 const remoteGroups = computed(() => {
   const map = new Map<string, Branch[]>();
   for (const b of matchBranches(branchList.value).filter((x) => x.remote)) {
@@ -495,7 +495,8 @@ function toggleRemote(p: string) {
 function remoteNodes(prefix: string): BNode[] {
   const list = remoteGroups.value.find(([p]) => p === prefix)?.[1] ?? [];
   return buildNodes(
-    list.map((b) => ({ ...b, name: b.name.slice(prefix.length + 1) }))
+    list.map((b) => ({ ...b, name: b.name.slice(prefix.length + 1) })),
+    `remote:${prefix}:`,
   );
 }
 

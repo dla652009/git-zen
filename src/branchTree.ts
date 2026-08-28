@@ -9,13 +9,14 @@ export interface BNode {
   branch?: Branch; // 有值即叶子
 }
 
-export function buildNodes(branches: Branch[]): BNode[] {
+export function buildNodes(branches: Branch[], keyPrefix = ""): BNode[] {
   const root: BNode = { seg: "", path: "", children: [], count: 0 };
   for (const b of branches) {
     const parts = b.name.split("/");
     let cur = root;
     parts.forEach((seg, i) => {
-      const path = parts.slice(0, i + 1).join("/");
+      // keyPrefix 命名空间：本地/远程的折叠状态互不干扰（同前缀如 dla 分别记忆）
+      const path = keyPrefix + parts.slice(0, i + 1).join("/");
       let child = cur.children.find((c) => c.seg === seg);
       if (!child) {
         child = { seg, path, children: [], count: 0 };

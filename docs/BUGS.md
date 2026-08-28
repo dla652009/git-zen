@@ -38,7 +38,9 @@
 - [x] 本地分支 ahead/behind 展示 → 后端 `%(upstream:track)` 解析，分支名旁 ↑N（蓝）↓M（黄）小字。首版解析器没剥 `[ahead 1]` 的方括号导致永远为 0，已实测修复
 - [x] 合并到该分支后不切回 → 流程改为：切到目标 → merge 当前 → 留在目标分支；确认框文案同步
 - [x] 远程分支删除 → 远程叶子 hover 出删除图标（仅删除，无重命名/合并），确认后 `push origin --delete <分支>`；新后端命令 `git_push_delete`。本地分支的删/改名/合并操作不变
-- [ ] 展开/收起本地的折叠分支（dla/xxx）,origin 的会同步展开/收起。需要独立控制
+- [x] 本地/远程折叠状态联动 → 根因：两侧共用 collapsedGroups 集合且折叠键相同——本地 dla/xxx
+      与 origin/dla/xxx 剥前缀后键都是 "dla"。修复：buildNodes 加 keyPrefix 命名空间
+      （local: / remote:origin:），两侧折叠状态完全独立
 
 ## commit 历史区（中间）
 
