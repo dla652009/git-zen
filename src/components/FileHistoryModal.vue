@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 文件变更历史双栏弹窗：左侧该文件的提交列表，右侧选中提交中此文件的 diff
-import { ref, onMounted } from "vue";
+import { ref, computed, onMounted } from "vue";
 import { X } from "@lucide/vue";
 import * as api from "../gitApi";
 import type { LogEntry } from "../gitApi";
@@ -29,6 +29,12 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
+});
+
+// 行 hover 提示：选中提交的改动人信息
+const selectedMeta = computed(() => {
+  const c = commits.value.find((x) => x.hash === selected.value);
+  return c ? `修改：${c.author} · ${c.date}（${c.hash.slice(0, 8)}）` : "";
 });
 
 async function select(hash: string) {
@@ -84,7 +90,7 @@ async function select(hash: string) {
         </aside>
 
         <!-- 右：该提交中此文件的 diff -->
-        <div class="min-w-0 flex-1 overflow-auto p-3 font-mono text-xs leading-5">
+        <div class="min-w-0 flex-1 select-text overflow-auto p-3 font-mono text-xs leading-5">
           <Spinner v-if="diffLoading" label="加载中…" />
           <div v-else-if="diffErr" class="text-destructive">{{ diffErr }}</div>
           <pre v-else-if="diffText" class="whitespace-pre-wrap"><span
@@ -92,6 +98,7 @@ async function select(hash: string) {
             :key="i"
             :class="l.cls"
             class="block"
+            :title="selectedMeta"
           >{{ l.text || " " }}</span></pre>
           <div v-else class="text-muted-foreground">左侧选择一个提交查看变更。</div>
         </div>

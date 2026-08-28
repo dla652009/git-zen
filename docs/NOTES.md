@@ -120,6 +120,20 @@ writable computed 的 setter 写普通 Map/对象不会触发任何失效——�
 但界面永远不更新（AI 生成提交信息回归就栽在这）。per-key 草稿这类结构用
 `reactive(new Map())` + computed get/set。
 
+### 行级 tooltip 用容器委托，别逐行包组件
+
+数百行 diff 若每行包一个 Tooltip 组件 = 数百实例+监听器+Teleport，性能不可接受。
+方案 = `ui/LineTooltips.vue`：容器 mouseover 委托 + e.target.closest('[data-tip]') 找行，
+500ms 延迟后显示共享浮层；行上只加纯 data-tip 属性（零开销）。
+
+**最终结论（已回退为原生 title）**：委托方案修了两轮仍不够稳（关闭不可靠、
+锚定错位、修一处坏一处），复杂度远超收益。diff 逐行场景原生 title 的延迟展示
+反而是对的：零代码、零性能开销、浏览器原生定位永不 bug。
+按钮类 tooltip 仍用 ui/Tooltip 组件（单实例场景无此问题）。
+
+同时警惕：批量替换时"守卫性 replace"可能误删结构性标签（曾删掉双栏行容器
+导致 Invalid end tag，build 才暴露）。
+
 ### Vue 模板事件传参的隐坑
 
 @click="fn" 会把 MouseEvent 作为第一参数传入。带布尔形参的处理函数必须写成

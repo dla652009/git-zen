@@ -22,7 +22,7 @@ import * as api from "./gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, aiCacheDelete } from "./ai";
 import type { Status, LogEntry, Branch } from "./gitApi";
 import { settings } from "./settings";
-import { Button, Input, Spinner, Md, Select } from "@/components/ui";
+import { Button, Input, Spinner, Md, Select, Tooltip } from "@/components/ui";
 import { Badge } from "@/components/ui";
 import HistoryGraph from "./components/HistoryGraph.vue";
 import ChangesPanel from "./components/ChangesPanel.vue";
@@ -671,52 +671,61 @@ onMounted(async () => {
       </div>
     </Transition>
     <header class="flex items-center gap-2 border-b border-border px-3 py-2">
-      <Button variant="ghost" size="sm" title="打开仓库" @click="openRepo">
-        <FolderOpen class="size-4" />
-        打开
-      </Button>
-      <span class="max-w-[340px] truncate text-muted-foreground" :title="repo">
-        {{ repo || "未选择仓库" }}
-      </span>
+      <Tooltip text="打开仓库">
+        <Button variant="ghost" size="sm" @click="openRepo">
+          <FolderOpen class="size-4" />
+          打开
+        </Button>
+      </Tooltip>
+      <span class="max-w-[340px] truncate text-muted-foreground"><Tooltip :text="repo">{{ repo }}</Tooltip></span>
       <span class="flex-1" />
       <Badge v-if="status?.behind" variant="warning">↓{{ status.behind }}</Badge>
       <Badge v-if="status?.ahead" variant="info">↑{{ status.ahead }}</Badge>
-      <Button size="sm" title="拉取远程更新并合并到当前分支" :disabled="!repo || busy" @click="run(() => api.pull(repo), 'pull')">
-        <Spinner v-if="runningAction === 'pull'" :size="14" />
-        <ArrowDownToLine v-else class="size-3.5" />
-        Pull
-      </Button>
-      <Button size="sm" title="推送本地提交到远程（无上游时自动建立跟踪）" :disabled="!repo || busy" @click="run(() => api.push(repo, status?.branch ?? ''), 'push')">
-        <Spinner v-if="runningAction === 'push'" :size="14" />
-        <ArrowUpFromLine v-else class="size-3.5" />
-        Push
-      </Button>
-      <Button
-        v-if="status?.ahead && settings.aiEnabled === 'on'"
-        size="sm"
-        :disabled="busy || reviewBusy"
-        title="AI Review 未推送的提交"
-        @click="startReview"
-      >
-        <Spinner v-if="reviewBusy" :size="14" />
-        <Bot v-else class="size-3.5 text-primary" />
-        Review {{ status.ahead }}
-      </Button>
-      <Button
-        variant="ghost"
-        size="icon"
-        title="刷新"
-        :disabled="!repo || busy || refreshing"
-        @click="doRefresh"
-      >
-        <RefreshCw class="size-4" :class="refreshing && 'animate-spin'" />
-      </Button>
-      <Button variant="ghost" size="icon" title="新建分支" :disabled="!repo || busy" @click="openCreateBranch">
-        <GitBranchPlus class="size-4" />
-      </Button>
-      <Button variant="ghost" size="icon" title="设置" @click="showSettings = true">
-        <SettingsIcon class="size-4" />
-      </Button>
+      <Tooltip text="拉取远程更新并合并到当前分支">
+        <Button size="sm" :disabled="!repo || busy" @click="run(() => api.pull(repo), 'pull')">
+          <Spinner v-if="runningAction === 'pull'" :size="14" />
+          <ArrowDownToLine v-else class="size-3.5" />
+          Pull
+        </Button>
+      </Tooltip>
+      <Tooltip text="推送本地提交到远程（无上游时自动建立跟踪）">
+        <Button size="sm" :disabled="!repo || busy" @click="run(() => api.push(repo, status?.branch ?? ''), 'push')">
+          <Spinner v-if="runningAction === 'push'" :size="14" />
+          <ArrowUpFromLine v-else class="size-3.5" />
+          Push
+        </Button>
+      </Tooltip>
+      <Tooltip v-if="status?.ahead && settings.aiEnabled === 'on'" text="AI Review 未推送的提交">
+        <Button
+          size="sm"
+          :disabled="busy || reviewBusy"
+          @click="startReview"
+        >
+          <Spinner v-if="reviewBusy" :size="14" />
+          <Bot v-else class="size-3.5 text-primary" />
+          Review {{ status.ahead }}
+        </Button>
+      </Tooltip>
+      <Tooltip text="刷新仓库状态">
+        <Button
+          variant="ghost"
+          size="icon"
+          :disabled="!repo || busy || refreshing"
+          @click="doRefresh"
+        >
+          <RefreshCw class="size-4" :class="refreshing && 'animate-spin'" />
+        </Button>
+      </Tooltip>
+      <Tooltip text="新建分支">
+        <Button variant="ghost" size="icon" :disabled="!repo || busy" @click="openCreateBranch">
+          <GitBranchPlus class="size-4" />
+        </Button>
+      </Tooltip>
+      <Tooltip text="设置">
+        <Button variant="ghost" size="icon" @click="showSettings = true">
+          <SettingsIcon class="size-4" />
+        </Button>
+      </Tooltip>
     </header>
 
     <!-- 仓库选项卡（vue-draggable-plus 拖动排序，带动画） -->
@@ -737,7 +746,6 @@ onMounted(async () => {
             ? 'border-border bg-card font-medium text-foreground shadow-sm hover:bg-card'
             : 'border-transparent text-muted-foreground',
         ]"
-        :title="r.path + '（右键更多操作，拖动排序）'"
         @click="switchRepo(r.path)"
         @contextmenu.prevent="tabCtx = { x: $event.clientX, y: $event.clientY, i }"
       >
@@ -745,10 +753,11 @@ onMounted(async () => {
           class="size-1.5 shrink-0 rounded-full"
           :class="r.path === repo ? 'bg-primary' : 'bg-border group-hover/tab:bg-muted-foreground'"
         />
-        {{ r.name }}
+        <Tooltip :text="r.path + '（右键更多操作，拖动排序）'">
+          <span class="max-w-[120px] truncate">{{ r.name }}</span>
+        </Tooltip>
         <X
           class="size-3 opacity-0 transition-opacity group-hover/tab:opacity-60 hover:!opacity-100 hover:text-destructive"
-          title="关闭"
           @mousedown.stop
           @click.stop="closeTab(i)"
         />
@@ -1008,17 +1017,17 @@ onMounted(async () => {
       <span>{{ status?.branch ?? "—" }}</span>
       <span class="flex-1" />
       <span v-if="status">{{ status.files.length }} 个变更文件</span>
-      <Button
-        v-if="remoteWebUrl"
-        variant="ghost"
-        size="sm"
-        class="h-5 gap-1 px-1.5 text-[11px]"
-        :title="`打开远程仓库网页：${remoteWebUrl}`"
-        @click="openRemote"
-      >
+      <Tooltip v-if="remoteWebUrl" :text="`打开远程仓库网页：${remoteWebUrl}`">
+        <Button
+          variant="ghost"
+          size="sm"
+          class="h-5 gap-1 px-1.5 text-[11px]"
+          @click="openRemote"
+        >
         <ExternalLink class="size-3" />
-        远程
-      </Button>
+          远程
+        </Button>
+      </Tooltip>
       <Badge v-if="currentBranchNoUpstream" variant="warning" class="cursor-default">
         当前分支尚未推送到远程
       </Badge>

@@ -164,11 +164,12 @@ async function genCommitMsg() {
             <template v-else>{{ f.path }}</template>
           </span>
         </Tooltip>
-        <Undo2
-          class="ml-auto size-3.5 shrink-0 opacity-0 transition-opacity group-hover/li:opacity-80 hover:!opacity-100"
-          title="取消暂存"
-          @click.stop="emit('action', () => api.unstage(repo, [f.path]))"
-        />
+        <Tooltip text="取消暂存">
+          <Undo2
+            class="ml-auto size-3.5 shrink-0 opacity-0 transition-opacity group-hover/li:opacity-80 hover:!opacity-100"
+            @click.stop="emit('action', () => api.unstage(repo, [f.path]))"
+          />
+        </Tooltip>
       </li>
       <li v-if="!staged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
     </ul>
@@ -199,11 +200,12 @@ async function genCommitMsg() {
         <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（双击查看变更）`">
           <span class="truncate text-[12.5px]">{{ f.path }}</span>
         </Tooltip>
-        <Plus
-          class="ml-auto size-3.5 shrink-0 opacity-0 transition-opacity group-hover/li:opacity-80 hover:!opacity-100"
-          title="暂存"
-          @click.stop="emit('action', () => api.stage(repo, [f.path]))"
-        />
+        <Tooltip text="暂存">
+          <Plus
+            class="ml-auto size-3.5 shrink-0 opacity-0 transition-opacity group-hover/li:opacity-80 hover:!opacity-100"
+            @click.stop="emit('action', () => api.stage(repo, [f.path]))"
+          />
+        </Tooltip>
       </li>
       <li v-if="!unstaged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
     </ul>

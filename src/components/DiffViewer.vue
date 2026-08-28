@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from "vue";
-import { X, ChevronDown, ChevronsDownUp, ChevronsUpDown, Bot } from "@lucide/vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { X, Bot } from "@lucide/vue";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite } from "../ai";
@@ -25,7 +25,7 @@ async function saveExplainToFile() {
     err.value = String(e).replace(/^Error: /, "");
   }
 }
-import { Button, Spinner, Md } from "@/components/ui";
+import { Button, Spinner, Md, Tooltip } from "@/components/ui";
 
 export interface DiffTarget {
   path: string;
@@ -170,18 +170,22 @@ const sections = computed<Section[]>(() => {
   return out;
 });
 
-const collapsed = ref(new Set<string>());
-function toggle(file: string) {
-  const next = new Set(collapsed.value);
-  if (next.has(file)) next.delete(file);
-  else next.add(file);
-  collapsed.value = next;
-}
-// 全部收起 ⇄ 全部展开，单按钮切换
-const allCollapsed = computed(() => sections.value.length > 0 && collapsed.value.size === sections.value.length);
-function toggleAll() {
-  collapsed.value = allCollapsed.value ? new Set() : new Set(sections.value.map((s) => s.file));
-}
+// 双栏：左文件列表选中项（默认第一个文件）
+const selectedFile = ref("");
+watch(sections, (list) => {
+  if (!list.find((s) => s.file === selectedFile.value)) {
+    selectedFile.value = list[0]?.file ?? "";
+  }
+}, { immediate: true });
+
+// 行 hover 提示改动人信息（工作区文件无改动人 → 显示路径与模式）
+const lineTip = computed(() =>
+  props.commit
+    ? `修改：${props.commit.author} · ${props.commit.date}`
+    : props.file
+      ? `文件：${props.file.path}${props.file.cached ? "（已暂存）" : "（工作区）"}`
+      : ""
+);
 </script>
 
 <template>
@@ -196,56 +200,54 @@ function toggleAll() {
           {{ commit ? `${commit.author} · ${commit.date}` : file?.cached ? "已暂存的变更" : "工作区变更" }}
         </span>
         <span class="flex-1" />
-        <Button
-          v-if="settings.aiEnabled === 'on'"
-          variant="ghost"
-          size="sm"
-          title="AI 解释这段变更"
-          :disabled="explainBusy"
-          @click="explain"
-        >
-          <Spinner v-if="explainBusy" :size="14" />
-          <Bot v-else class="size-3.5 text-primary" />
-        </Button>
-        <template v-if="sections.length > 1">
-          <Button variant="ghost" size="sm" :title="allCollapsed ? '全部展开' : '全部收起'" @click="toggleAll">
-            <ChevronsUpDown v-if="allCollapsed" class="size-3.5" />
-            <ChevronsDownUp v-else class="size-3.5" />
+        <Tooltip v-if="settings.aiEnabled === 'on'" text="AI 解释这段变更">
+          <Button variant="ghost" size="sm" :disabled="explainBusy" @click="explain">
+            <Spinner v-if="explainBusy" :size="14" />
+            <Bot v-else class="size-3.5 text-primary" />
           </Button>
-        </template>
+        </Tooltip>
         <Button variant="ghost" size="icon" @click="emit('close')"><X class="size-4" /></Button>
       </header>
 
-      <div class="min-h-0 flex-1 overflow-auto p-3 font-mono text-xs leading-5">
-        <Spinner v-if="loading" label="加载中…" />
-        <div v-else-if="err" class="text-destructive">{{ err }}</div>
-        <div v-else-if="!sections.length" class="text-muted-foreground">没有文件变更。</div>
-        <template v-else>
-          <div
-            v-for="s in sections"
-            :key="s.file"
-            class="mb-2 overflow-hidden rounded-md border border-border"
-          >
-            <!-- 多文件时可点击文件头展开/收起 -->
-            <div
-              v-if="sections.length > 1"
-              class="flex cursor-pointer items-center gap-1.5 bg-muted/60 px-2 py-1 font-sans font-medium select-none hover:bg-muted"
-              @click="toggle(s.file)"
+        <!-- 双栏：左文件列表 / 右选中文件的 diff（参考 FileHistoryModal 布局） -->
+        <div class="flex min-h-0 flex-1">
+        <aside class="w-56 shrink-0 overflow-y-auto border-r border-border">
+          <ul>
+            <li
+              v-for="s in sections"
+              :key="s.file"
+              :class="[
+                'cursor-pointer border-b border-border/60 px-3 py-2 font-sans hover:bg-muted',
+                selectedFile === s.file && 'bg-primary/10',
+              ]"
+              :title="s.file"
+              @click="selectedFile = s.file"
             >
-              <ChevronDown
-                class="size-3 transition-transform"
-                :class="collapsed.has(s.file) && '-rotate-90'"
-              />
-              {{ s.file }}
+              <div class="truncate text-xs font-medium">{{ s.file.split("/").pop() }}</div>
+              <div class="mt-0.5 text-[10.5px] text-muted-foreground">{{ s.lines.length }} 行</div>
+            </li>
+          </ul>
+        </aside>
+        <div class="min-w-0 flex-1 select-text overflow-auto p-3 font-mono text-xs leading-5">
+          <Spinner v-if="loading" label="加载中…" />
+          <div v-else-if="err" class="text-destructive">{{ err }}</div>
+          <div v-else-if="!sections.length" class="text-muted-foreground">没有文件变更。</div>
+          <template v-else>
+            <div
+              class="mb-2 truncate rounded bg-muted/60 px-2 py-1 font-sans text-[11px] text-muted-foreground"
+              :title="selectedFile"
+            >
+              {{ selectedFile }}
             </div>
-            <pre v-show="sections.length === 1 || !collapsed.has(s.file)" class="px-2 py-1 whitespace-pre"><span
-              v-for="(l, i) in s.lines"
+            <pre class="whitespace-pre"><span
+              v-for="(l, i) in sections.find((s) => s.file === selectedFile)?.lines ?? []"
               :key="i"
               :class="l.cls"
               class="block"
+              :title="lineTip"
             >{{ l.text || " " }}</span></pre>
-          </div>
-        </template>
+          </template>
+        </div>
       </div>
 
       <!-- AI 解释面板 -->
