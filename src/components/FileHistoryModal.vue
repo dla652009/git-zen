@@ -93,7 +93,7 @@ async function select(hash: string) {
         <div class="min-w-0 flex-1 select-text overflow-auto p-3 font-mono text-xs leading-5">
           <Spinner v-if="diffLoading" label="加载中…" />
           <div v-else-if="diffErr" class="text-destructive">{{ diffErr }}</div>
-          <pre v-else-if="diffText" class="whitespace-pre-wrap"><span
+          <pre v-else-if="diffText" class="whitespace-pre-wrap [overflow-wrap:anywhere]"><span
             v-for="(l, i) in patchLines(diffText)"
             :key="i"
             :class="l.cls"

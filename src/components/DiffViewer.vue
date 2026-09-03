@@ -5,6 +5,7 @@ import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite } from "../ai";
 import { settings } from "../settings";
+import { patchSections, type PatchLine } from "../lib/patch";
 import { FileDown } from "@lucide/vue";
 
 const savedTip = ref(false);
@@ -25,12 +26,13 @@ async function saveExplainToFile() {
     err.value = String(e).replace(/^Error: /, "");
   }
 }
-import { Button, Spinner, Md, Tooltip } from "@/components/ui";
+import { Badge, Button, Spinner, Md, Tooltip } from "@/components/ui";
 
 export interface DiffTarget {
   path: string;
   cached: boolean;
   untracked: boolean;
+  conflict?: boolean; // 合并冲突（unmerged）：只看工作区合并 diff（--cached 对未合并路径无输出）
 }
 
 export interface CommitTarget {
@@ -38,6 +40,7 @@ export interface CommitTarget {
   subject: string;
   author: string;
   date: string;
+  parents?: string[]; // HistoryGraph 传整个 LogEntry 时携带；根提交为空
 }
 
 // 二选一：单文件 diff 或整个 commit 的 patch
@@ -118,57 +121,8 @@ function onKey(e: KeyboardEvent) {
 onMounted(() => window.addEventListener("keydown", onKey));
 onUnmounted(() => window.removeEventListener("keydown", onKey));
 
-interface Line {
-  cls: string;
-  text: string;
-}
-
-const lines = computed<Line[]>(() =>
-  text.value.split("\n").map((l) => {
-    if (l.startsWith("@@")) return { cls: "bg-[var(--diff-add-bg)] text-[var(--diff-add-text)]", text: l };
-    if (l.startsWith("+") && !l.startsWith("+++"))
-      return { cls: "bg-[var(--diff-add-bg)] text-[var(--diff-add-text)]", text: l };
-    if (l.startsWith("-") && !l.startsWith("---"))
-      return { cls: "bg-[var(--diff-del-bg)] text-[var(--diff-del-text)]", text: l };
-    if (
-      l.startsWith("diff ") ||
-      l.startsWith("index ") ||
-      l.startsWith("---") ||
-      l.startsWith("+++") ||
-      l.startsWith("new file") ||
-      l.startsWith("deleted file") ||
-      l.startsWith("rename ") ||
-      l.startsWith("similarity ")
-    )
-      return { cls: "text-muted-foreground", text: l };
-    return { cls: "", text: l };
-  })
-);
-
-// 按文件切段，支持展开/收起
-interface Section {
-  file: string;
-  lines: Line[];
-}
-
-function fileNameOf(l: Line): string {
-  const m = l.text.match(/^diff --git a\/(\S+)/);
-  return m ? m[1] : "";
-}
-
-const sections = computed<Section[]>(() => {
-  const out: Section[] = [];
-  let cur: Section | null = null;
-  for (const l of lines.value) {
-    if (l.text.startsWith("diff --git ")) {
-      cur = { file: fileNameOf(l), lines: [l] };
-      out.push(cur);
-    } else if (cur) {
-      cur.lines.push(l);
-    }
-  }
-  return out;
-});
+// 按文件切段 + 行着色收敛到 lib/patch.ts（unified 与合并冲突的 combined 格式都支持）
+const sections = computed(() => patchSections(text.value));
 
 // 双栏：左文件列表选中项（默认第一个文件）
 const selectedFile = ref("");
@@ -179,13 +133,97 @@ watch(sections, (list) => {
 }, { immediate: true });
 
 // 行 hover 提示改动人信息（工作区文件无改动人 → 显示路径与模式）
-const lineTip = computed(() =>
-  props.commit
+// ---- 逐行归属（blame）：+ 行归属本次变更；context/- 行查该行真正的最后修改提交 ----
+// commit 模式 blame 父版本（`<hash>^`，按旧文件行号查）；文件模式 blame 工作区（按新文件行号查）。
+// 按选中的文件段懒加载，失败静默降级为通用提示
+interface BlameEntry {
+  author: string;
+  hash: string;
+  time: number;
+}
+const blameStore = ref<Map<string, Map<number, BlameEntry>>>(new Map());
+
+function relTime(epoch: number): string {
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
+  if (s < 60) return "刚刚";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m} 分钟前`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} 小时前`;
+  const d = Math.floor(h / 24);
+  if (d < 30) return `${d} 天前`;
+  const mo = Math.floor(d / 30);
+  if (mo < 12) return `${mo} 个月前`;
+  return `${Math.floor(mo / 12)} 年前`;
+}
+
+watch(
+  () => [sections.value, selectedFile.value] as const,
+  async ([secs, sel]) => {
+    const sec = secs.find((s) => s.file === sel);
+    if (!sec || blameStore.value.has(sel)) return;
+    if (!sec.lines.some((l) => l.oldLine !== undefined)) return; // 纯新增，无历史可归属
+    let rev: string | null = null;
+    if (props.commit) {
+      if (!props.commit.parents?.length) return; // 根提交全部为新增
+      rev = `${props.commit.hash}^`;
+    } else if (props.file?.untracked) return;
+    try {
+      const rows = await api.blame(props.repo, rev, sec.file);
+      const m = new Map<number, BlameEntry>();
+      for (const r of rows) m.set(r.line, { author: r.author, hash: r.hash, time: r.time });
+      blameStore.value = new Map(blameStore.value).set(sel, m);
+    } catch {
+      blameStore.value = new Map(blameStore.value).set(sel, new Map()); // 失败不再重试
+    }
+  },
+  { immediate: true },
+);
+
+function tipFor(l: PatchLine): string {
+  const generic = props.commit
     ? `修改：${props.commit.author} · ${props.commit.date}`
     : props.file
       ? `文件：${props.file.path}${props.file.cached ? "（已暂存）" : "（工作区）"}`
-      : ""
-);
+      : "";
+  const blameOf = (line?: number) =>
+    line !== undefined ? blameStore.value.get(selectedFile.value)?.get(line) : undefined;
+  const attribution = (b: BlameEntry) =>
+    `最后修改：${b.author} · ${relTime(b.time)}（${b.hash.slice(0, 8)}）`;
+  if (props.commit) {
+    if (l.text.startsWith("+")) return generic; // 本次提交新增 → 归属当前提交作者
+    const b = blameOf(l.oldLine);
+    return b ? attribution(b) : generic;
+  }
+  if (l.text.startsWith("+")) return "工作区修改（未提交）";
+  const b = blameOf(l.newLine);
+  return b ? attribution(b) : generic;
+}
+
+// ---- 左侧文件列表拖宽 + 持久化（与主界面侧栏同款把手）----
+const listW = ref(Number(localStorage.getItem("gz.diffListW")) || 256);
+let resizeStartX = 0;
+let resizeStartW = 0;
+function startListResize(e: MouseEvent) {
+  resizeStartX = e.clientX;
+  resizeStartW = listW.value;
+  document.body.style.cursor = "col-resize";
+  window.addEventListener("mousemove", onListResize);
+  window.addEventListener("mouseup", endListResize);
+}
+function onListResize(e: MouseEvent) {
+  listW.value = Math.min(560, Math.max(160, resizeStartW + e.clientX - resizeStartX));
+}
+function endListResize() {
+  window.removeEventListener("mousemove", onListResize);
+  window.removeEventListener("mouseup", endListResize);
+  document.body.style.cursor = "";
+  localStorage.setItem("gz.diffListW", String(listW.value));
+}
+onUnmounted(() => {
+  window.removeEventListener("mousemove", onListResize);
+  window.removeEventListener("mouseup", endListResize);
+});
 </script>
 
 <template>
@@ -199,6 +237,7 @@ const lineTip = computed(() =>
         <span class="shrink-0 text-xs text-muted-foreground">
           {{ commit ? `${commit.author} · ${commit.date}` : file?.cached ? "已暂存的变更" : "工作区变更" }}
         </span>
+        <Badge v-if="file?.conflict" variant="warning">合并冲突</Badge>
         <span class="flex-1" />
         <Tooltip v-if="settings.aiEnabled === 'on'" text="AI 解释这段变更">
           <Button variant="ghost" size="sm" :disabled="explainBusy" @click="explain">
@@ -211,7 +250,10 @@ const lineTip = computed(() =>
 
         <!-- 双栏：左文件列表 / 右选中文件的 diff（参考 FileHistoryModal 布局） -->
         <div class="flex min-h-0 flex-1">
-        <aside class="w-56 shrink-0 overflow-y-auto border-r border-border">
+        <aside
+          class="shrink-0 overflow-y-auto border-r border-border"
+          :style="{ width: listW + 'px' }"
+        >
           <ul>
             <li
               v-for="s in sections"
@@ -223,11 +265,13 @@ const lineTip = computed(() =>
               :title="s.file"
               @click="selectedFile = s.file"
             >
-              <div class="truncate text-xs font-medium">{{ s.file.split("/").pop() }}</div>
+              <div class="truncate text-xs font-medium">{{ s.file }}</div>
               <div class="mt-0.5 text-[10.5px] text-muted-foreground">{{ s.lines.length }} 行</div>
             </li>
           </ul>
         </aside>
+        <!-- 文件列表拖宽把手 -->
+        <div class="w-1 shrink-0 cursor-col-resize hover:bg-primary/40" @mousedown="startListResize" />
         <div class="min-w-0 flex-1 select-text overflow-auto p-3 font-mono text-xs leading-5">
           <Spinner v-if="loading" label="加载中…" />
           <div v-else-if="err" class="text-destructive">{{ err }}</div>
@@ -239,12 +283,12 @@ const lineTip = computed(() =>
             >
               {{ selectedFile }}
             </div>
-            <pre class="whitespace-pre"><span
+            <pre class="whitespace-pre-wrap [overflow-wrap:anywhere]"><span
               v-for="(l, i) in sections.find((s) => s.file === selectedFile)?.lines ?? []"
               :key="i"
               :class="l.cls"
               class="block"
-              :title="lineTip"
+              :title="tipFor(l)"
             >{{ l.text || " " }}</span></pre>
           </template>
         </div>

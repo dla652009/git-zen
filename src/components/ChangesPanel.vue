@@ -8,6 +8,7 @@ import {
   FileMinus,
   FileQuestion,
   FileSymlink,
+  GitMerge,
   Sparkles,
   History,
 } from "@lucide/vue";
@@ -55,6 +56,16 @@ function label(f: StatusFile): string {
   return (f.y !== " " ? f.y : f.x).toUpperCase();
 }
 
+// 未合并（冲突中）的 porcelain 状态码：UU AA DD AU UA DU UD
+function isUnmerged(f: StatusFile): boolean {
+  return (
+    f.x === "U" ||
+    f.y === "U" ||
+    (f.x === "A" && f.y === "A") ||
+    (f.x === "D" && f.y === "D")
+  );
+}
+
 // 状态 → 图标 + 颜色 + 中文说明（替代字母徽标）
 const STATUS_META: Record<string, { icon: Component; cls: string; desc: string }> = {
   A: { icon: FilePlus, cls: "text-emerald-400", desc: "新增" },
@@ -62,7 +73,7 @@ const STATUS_META: Record<string, { icon: Component; cls: string; desc: string }
   D: { icon: FileMinus, cls: "text-rose-400", desc: "删除" },
   R: { icon: FileSymlink, cls: "text-violet-400", desc: "重命名" },
   "?": { icon: FileQuestion, cls: "text-amber-400", desc: "未跟踪" },
-  U: { icon: FileQuestion, cls: "text-amber-400", desc: "冲突/未合并" },
+  U: { icon: GitMerge, cls: "text-amber-400", desc: "合并冲突" },
 };
 function statusMeta(f: StatusFile) {
   return (
@@ -151,7 +162,7 @@ async function genCommitMsg() {
         v-for="f in staged"
         :key="'s' + f.path"
         class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 whitespace-nowrap hover:bg-muted"
-        @dblclick="emit('openDiff', { path: f.path.split(' -> ').pop()!, cached: true, untracked: false })"
+        @dblclick="emit('openDiff', { path: f.path.split(' -> ').pop()!, cached: !isUnmerged(f), untracked: false, conflict: isUnmerged(f) })"
         @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: true }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
@@ -193,7 +204,7 @@ async function genCommitMsg() {
         v-for="f in unstaged"
         :key="'u' + f.path"
         class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 whitespace-nowrap hover:bg-muted"
-        @dblclick="emit('openDiff', { path: f.path, cached: false, untracked: f.x === '?' })"
+        @dblclick="emit('openDiff', { path: f.path, cached: false, untracked: f.x === '?', conflict: isUnmerged(f) })"
         @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: false }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />

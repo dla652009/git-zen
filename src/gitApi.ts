@@ -31,6 +31,14 @@ export interface Branch {
   upstream: string; // 上游短名，空 = 远程还没有这个分支
 }
 
+// git blame 单行归属（rev 为空 = 工作区内容）
+export interface BlameLine {
+  line: number; // 该版本文件中的行号（1-based）
+  hash: string; // 最后修改该行的提交（40 位）
+  author: string;
+  time: number; // author-time（epoch 秒）
+}
+
 import { invoke } from "@tauri-apps/api/core";
 
 export const status = (repo: string) => invoke<Status>("git_status", { repo });
@@ -56,6 +64,8 @@ export const diffUnpushed = (repo: string) =>
   invoke<string>("git_diff_unpushed", { repo });
 export const showFile = (repo: string, hash: string, path: string) =>
   invoke<string>("git_show_file", { repo, hash, path });
+export const blame = (repo: string, rev: string | null, path: string) =>
+  invoke<BlameLine[]>("git_blame", { repo, rev: rev ?? null, path });
 export const fetchAll = (repo: string) => invoke<void>("git_fetch", { repo });
 export const show = (repo: string, hash: string) =>
   invoke<string>("git_show", { repo, hash });

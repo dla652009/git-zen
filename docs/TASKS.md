@@ -131,6 +131,29 @@
       曾试容器委托组件（LineTooltips），因关闭不可靠/定位错位/复杂度过高回退原生 title——
       diff 逐行场景浏览器原生延迟展示恰好最稳。真正的逐行归属在需求池 blame 视图承接
 
+### 7.3（已完成）
+
+- [x] **DiffViewer 左侧文件列表显示完整路径**：不再只显示短名，列表加宽 w-56→w-64，
+      超长截断 + title 兜底全路径
+- [x] **合并冲突 diff 展示**：unmerged 文件（UU/AA/DD/AU/UA/DU/UD）双击强制走工作区 diff
+      （`git diff --cached` 对未合并路径只输出 `* Unmerged path`，不可用）；lib/patch.ts 解析
+      combined diff（`diff --cc` 双状态列，分别是相对 ours/theirs 的增删），冲突标记行
+      （<<<<<<< / ======= / >>>>>>>）琥珀色高亮；弹窗头部显示「合并冲突」Badge，
+      文件状态图标改 GitMerge；新增 patch.test.ts 自检
+
+### 7.4（已完成）
+
+- [x] **DiffViewer 文件列表可拖宽**：与主界面侧栏同款把手，160-560px，localStorage 持久化（gz.diffListW）
+- [x] **diff 长行折行**：原 `whitespace-pre` 不折行，且 flex 布局里 break-word 不影响 min-content
+      宽度导致长行溢出容器；改 `whitespace-pre-wrap` + `[overflow-wrap:anywhere]`
+      （DiffViewer 与 FileHistoryModal 同步修复）
+- [x] **逐行归属（blame）**：新后端命令 `git_blame`（解析 `--porcelain`，sha 的 author/author-time
+      元信息只在首块出现、按 sha 缓存）；patch.ts 跟踪 unified hunk 行号（PatchLine.oldLine/newLine）；
+      DiffViewer 行级 tip 规则——commit 模式：+ 行归属当前提交作者，context/- 行 blame 父版本
+      （`<hash>^`，按旧文件行号查）；文件模式：+ 行=工作区未提交，context 行 blame 工作区。
+      按选中的文件段懒加载，失败静默降级为通用提示；合并冲突（combined）无行号跟踪，保持通用提示。
+      已知取舍：已暂存 diff 的 context 行按工作区 blame 近似（worktree 有二次编辑时行号可能偏移）
+
 ## 需求池（无需关注，后面排期）
 
 ### Git 核心补全

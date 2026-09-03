@@ -529,6 +529,65 @@ pub async fn git_show_file(repo: String, hash: String, path: String) -> Result<S
     .await
 }
 
+/// 逐行归属（blame）。rev 为空 = blame 工作区内容；带 rev（如 `<hash>^`）= blame 指定版本。
+/// 解析 --porcelain 输出：sha 只在首次出现的块里带 author/author-time 元信息，需按 sha 缓存
+#[derive(Serialize)]
+pub struct BlameLine {
+    line: u32,    // 该版本文件中的行号（1-based）
+    hash: String, // 最后修改该行的提交
+    author: String,
+    time: i64, // author-time（epoch 秒）
+}
+
+#[tauri::command]
+pub async fn git_blame(repo: String, rev: Option<String>, path: String) -> Result<Vec<BlameLine>, String> {
+    offload(move || {
+        let mut args = vec!["blame", "--porcelain"];
+        if let Some(r) = rev.as_deref() {
+            args.push(r);
+        }
+        args.push("--");
+        args.push(&path);
+        let out = run(&repo, &args)?;
+        let mut lines = Vec::new();
+        let mut meta: std::collections::HashMap<String, (String, i64)> =
+            std::collections::HashMap::new();
+        let mut cur: Option<(String, u32)> = None; // (sha, 该块末行号 final-line)
+        for l in out.lines() {
+            if l.starts_with('\t') {
+                // 内容行 = 一个归属块的结束
+                if let Some((sha, line)) = cur.take() {
+                    let m = meta.get(&sha).cloned().unwrap_or_default();
+                    lines.push(BlameLine { line, hash: sha, author: m.0, time: m.1 });
+                }
+                continue;
+            }
+            let mut it = l.split_whitespace();
+            let tok0 = it.next().unwrap_or("");
+            if tok0.len() == 40 && tok0.chars().all(|c| c.is_ascii_hexdigit()) {
+                // 块头：<sha> <orig-line> <final-line> [count]
+                let _orig: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                let final_line: u32 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                cur = Some((tok0.to_string(), final_line));
+            } else if let Some(sha) = cur.as_ref().map(|(s, _)| s.clone()) {
+                match tok0 {
+                    "author" => {
+                        let e = meta.entry(sha).or_insert((String::new(), 0));
+                        e.0 = l["author".len()..].trim().to_string();
+                    }
+                    "author-time" => {
+                        let e = meta.entry(sha).or_insert((String::new(), 0));
+                        e.1 = it.next().and_then(|s| s.parse().ok()).unwrap_or(0);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(lines)
+    })
+    .await
+}
+
 /// 把文本写入指定路径（AI 报告/解释导出用；路径来自系统保存对话框）
 #[tauri::command]
 pub async fn git_write_file(path: String, content: String) -> Result<(), String> {

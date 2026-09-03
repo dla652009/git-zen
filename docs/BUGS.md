@@ -15,6 +15,20 @@
 ## Diff 功能
 
 - [x] Merge 的 diff 不展示 → `git show -m --first-parent`，对比第一父提交（已实测验证）
+- [x] 冲突文件打开 diff 弹窗显示「没有文件变更」→ 根因：冲突中 `git diff` 输出 combined diff
+      （`diff --cc <路径>`，无 a/ 前缀），切段只认 `diff --git a/` 导致全部丢行；且已暂存列表入口走
+      `--cached`，git 对未合并路径只回 `* Unmerged path`（均已临时仓库实测）。修复：lib/patch.ts 支持
+      combined 双状态列解析 + 冲突标记行琥珀高亮；ChangesPanel 对 unmerged（UU/AA/DD 等）强制
+      cached=false 并传 conflict 标记；弹窗头部显示「合并冲突」徽标
+- [x] DiffViewer 左侧文件列表只显示短名 → 改为显示完整路径（超长截断，title 兜底），列表加宽
+- [x] 文件列表宽度固定不可调 → 新增拖宽把手（与主界面侧栏同款），160-560px，localStorage 持久化
+- [x] diff 超长行文字超出容器 → 根因双重：`whitespace-pre` 从不折行 + flex 布局中 break-word 不影响
+      min-content 宽度（子项拒绝收缩直接溢出）。改 `whitespace-pre-wrap [overflow-wrap:anywhere]`
+      （anywhere 才参与 min-content 计算），DiffViewer 与 FileHistoryModal 同步修复
+- [x] 行级「改动人」只是整个 commit 的作者，不是逐行归属 → 实装真 blame：后端新命令 `git_blame`
+      （--porcelain 解析，含 sha 元信息缓存）；patch.ts 在 unified hunk 内跟踪 oldLine/newLine；
+      DiffViewer 行级 tip——+ 行归属本次变更，context/- 行显示该行真正的最后修改人/时间/hash
+      （commit 模式查父版本，文件模式查工作区），懒加载、失败静默降级
 - [x] 右侧文件改点击展示 diff 弹窗；暂存/取消暂存改为 hover 出图标按钮（+ 暂存 / Undo2 取消），与点击不冲突
 - [x] 弹窗固定 80vh 高度，加载中不再跳动
 - [x] 多文件 patch 按文件分段，点文件头展开/收起
