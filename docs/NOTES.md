@@ -168,3 +168,14 @@ HTML5 DnD 在 WebView2 里不可靠：补了 dataTransfer.setData 后 drop 仍�
 
 - mousedown 要 preventDefault 防止触发文字选中拖拽
 - 拖完松手浏览器会补发一次 click，用 suppressClick + setTimeout(0) 吞掉
+
+### vue-draggable-plus：禁止落点的位置要用 onMove 拦，别在 onEnd 里"事后收拾"
+
+标签栏拖 tab 进文件夹的教训：Sortable 默认把列表里每一项都当排序目标——悬停文件夹时
+实时把文件夹挤开腾位（DOM 被库搬走），此时在 onEnd 里改自己的数据源（归组 → syncBar
+整体替换数组）会与库内部 onUpdate 的 model splice 竞争，barOrder 被写脏，模板读
+item.kind 直接报 null TypeError。
+
+正确姿势：**onMove 返回 false 拒绝不合法的落点**（仓库→文件夹位置），让库自己走
+"无位移"复位分支；自己的数据变更推迟到 nextTick 等落子流程结束；数据源侧再用
+syncBar 过滤脏值兜底。三个都做才稳，只做其一都会偶发复现。

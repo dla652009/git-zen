@@ -306,6 +306,24 @@ const NAV = [
               </p>
             </section>
 
+            <section>
+              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">性能</h3>
+              <div class="flex items-center gap-3">
+                <label class="w-16 shrink-0 text-xs text-muted-foreground">切换缓存</label>
+                <input
+                  v-model.number="draft.repoCacheSize"
+                  type="range"
+                  min="1"
+                  max="30"
+                  class="flex-1 accent-[var(--primary)]"
+                />
+                <span class="w-14 text-right text-xs">{{ draft.repoCacheSize }} 个仓库</span>
+              </div>
+              <p class="mt-2 text-[11px] text-muted-foreground">
+                最近打开的仓库切换时直接恢复快照秒开；开了很多仓库时调大更顺。只存内存不落盘，调大对内存影响很小。
+              </p>
+            </section>
+
           </template>
 
           <!-- 远程 -->

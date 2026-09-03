@@ -153,3 +153,10 @@ body,
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* 拖拽幽灵不拦截命中测试：拖 tab 进文件夹靠 document.elementFromPoint 找目标 */
+.sortable-ghost,
+.sortable-fallback,
+.sortable-drag {
+  pointer-events: none !important;
+}

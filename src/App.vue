@@ -83,27 +83,41 @@ async function doRefresh() {
   }
 }
 
-// ---- 仓库数据 LRU 缓存（最多 5 个）：切回最近访问的仓库秒开 ----
+// ---- 仓库数据 LRU 缓存：切回最近访问的仓库秒开，容量可在设置-个性化调节 ----
 interface RepoCache {
   status: Status;
   commits: LogEntry[];
   branchList: Branch[];
 }
 const repoCache = new Map<string, RepoCache>();
+// 容量下限 1，兜底脏数据（localStorage 里被手改成非数字等）
+function cacheCapacity(): number {
+  return Math.max(1, Math.floor(settings.repoCacheSize) || 5);
+}
 function cacheGet(path: string): RepoCache | null {
   const c = repoCache.get(path);
   if (!c) return null;
+  // 触摸保 LRU 顺序
   repoCache.delete(path);
-  repoCache.set(path, c); // 触摸，保 LRU 顺序
+  repoCache.set(path, c);
   return c;
 }
 function cachePut(path: string, data: RepoCache) {
   repoCache.delete(path);
   repoCache.set(path, data);
-  while (repoCache.size > 5) {
+  while (repoCache.size > cacheCapacity()) {
     repoCache.delete(repoCache.keys().next().value!);
   }
 }
+// 调小容量时立即淘汰最旧的，不用等下次写入
+watch(
+  () => settings.repoCacheSize,
+  () => {
+    while (repoCache.size > cacheCapacity()) {
+      repoCache.delete(repoCache.keys().next().value!);
+    }
+  },
+);
 
 // 历史视图范围：当前分支 / 所有分支
 const historyMode = ref<"current" | "all">("current");
@@ -271,8 +285,11 @@ watch(barOrder, (v) => localStorage.setItem("gz.barOrder", JSON.stringify(v)), {
 function syncBar() {
   const groups = new Set(groupList.value);
   const byPath = new Map(repos.value.map((r) => [r.path, r]));
-  const next = barOrder.value.filter((e) =>
-    e.kind === "group" ? groups.has(e.name) : byPath.has(e.path) && !byPath.get(e.path)!.group,
+  // !!e：拖拽库在极端时序下可能往数组里写入脏值，这里兜底过滤防模板读 kind 炸
+  const next = barOrder.value.filter(
+    (e): e is BarEntry =>
+      !!e &&
+      (e.kind === "group" ? groups.has(e.name) : byPath.has(e.path) && !byPath.get(e.path)!.group),
   );
   for (const g of groupList.value) {
     if (!next.some((e) => e.kind === "group" && e.name === g)) next.push({ kind: "group", name: g });
@@ -291,6 +308,44 @@ syncBar();
 const repoByPath = computed(() => new Map(repos.value.map((r) => [r.path, r])));
 const groupCount = (g: string) => repos.value.filter((r) => r.group === g).length;
 const isGroupActive = (g: string) => repos.value.some((r) => r.group === g && r.path === repo.value);
+
+// ---- 拖拽归组：仓库 tab 拖到文件夹上松手 = 收进该分组 ----
+// 拖动期间用 elementFromPoint 命中检测文件夹并高亮；落在文件夹上时 Sortable 做的
+// 中间排序会被 syncBar 修剪掉（仓库已带 group），无需回滚
+const dragOverGroup = ref("");
+const dragPointer = { x: 0, y: 0 };
+function folderUnderPointer(x: number, y: number): string {
+  const el = document.elementFromPoint(x, y);
+  const folder = el?.closest("[data-group-folder]") as HTMLElement | null;
+  return folder?.dataset.groupFolderName ?? "";
+}
+function onBarDragMove(e: MouseEvent) {
+  dragPointer.x = e.clientX;
+  dragPointer.y = e.clientY;
+  dragOverGroup.value = folderUnderPointer(e.clientX, e.clientY);
+}
+// 仓库 tab 不允许排进文件夹的位置：悬停文件夹时 Sortable 不做任何腾位/换位，
+// 松手归组完全交给 elementFromPoint 命中检测（否则 DOM 与 model 两次反向同步会打架）
+function onBarMove(evt: { dragged?: HTMLElement; related?: HTMLElement }): boolean | void {
+  const draggedIsRepo = !!evt.dragged?.dataset.repoPath;
+  const relatedIsFolder = !!evt.related?.hasAttribute?.("data-group-folder");
+  if (draggedIsRepo && relatedIsFolder) return false;
+}
+function onBarStart() {
+  window.addEventListener("mousemove", onBarDragMove);
+}
+function onBarEnd(e: { item?: HTMLElement; originalEvent?: MouseEvent }) {
+  window.removeEventListener("mousemove", onBarDragMove);
+  dragOverGroup.value = "";
+  const path = e.item?.dataset.repoPath;
+  if (!path) return; // 拖的是文件夹（无 repo-path 标记）→ 纯排序
+  const ev = e.originalEvent;
+  const g = folderUnderPointer(ev?.clientX ?? dragPointer.x, ev?.clientY ?? dragPointer.y);
+  if (g) {
+    // 等 Sortable 的落子流程（含内部 model 同步与 DOM 复位）走完再归组，避免并发写坏 barOrder
+    nextTick(() => addMember(g, path));
+  }
+}
 
 // ---- 分组 CRUD（管理弹窗调用；成员变动后 syncBar 自动修标签栏）----
 function createGroup(name: string): boolean {
@@ -965,26 +1020,33 @@ onMounted(async () => {
         fallback-class="opacity-70"
         tag="div"
         class="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto px-2"
+        @start="onBarStart"
+        @move="onBarMove"
+        @end="onBarEnd"
       >
         <template
           v-for="item in barOrder"
           :key="item.kind === 'group' ? `group:${item.name}` : `repo:${item.path}`"
         >
-          <!-- 分组文件夹：点击弹出成员下拉，激活仓库在组内时高亮 -->
+          <!-- 分组文件夹：点击弹出成员下拉，激活仓库在组内时高亮；拖仓库到此处松手可归组 -->
           <div
             v-if="item.kind === 'group'"
+            data-group-folder
+            :data-group-folder-name="item.name"
             class="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap select-none"
             :class="[
-              isGroupActive(item.name)
-                ? 'border-border bg-card font-medium text-foreground'
-                : 'border-transparent text-muted-foreground hover:bg-muted/60',
+              dragOverGroup === item.name
+                ? 'border-primary/60 bg-primary/10 text-primary ring-1 ring-primary/40'
+                : isGroupActive(item.name)
+                  ? 'border-border bg-card font-medium text-foreground'
+                  : 'border-transparent text-muted-foreground hover:bg-muted/60',
             ]"
-            :title="`分组「${item.name}」· ${groupCount(item.name)} 个仓库 · 点击展开`"
+            :title="`分组「${item.name}」· ${groupCount(item.name)} 个仓库 · 点击展开，拖仓库到此处可收进分组`"
             @click.stop="toggleFolder(item.name, $event)"
           >
             <Folder
               class="size-3.5 shrink-0"
-              :class="isGroupActive(item.name) ? 'text-primary' : 'opacity-70'"
+              :class="dragOverGroup === item.name || isGroupActive(item.name) ? 'text-primary' : 'opacity-70'"
             />
             {{ item.name }}
             <ChevronDown class="size-3 opacity-50" />
@@ -992,6 +1054,7 @@ onMounted(async () => {
           <!-- 仓库选项卡 -->
           <div
             v-else
+            :data-repo-path="item.path"
             class="group/tab flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors select-none"
             :class="[
               item.path === repo
@@ -1005,7 +1068,7 @@ onMounted(async () => {
               class="size-1.5 shrink-0 rounded-full"
               :class="item.path === repo ? 'bg-primary' : 'bg-border group-hover/tab:bg-muted-foreground'"
             />
-            <Tooltip :text="item.path + '（右键更多操作，可拖动排序）'">
+            <Tooltip :text="item.path">
               <span class="max-w-[120px] truncate">{{ repoByPath.get(item.path)?.name }}</span>
             </Tooltip>
             <X

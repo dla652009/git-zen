@@ -6,6 +6,7 @@ export interface Settings {
   fontFamily: string;
   fontSize: number;
   branchPrefix: string;
+  repoCacheSize: number; // 仓库切换 LRU 缓存容量（个），大仓库多时调大切换更顺
   aiBaseUrl: string; // OpenAI 兼容入口，如 https://api.openai.com/v1 或 http://localhost:11434/v1
   aiApiKey: string;
   aiModel: string;
@@ -32,6 +33,7 @@ const DEFAULTS: Settings = {
     '"Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif',
   fontSize: 13,
   branchPrefix: "",
+  repoCacheSize: 5,
   aiBaseUrl: "https://api.openai.com/v1",
   aiApiKey: "",
   aiModel: "gpt-4o-mini",
