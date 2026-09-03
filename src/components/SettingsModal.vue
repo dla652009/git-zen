@@ -88,8 +88,9 @@ window.addEventListener("keydown", onKey);
 
 // 目前为固定快捷键，仅展示；后续可做成可配置
 const SHORTCUTS: [string, string][] = [
-  ["Ctrl + Tab / Ctrl + Shift + Tab", "下一个 / 上一个仓库选项卡"],
-  ["Ctrl + 1..9", "跳到第 N 个仓库选项卡"],
+  ["Ctrl + P", "仓库快速切换器（模糊搜索 + 最近使用排序）"],
+  ["Ctrl + Tab / Ctrl + Shift + Tab", "下一个 / 上一个仓库选项卡（仅可见的，分组内不参与）"],
+  ["Ctrl + 1..9", "跳到第 N 个可见仓库选项卡（分组内仓库不占号）"],
   ["F5", "刷新仓库状态"],
   ["Ctrl + Enter（提交框内）", "提交"],
   ["双击分支", "切换 / 建立跟踪分支"],

@@ -5,6 +5,9 @@ import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   FolderOpen,
+  Folder,
+  FolderPlus,
+  Plus,
   RefreshCw,
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -231,9 +234,11 @@ async function openRepo() {
 }
 
 // ---- 仓库选项卡：持久化所有导入过的仓库，支持重命名/删除/拖动排序 ----
+// group：可选分组名（Chrome 标签组风格），扁平存进 gz.repos，无该字段 = 未分组
 interface RepoTab {
   path: string;
   name: string;
+  group?: string;
 }
 const repos = ref<RepoTab[]>(JSON.parse(localStorage.getItem("gz.repos") ?? "[]"));
 watch(repos, (v) => localStorage.setItem("gz.repos", JSON.stringify(v)), { deep: true });
@@ -243,11 +248,207 @@ if (repo.value && !repos.value.some((r) => r.path === repo.value)) {
   repos.value.push({ path: repo.value, name: repo.value.split(/[\\/]/).pop() || repo.value });
 }
 
+// ---- 选项卡分组（书签文件夹模式）----
+// 分组以文件夹形式常驻标签栏，组内仓库只在点击文件夹弹出的下拉里出现；
+// 分组名录 gz.groups，标签栏顺序（文件夹+未分组仓库）存 gz.barOrder，管理集中在标签栏右侧按钮的弹窗
+const groupList = ref<string[]>(JSON.parse(localStorage.getItem("gz.groups") ?? "[]"));
+watch(groupList, (v) => localStorage.setItem("gz.groups", JSON.stringify(v)));
+
+interface BarGroup {
+  kind: "group";
+  name: string;
+}
+interface BarRepo {
+  kind: "repo";
+  path: string;
+}
+type BarEntry = BarGroup | BarRepo;
+const barOrder = ref<BarEntry[]>(JSON.parse(localStorage.getItem("gz.barOrder") ?? "[]"));
+watch(barOrder, (v) => localStorage.setItem("gz.barOrder", JSON.stringify(v)), { deep: true });
+
+// 自愈同步：修剪已关闭仓库/已删除分组的条目，补上漏掉的新分组/新仓库（放末尾）。
+// barOrder 与渲染列表 1:1，拖拽映射始终成立
+function syncBar() {
+  const groups = new Set(groupList.value);
+  const byPath = new Map(repos.value.map((r) => [r.path, r]));
+  const next = barOrder.value.filter((e) =>
+    e.kind === "group" ? groups.has(e.name) : byPath.has(e.path) && !byPath.get(e.path)!.group,
+  );
+  for (const g of groupList.value) {
+    if (!next.some((e) => e.kind === "group" && e.name === g)) next.push({ kind: "group", name: g });
+  }
+  for (const r of repos.value) {
+    if (!r.group && !next.some((e) => e.kind === "repo" && e.path === r.path)) {
+      next.push({ kind: "repo", path: r.path });
+    }
+  }
+  if (JSON.stringify(next) !== JSON.stringify(barOrder.value)) barOrder.value = next;
+}
+watch([repos, groupList], syncBar, { deep: true });
+localStorage.removeItem("gz.tabGroupsCollapsed"); // 旧版折叠状态键，废弃
+syncBar();
+
+const repoByPath = computed(() => new Map(repos.value.map((r) => [r.path, r])));
+const groupCount = (g: string) => repos.value.filter((r) => r.group === g).length;
+const isGroupActive = (g: string) => repos.value.some((r) => r.group === g && r.path === repo.value);
+
+// ---- 分组 CRUD（管理弹窗调用；成员变动后 syncBar 自动修标签栏）----
+function createGroup(name: string): boolean {
+  const n = name.trim();
+  if (!n || groupList.value.includes(n)) return false;
+  groupList.value = [...groupList.value, n];
+  return true;
+}
+function renameGroup(from: string, to: string): boolean {
+  const n = to.trim();
+  if (!n || (n !== from && groupList.value.includes(n))) return false;
+  groupList.value = groupList.value.map((g) => (g === from ? n : g));
+  repos.value.forEach((r) => {
+    if (r.group === from) r.group = n;
+  });
+  const e = barOrder.value.find((x): x is BarGroup => x.kind === "group" && x.name === from);
+  if (e) e.name = n;
+  return true;
+}
+function deleteGroup(name: string) {
+  groupList.value = groupList.value.filter((g) => g !== name);
+  repos.value.forEach((r) => {
+    if (r.group === name) r.group = undefined; // syncBar 把成员补回标签栏末尾
+  });
+}
+function addMember(group: string, path: string) {
+  const r = repoByPath.value.get(path);
+  if (r) r.group = group; // 一个仓库只属一个分组；syncBar 把它从标签栏移除
+}
+function removeMember(path: string) {
+  const r = repoByPath.value.get(path);
+  if (r) r.group = undefined;
+}
+
+// 分组命名弹窗（新建 / 重命名共用）
+const groupModal = ref<{ mode: "create" } | { mode: "rename"; from: string } | null>(null);
+const groupNameDraft = ref("");
+const groupModalErr = ref("");
+function openGroupCreate() {
+  groupNameDraft.value = "";
+  groupModalErr.value = "";
+  groupModal.value = { mode: "create" };
+}
+function openGroupRename(from: string) {
+  groupNameDraft.value = from;
+  groupModalErr.value = "";
+  groupModal.value = { mode: "rename", from };
+}
+function confirmGroupModal() {
+  const name = groupNameDraft.value.trim();
+  const m = groupModal.value;
+  if (!m || !name) return;
+  const ok = m.mode === "create" ? createGroup(name) : renameGroup(m.from, name);
+  if (!ok) {
+    groupModalErr.value = "该分组名已存在";
+    return;
+  }
+  groupModal.value = null;
+}
+
+// 分组管理弹窗 + 文件夹下拉
+const showGroupMgr = ref(false);
+const mgrExpanded = ref("");
+const folderDd = ref<{ x: number; y: number; group: string } | null>(null);
+function openGroupMgr() {
+  folderDd.value = null;
+  mgrExpanded.value = "";
+  showGroupMgr.value = true;
+}
+function toggleFolder(g: string, ev: MouseEvent) {
+  if (folderDd.value?.group === g) {
+    folderDd.value = null;
+    return;
+  }
+  const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+  folderDd.value = {
+    x: Math.min(rect.left, window.innerWidth - 268),
+    y: rect.bottom + 4,
+    group: g,
+  };
+}
+const folderMembers = computed(() =>
+  folderDd.value ? repos.value.filter((r) => r.group === folderDd.value!.group) : [],
+);
+function openFromFolder(path: string) {
+  folderDd.value = null;
+  switchRepo(path);
+}
+function askDeleteGroup(g: string) {
+  openConfirm({
+    title: "删除分组",
+    body: `确认删除分组「${g}」？组内 ${groupCount(g)} 个仓库将回到选项卡栏（不会关闭任何仓库）。`,
+    ok: async () => {
+      deleteGroup(g);
+      if (mgrExpanded.value === g) mgrExpanded.value = "";
+    },
+  });
+}
+
 function addRepo(path: string) {
   if (!repos.value.some((r) => r.path === path)) {
     repos.value.push({ path, name: path.split(/[\\/]/).pop() || path });
   }
 }
+
+// ---- 仓库快速切换器（Ctrl+P）：模糊搜索 + 最近使用排序，多仓库时的主要跳转方式 ----
+const mruPaths = ref<string[]>([]);
+const showSwitcher = ref(false);
+const switcherQuery = ref("");
+const switcherIndex = ref(0);
+
+const switcherResults = computed(() => {
+  const q = switcherQuery.value.trim().toLowerCase();
+  const mru = (p: string) => {
+    const i = mruPaths.value.indexOf(p);
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  const list = [...repos.value];
+  if (!q) return list.sort((a, b) => mru(a.path) - mru(b.path));
+  return list
+    .filter((r) => r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q))
+    .sort(
+      (a, b) =>
+        Number(b.name.toLowerCase().startsWith(q)) -
+          Number(a.name.toLowerCase().startsWith(q)) ||
+        mru(a.path) - mru(b.path),
+    );
+});
+function openSwitcher() {
+  switcherQuery.value = "";
+  switcherIndex.value = 0;
+  showSwitcher.value = true;
+}
+function pickSwitcher(path: string) {
+  showSwitcher.value = false;
+  switchRepo(path); // busy 时静默忽略，与点选项卡行为一致
+}
+function onSwitcherKeydown(e: KeyboardEvent) {
+  const n = switcherResults.value.length;
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    switcherIndex.value = n ? (switcherIndex.value + 1) % n : 0;
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    switcherIndex.value = n ? (switcherIndex.value - 1 + n) % n : 0;
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    const r = switcherResults.value[switcherIndex.value];
+    if (r) pickSwitcher(r.path);
+  } else if (e.key === "Escape") {
+    showSwitcher.value = false;
+  }
+}
+watch(switcherQuery, () => (switcherIndex.value = 0));
+// 键盘上下移动时把选中项滚进可视区
+watch(switcherIndex, (i) => {
+  document.getElementById(`sw-item-${i}`)?.scrollIntoView({ block: "nearest" });
+});
 
 function switchRepo(path: string) {
   if (path === repo.value || busy.value) return;
@@ -263,6 +464,8 @@ async function activate(path: string) {
   repo.value = path;
   localStorage.setItem("gz.repo", path);
   filter.value = "";
+  // 最近使用排序（Ctrl+P 切换器用）
+  mruPaths.value = [path, ...mruPaths.value.filter((p) => p !== path)];
   // 先切换：立刻清掉旧仓库数据，UI 马上呈现新选项卡的空态+loading
   status.value = null;
   commits.value = [];
@@ -309,12 +512,18 @@ async function activate(path: string) {
   fetchOnce();
 }
 
-function closeTab(i: number) {
+function closeTab(path: string) {
+  const i = repos.value.findIndex((r) => r.path === path);
+  if (i === -1) return;
   const wasActive = repos.value[i].path === repo.value;
-  repoCache.delete(repos.value[i].path); // 关闭的选项卡不占 LRU 名额
-  repos.value.splice(i, 1);
+  repoCache.delete(path); // 关闭的选项卡不占 LRU 名额
+  mruPaths.value = mruPaths.value.filter((p) => p !== path);
+  repos.value.splice(i, 1); // syncBar 自动修剪 barOrder 条目
   if (wasActive) {
-    const next = repos.value[0]?.path ?? "";
+    // 关闭的是当前仓库：优先切到标签栏第一个可见仓库；都收进分组了就落到任一剩余仓库
+    const firstBar = barOrder.value.find((e) => e.kind === "repo");
+    const next =
+      firstBar && repoByPath.value.has(firstBar.path) ? firstBar.path : (repos.value[0]?.path ?? "");
     repo.value = next;
     localStorage.setItem("gz.repo", next);
     filter.value = "";
@@ -335,25 +544,30 @@ function closeTab(i: number) {
   }
 }
 
-// 选项卡重命名（右键菜单 → 弹窗输入）、右键菜单；拖动排序交给 vue-draggable-plus
-const renameTarget = ref(-1);
+// 选项卡重命名（右键菜单 → 弹窗输入）、右键菜单；拖动排序交给 vue-draggable-plus。
+// 分组的增删改查集中在标签栏右侧按钮的弹窗里，选项卡右键只保留仓库自身操作
+const renameTarget = ref(""); // 目标仓库 path
 const renameDraft = ref("");
-const tabCtx = ref<{ x: number; y: number; i: number } | null>(null);
+const tabCtx = ref<{ x: number; y: number; path: string } | null>(null);
 
 function openRenameModal() {
-  const i = tabCtx.value!.i;
-  renameTarget.value = i;
-  renameDraft.value = repos.value[i].name;
+  const r = repoByPath.value.get(tabCtx.value!.path);
+  if (!r) return;
+  renameTarget.value = r.path;
+  renameDraft.value = r.name;
   tabCtx.value = null;
 }
 function confirmRename() {
   const name = renameDraft.value.trim();
-  if (renameTarget.value >= 0 && name) repos.value[renameTarget.value].name = name;
-  renameTarget.value = -1;
+  const r = repoByPath.value.get(renameTarget.value);
+  if (r && name) r.name = name;
+  renameTarget.value = "";
 }
-function closeOthers(i: number) {
-  const keep = repos.value[i];
-  repos.value = [keep];
+// 关闭其他可见选项卡；分组内仓库是「归档」状态，不受影响
+function closeOthers(path: string) {
+  const keep = repoByPath.value.get(path);
+  if (!keep) return;
+  repos.value = repos.value.filter((r) => r.group || r.path === path);
   if (keep.path !== repo.value) activate(keep.path);
   tabCtx.value = null;
 }
@@ -608,15 +822,25 @@ function askMergeInto(b: Branch) {
 function onGlobalKeydown(e: KeyboardEvent) {
   if (e.ctrlKey && e.key === "Tab") {
     e.preventDefault();
-    const n = repos.value.length;
+    // 在标签栏可见仓库间循环（文件夹不参与）
+    const vis = barOrder.value.filter((x): x is BarRepo => x.kind === "repo");
+    const n = vis.length;
     if (!n) return;
-    const i = repos.value.findIndex((r) => r.path === repo.value);
+    const i = vis.findIndex((x) => x.path === repo.value);
     const d = e.shiftKey ? -1 : 1;
-    activate(repos.value[(i + d + n) % n].path);
+    activate(vis[(i + d + n) % n].path);
   } else if (e.ctrlKey && /^[1-9]$/.test(e.key)) {
     e.preventDefault();
-    const t = repos.value[Number(e.key) - 1];
+    // 第 N 个可见仓库选项卡，分组内的仓库不占号
+    const t = barOrder.value.filter((x): x is BarRepo => x.kind === "repo")[Number(e.key) - 1];
     if (t) activate(t.path);
+  } else if (e.ctrlKey && (e.key === "p" || e.key === "P")) {
+    // 仓库快速切换器
+    e.preventDefault();
+    if (showSwitcher.value) showSwitcher.value = false;
+    else openSwitcher();
+  } else if (e.key === "Escape") {
+    folderDd.value = null;
   } else if (e.key === "F5") {
     e.preventDefault();
     refresh();
@@ -652,6 +876,10 @@ const vFocus = { mounted: (el: HTMLElement) => el.focus() };
 onMounted(async () => {
   window.addEventListener("focus", () => refresh());
   window.addEventListener("keydown", onGlobalKeydown);
+  // MRU 种子：当前仓库优先，其余按选项卡顺序
+  mruPaths.value = repo.value
+    ? [repo.value, ...repos.value.map((r) => r.path).filter((p) => p !== repo.value)]
+    : [];
   if (repo.value) {
     await refresh();
     fetchOnce();
@@ -728,41 +956,72 @@ onMounted(async () => {
       </Tooltip>
     </header>
 
-    <!-- 仓库选项卡（vue-draggable-plus 拖动排序，带动画） -->
-    <VueDraggable
-      v-model="repos"
-      :animation="150"
-      :force-fallback="true"
-      fallback-class="opacity-70"
-      tag="div"
-      class="flex items-end gap-0.5 overflow-x-auto border-b border-border px-2"
-    >
-      <div
-        v-for="(r, i) in repos"
-        :key="r.path"
-        class="group/tab flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors select-none"
-        :class="[
-          r.path === repo
-            ? 'border-border bg-card font-medium text-foreground shadow-sm hover:bg-card'
-            : 'border-transparent text-muted-foreground',
-        ]"
-        @click="switchRepo(r.path)"
-        @contextmenu.prevent="tabCtx = { x: $event.clientX, y: $event.clientY, i }"
+    <!-- 仓库选项卡栏：文件夹（分组）+ 未分组仓库，可拖动排序；最右侧按钮打开分组管理 -->
+    <div class="flex items-end border-b border-border">
+      <VueDraggable
+        v-model="barOrder"
+        :animation="150"
+        :force-fallback="true"
+        fallback-class="opacity-70"
+        tag="div"
+        class="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto px-2"
       >
-        <span
-          class="size-1.5 shrink-0 rounded-full"
-          :class="r.path === repo ? 'bg-primary' : 'bg-border group-hover/tab:bg-muted-foreground'"
-        />
-        <Tooltip :text="r.path + '（右键更多操作，拖动排序）'">
-          <span class="max-w-[120px] truncate">{{ r.name }}</span>
-        </Tooltip>
-        <X
-          class="size-3 opacity-0 transition-opacity group-hover/tab:opacity-60 hover:!opacity-100 hover:text-destructive"
-          @mousedown.stop
-          @click.stop="closeTab(i)"
-        />
-      </div>
-    </VueDraggable>
+        <template
+          v-for="item in barOrder"
+          :key="item.kind === 'group' ? `group:${item.name}` : `repo:${item.path}`"
+        >
+          <!-- 分组文件夹：点击弹出成员下拉，激活仓库在组内时高亮 -->
+          <div
+            v-if="item.kind === 'group'"
+            class="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap select-none"
+            :class="[
+              isGroupActive(item.name)
+                ? 'border-border bg-card font-medium text-foreground'
+                : 'border-transparent text-muted-foreground hover:bg-muted/60',
+            ]"
+            :title="`分组「${item.name}」· ${groupCount(item.name)} 个仓库 · 点击展开`"
+            @click.stop="toggleFolder(item.name, $event)"
+          >
+            <Folder
+              class="size-3.5 shrink-0"
+              :class="isGroupActive(item.name) ? 'text-primary' : 'opacity-70'"
+            />
+            {{ item.name }}
+            <ChevronDown class="size-3 opacity-50" />
+          </div>
+          <!-- 仓库选项卡 -->
+          <div
+            v-else
+            class="group/tab flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors select-none"
+            :class="[
+              item.path === repo
+                ? 'border-border bg-card font-medium text-foreground shadow-sm hover:bg-card'
+                : 'border-transparent text-muted-foreground',
+            ]"
+            @click="switchRepo(item.path)"
+            @contextmenu.prevent="tabCtx = { x: $event.clientX, y: $event.clientY, path: item.path }"
+          >
+            <span
+              class="size-1.5 shrink-0 rounded-full"
+              :class="item.path === repo ? 'bg-primary' : 'bg-border group-hover/tab:bg-muted-foreground'"
+            />
+            <Tooltip :text="item.path + '（右键更多操作，可拖动排序）'">
+              <span class="max-w-[120px] truncate">{{ repoByPath.get(item.path)?.name }}</span>
+            </Tooltip>
+            <X
+              class="size-3 opacity-0 transition-opacity group-hover/tab:opacity-60 hover:!opacity-100 hover:text-destructive"
+              @mousedown.stop
+              @click.stop="closeTab(item.path)"
+            />
+          </div>
+        </template>
+      </VueDraggable>
+      <Tooltip text="管理分组（新建 / 重命名 / 删除 / 分配仓库）">
+        <Button variant="ghost" size="icon" class="mr-1 mb-0.5 h-6 w-6 shrink-0" @click="openGroupMgr">
+          <FolderPlus class="size-4" />
+        </Button>
+      </Tooltip>
+    </div>
 
     <div class="flex min-h-0 flex-1">
       <!-- 分支侧栏（可拖宽） -->
@@ -1049,37 +1308,249 @@ onMounted(async () => {
       @close="diffState = null"
     />
 
-    <!-- 选项卡右键菜单 -->
+    <!-- 选项卡右键菜单（重命名 / 关闭；分组操作在右侧管理按钮里） -->
     <div v-if="tabCtx" class="fixed inset-0 z-40" @click="tabCtx = null" @contextmenu.prevent="tabCtx = null">
       <div
         class="fixed min-w-[140px] rounded-md border border-border bg-card py-1 shadow-xl"
         :style="{ left: tabCtx.x + 'px', top: tabCtx.y + 'px' }"
       >
         <button
-          v-for="item in [
-            { label: '重命名…', fn: openRenameModal },
-            { label: '关闭', fn: () => closeTab(tabCtx!.i) },
-            { label: '关闭其他', fn: () => closeOthers(tabCtx!.i) },
-          ]"
-          :key="item.label"
           class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs hover:bg-muted"
           @click.stop="
             () => {
-              item.fn();
+              openRenameModal();
               tabCtx = null;
             }
           "
         >
-          {{ item.label }}
+          重命名…
         </button>
+        <button
+          class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs text-destructive hover:bg-muted"
+          @click.stop="
+            () => {
+              closeTab(tabCtx!.path);
+              tabCtx = null;
+            }
+          "
+        >
+          关闭
+        </button>
+        <button
+          class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs hover:bg-muted"
+          @click.stop="
+            () => {
+              closeOthers(tabCtx!.path);
+              tabCtx = null;
+            }
+          "
+        >
+          关闭其他
+        </button>
+      </div>
+    </div>
+
+    <!-- 分组文件夹下拉：成员仓库列表，点击激活 -->
+    <div v-if="folderDd" class="fixed inset-0 z-40" @click="folderDd = null" @contextmenu.prevent="folderDd = null">
+      <div
+        class="fixed max-h-[60vh] w-[260px] overflow-y-auto rounded-md border border-border bg-card py-1 shadow-xl"
+        :style="{ left: folderDd.x + 'px', top: folderDd.y + 'px' }"
+      >
+        <div class="px-3 py-1 text-[10.5px] uppercase tracking-wider text-muted-foreground">
+          {{ folderDd.group }} · {{ folderMembers.length }} 个仓库
+        </div>
+        <button
+          v-for="r in folderMembers"
+          :key="r.path"
+          class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted"
+          :class="r.path === repo && 'text-primary'"
+          :title="r.path"
+          @click.stop="openFromFolder(r.path)"
+        >
+          <span
+            class="size-1.5 shrink-0 rounded-full"
+            :class="r.path === repo ? 'bg-primary' : 'bg-border'"
+          />
+          <span class="truncate">{{ r.name }}</span>
+        </button>
+        <div v-if="!folderMembers.length" class="px-3 py-2 text-xs text-muted-foreground">
+          空分组 · 点右下角「管理分组」添加仓库
+        </div>
+        <div class="mt-1 border-t border-border/60 pt-1">
+          <button
+            class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted"
+            @click.stop="openGroupMgr"
+          >
+            管理分组…
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 分组管理弹窗：新建 / 重命名 / 删除 / 分配仓库 -->
+    <div
+      v-if="showGroupMgr"
+      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      @click.self="showGroupMgr = false"
+    >
+      <div class="flex max-h-[75vh] w-[520px] flex-col rounded-lg border border-border bg-card shadow-xl">
+        <header class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
+          <FolderPlus class="size-4 text-primary" />
+          <span class="font-medium">分组管理</span>
+          <span class="flex-1" />
+          <Button variant="ghost" size="icon" @click="showGroupMgr = false"><X class="size-4" /></Button>
+        </header>
+        <div class="min-h-0 flex-1 overflow-y-auto p-3">
+          <Button variant="secondary" size="sm" class="mb-2" @click="openGroupCreate">
+            <Plus class="size-3.5" /> 新建分组
+          </Button>
+          <div v-if="!groupList.length" class="py-8 text-center text-xs text-muted-foreground">
+            还没有分组。新建一个，然后把仓库收进去——标签栏会出现一个文件夹，点击可展开仓库列表。
+          </div>
+          <div v-for="g in groupList" :key="g" class="mb-2 rounded-md border border-border">
+            <div class="flex items-center gap-2 px-3 py-2">
+              <button
+                class="flex flex-1 cursor-pointer items-center gap-1.5 text-left text-[13px]"
+                @click="mgrExpanded = mgrExpanded === g ? '' : g"
+              >
+                <ChevronDown
+                  class="size-3 text-muted-foreground transition-transform"
+                  :class="mgrExpanded !== g && '-rotate-90'"
+                />
+                <Folder class="size-3.5 text-primary" />
+                <span class="font-medium">{{ g }}</span>
+                <span class="text-[11px] text-muted-foreground">{{ groupCount(g) }} 个仓库</span>
+                <span v-if="isGroupActive(g)" class="size-1.5 rounded-full bg-primary" title="当前打开的仓库在此分组" />
+              </button>
+              <Button variant="ghost" size="sm" class="h-6 px-2 text-[11px]" @click="openGroupRename(g)">重命名</Button>
+              <Button variant="ghost" size="sm" class="h-6 px-2 text-[11px] text-destructive" @click="askDeleteGroup(g)">
+                删除
+              </Button>
+            </div>
+            <!-- 成员编辑：移出 / 添加 -->
+            <div v-if="mgrExpanded === g" class="border-t border-border/60 px-3 py-2">
+              <div
+                v-for="r in repos.filter((x) => x.group === g)"
+                :key="r.path"
+                class="flex items-center gap-2 py-1 text-xs"
+              >
+                <span
+                  class="size-1.5 shrink-0 rounded-full"
+                  :class="r.path === repo ? 'bg-primary' : 'bg-border'"
+                />
+                <span class="shrink-0 font-medium">{{ r.name }}</span>
+                <span class="flex-1 truncate text-[10.5px] text-muted-foreground">{{ r.path }}</span>
+                <button
+                  class="cursor-pointer text-muted-foreground hover:text-destructive"
+                  title="移出分组（回到标签栏）"
+                  @click="removeMember(r.path)"
+                >
+                  <X class="size-3" />
+                </button>
+              </div>
+              <div v-if="!groupCount(g)" class="py-1 text-xs text-muted-foreground">空分组</div>
+              <div class="mt-1 border-t border-border/60 pt-1.5">
+                <div class="mb-1 text-[10.5px] text-muted-foreground">添加仓库（一个仓库只属一个分组）：</div>
+                <div class="max-h-32 space-y-0.5 overflow-y-auto">
+                  <button
+                    v-for="r in repos.filter((x) => x.group !== g)"
+                    :key="r.path"
+                    class="flex w-full cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs hover:bg-muted"
+                    @click="addMember(g, r.path)"
+                  >
+                    <Plus class="size-3 shrink-0 text-primary" />
+                    <span class="truncate">{{ r.name }}</span>
+                    <span class="ml-auto truncate text-[10.5px] text-muted-foreground">
+                      {{ r.group ? `来自「${r.group}」` : "未分组" }}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <footer class="shrink-0 border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
+          分组像书签文件夹：组内仓库不占选项卡，点文件夹下拉打开。移出/删除分组不会关闭任何仓库。
+        </footer>
+      </div>
+    </div>
+
+    <!-- 分组命名弹窗（新建 / 重命名共用） -->
+    <div
+      v-if="groupModal"
+      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      @click.self="groupModal = null"
+    >
+      <div class="w-[360px] rounded-lg border border-border bg-card p-4 shadow-xl">
+        <div class="mb-2 font-medium">{{ groupModal.mode === "create" ? "新建分组" : "重命名分组" }}</div>
+        <Input
+          v-model="groupNameDraft"
+          v-focus
+          placeholder="分组名，如：前端 / 后端"
+          @keyup.enter="confirmGroupModal"
+          @keyup.esc="groupModal = null"
+        />
+        <div v-if="groupModalErr" class="mt-1.5 text-[11px] text-destructive">{{ groupModalErr }}</div>
+        <div class="mt-3 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" @click="groupModal = null">取消</Button>
+          <Button variant="default" size="sm" :disabled="!groupNameDraft.trim()" @click="confirmGroupModal">
+            确定
+          </Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 仓库快速切换器（Ctrl+P）：模糊搜索 + 最近使用排序 -->
+    <div
+      v-if="showSwitcher"
+      class="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-[15vh]"
+      @click.self="showSwitcher = false"
+    >
+      <div class="w-[520px] overflow-hidden rounded-lg border border-border bg-card shadow-xl">
+        <div class="relative p-2">
+          <Search
+            class="pointer-events-none absolute top-1/2 left-5 size-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            v-model="switcherQuery"
+            v-focus
+            class="h-9 pl-8"
+            placeholder="搜索仓库… ↑↓ 选择 · 回车打开 · Esc 关闭"
+            @keydown="onSwitcherKeydown"
+          />
+        </div>
+        <ul class="max-h-[50vh] overflow-y-auto p-1 pb-2">
+          <li
+            v-for="(r, idx) in switcherResults"
+            :id="`sw-item-${idx}`"
+            :key="r.path"
+            :class="[
+              'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-[13px]',
+              idx === switcherIndex && 'bg-primary/10',
+            ]"
+            @click="pickSwitcher(r.path)"
+            @mousemove="switcherIndex = idx"
+          >
+            <span
+              class="size-1.5 shrink-0 rounded-full"
+              :class="r.path === repo ? 'bg-primary' : 'bg-border'"
+            />
+            <span class="shrink-0 font-medium">{{ r.name }}</span>
+            <Badge v-if="r.group" variant="muted">{{ r.group }}</Badge>
+            <span class="flex-1 truncate text-right text-[11px] text-muted-foreground">{{ r.path }}</span>
+          </li>
+          <li v-if="!switcherResults.length" class="px-3 py-6 text-center text-xs text-muted-foreground">
+            没有匹配的仓库
+          </li>
+        </ul>
       </div>
     </div>
 
     <!-- 选项卡重命名弹窗 -->
     <div
-      v-if="renameTarget >= 0"
+      v-if="renameTarget"
       class="fixed inset-0 z-40 grid place-items-center bg-black/50"
-      @click.self="renameTarget = -1"
+      @click.self="renameTarget = ''"
     >
       <div class="w-[360px] rounded-lg border border-border bg-card p-4 shadow-xl">
         <div class="mb-2 font-medium">重命名仓库选项卡</div>
@@ -1087,11 +1558,11 @@ onMounted(async () => {
           v-model="renameDraft"
           v-focus
           @keyup.enter="confirmRename"
-          @keyup.esc="renameTarget = -1"
+          @keyup.esc="renameTarget = ''"
         />
-        <p class="mt-1.5 truncate text-[11px] text-muted-foreground">{{ repos[renameTarget]?.path }}</p>
+        <p class="mt-1.5 truncate text-[11px] text-muted-foreground">{{ renameTarget }}</p>
         <div class="mt-3 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" @click="renameTarget = -1">取消</Button>
+          <Button variant="ghost" size="sm" @click="renameTarget = ''">取消</Button>
           <Button variant="default" size="sm" @click="confirmRename">确定</Button>
         </div>
       </div>

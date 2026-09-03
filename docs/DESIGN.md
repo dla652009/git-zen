@@ -102,6 +102,8 @@ git-zen 的对策：
 - rebase / cherry-pick 交互 UI → 终端更顺手
 - 冲突解决 UI → 只做报错引导
 - 自动轮询刷新 → fetch-once + 窗口聚焦刷新已够
+- 多窗口展示 → 状态全是模块级单例（repoCache/activateSeq/settings watcher），第二窗口即第二份
+  JS 上下文，得先做 store 重构且违背「轻」定位；多仓库跳转由 Ctrl+P 切换器 + 选项卡分组承接
 - 其余见 TASKS.md 需求池
 
 ## 5. 目录结构
