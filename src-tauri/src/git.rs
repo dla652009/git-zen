@@ -659,3 +659,253 @@ pub async fn git_write_file(path: String, content: String) -> Result<(), String>
     offload(move || std::fs::write(&path, content).map_err(|e| format!("写入失败: {e}")))
     .await
 }
+
+// ---------- amend / 撤销提交 ----------
+
+/// 追加到上次提交（amend）：message 非空时同时更新提交信息，否则保留原信息（--no-edit）。
+/// 是否已推送的警告由前端确认框负责
+#[tauri::command]
+pub async fn git_amend(repo: String, message: Option<String>) -> Result<(), String> {
+    offload(move || {
+        let msg = message.as_deref().map(str::trim).unwrap_or("");
+        // alias.commit=commit 防全局别名劫持（同 git_commit）
+        let args: Vec<&str> = if msg.is_empty() {
+            vec!["-c", "alias.commit=commit", "commit", "--amend", "--no-edit"]
+        } else {
+            vec!["-c", "alias.commit=commit", "commit", "--amend", "-m", msg]
+        };
+        run(&repo, &args).map(|_| ())
+    })
+    .await
+}
+
+/// 撤销最近一次提交：soft 重置到 HEAD~1，全部改动回到暂存区，工作区不动。
+/// 根提交（仓库唯一提交）没有 HEAD~1，git 会报错，前端按提交数禁用按钮兜底
+#[tauri::command]
+pub async fn git_undo_commit(repo: String) -> Result<(), String> {
+    offload(move || {
+        run(
+            &repo,
+            &["-c", "alias.reset=reset", "reset", "--soft", "HEAD~1"],
+        )
+        .map(|_| ())
+    })
+    .await
+}
+
+// ---------- stash（暂存架） ----------
+
+#[derive(Serialize)]
+pub struct StashEntry {
+    index: u32,      // stash@{N} 的 N
+    hash: String,
+    date: String,    // 相对日期（与历史区 --date=relative 风格一致）
+    subject: String, // reflog 主题：WIP on <分支>: ... / On <分支>: 自定义备注
+}
+
+/// stash 列表（stash list 接受 log 的 --format）
+#[tauri::command]
+pub async fn git_stash_list(repo: String) -> Result<Vec<StashEntry>, String> {
+    offload(move || {
+        let out = run(
+            &repo,
+            &[
+                "-c",
+                "alias.stash=stash",
+                "stash",
+                "list",
+                "--format=%gd%x1f%H%x1f%ar%x1f%gs",
+            ],
+        )?;
+        Ok(out
+            .lines()
+            .filter_map(|l| {
+                let f: Vec<&str> = l.split('\x1f').collect();
+                (f.len() == 4).then(|| StashEntry {
+                    index: f[0]
+                        .trim_start_matches("stash@{")
+                        .trim_end_matches('}')
+                        .parse()
+                        .unwrap_or(0),
+                    hash: f[1].into(),
+                    date: f[2].into(),
+                    subject: f[3].into(),
+                })
+            })
+            .collect())
+    })
+    .await
+}
+
+/// 收纳当前改动到 stash（含暂存区与工作区）；include_untracked 时 -u 一并收未跟踪文件。
+/// 没有改动时 git 仍以退出码 0 结束并输出 "No local changes to save"，这里转成明确报错
+#[tauri::command]
+pub async fn git_stash_push(
+    repo: String,
+    message: Option<String>,
+    include_untracked: bool,
+) -> Result<(), String> {
+    offload(move || {
+        let mut args = vec!["-c", "alias.stash=stash", "stash", "push"];
+        if include_untracked {
+            args.push("-u");
+        }
+        let msg = message.as_deref().map(str::trim).unwrap_or("");
+        if !msg.is_empty() {
+            args.push("-m");
+            args.push(msg);
+        }
+        let out = run(&repo, &args)?;
+        if out.contains("No local changes to save") {
+            return Err("没有可收纳的改动：暂存区和工作区都是干净的".into());
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// 恢复 stash：pop=true 恢复并删除记录（发生冲突时 git 会自动保留记录）；
+/// pop=false 仅恢复（apply），记录始终保留
+#[tauri::command]
+pub async fn git_stash_apply(repo: String, index: u32, pop: bool) -> Result<(), String> {
+    offload(move || {
+        let sub = if pop { "pop" } else { "apply" };
+        run(
+            &repo,
+            &[
+                "-c",
+                "alias.stash=stash",
+                "stash",
+                sub,
+                &format!("stash@{{{}}}", index),
+            ],
+        )
+        .map(|_| ())
+    })
+    .await
+}
+
+/// 删除一条 stash 记录（不恢复内容，记录丢弃后不可找回）
+#[tauri::command]
+pub async fn git_stash_drop(repo: String, index: u32) -> Result<(), String> {
+    offload(move || {
+        run(
+            &repo,
+            &[
+                "-c",
+                "alias.stash=stash",
+                "stash",
+                "drop",
+                &format!("stash@{{{}}}", index),
+            ],
+        )
+        .map(|_| ())
+    })
+    .await
+}
+
+// ---------- tag ----------
+
+#[derive(Serialize)]
+pub struct TagEntry {
+    name: String,
+    annotated: bool, // 附注标签（-a，带独立 message）
+    target: String,  // 指向的 commit 全 hash（附注标签取解引用后的提交）
+    date: String,    // 相对日期
+    message: String, // 附注信息；轻量标签为空串
+}
+
+/// tag 列表：for-each-ref，附注标签用 *objectname 解引用到真实提交。
+/// 注意 for-each-ref 的 format 不支持 %x1f 转义（会原样输出），用真实 tab 分隔——
+/// ref 名不允许控制字符、contents:subject 恒为单行，tab 不会撞内容
+#[tauri::command]
+pub async fn git_tag_list(repo: String) -> Result<Vec<TagEntry>, String> {
+    offload(move || {
+        let out = run(
+            &repo,
+            &[
+                "for-each-ref",
+                "refs/tags",
+                "--format=%(refname:short)\t%(objecttype)\t%(if)%(*objectname)%(then)%(*objectname)%(else)%(objectname)%(end)\t%(creatordate:relative)\t%(contents:subject)",
+            ],
+        )?;
+        Ok(out
+            .lines()
+            .filter_map(|l| {
+                let f: Vec<&str> = l.split('\t').collect();
+                (f.len() == 5).then(|| TagEntry {
+                    name: f[0].into(),
+                    annotated: f[1] == "tag",
+                    target: f[2].into(),
+                    date: f[3].into(),
+                    message: if f[1] == "tag" { f[4].into() } else { String::new() },
+                })
+            })
+            .collect())
+    })
+    .await
+}
+
+/// 新建 tag：message 非空 = 附注标签（-a -m），否则轻量标签；target 为空时打在当前 HEAD
+#[tauri::command]
+pub async fn git_tag_create(
+    repo: String,
+    name: String,
+    message: Option<String>,
+    target: Option<String>,
+) -> Result<(), String> {
+    offload(move || {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("标签名不能为空".into());
+        }
+        // 空格 / 以 - 开头会被当成 git 选项，提前拦下；其余合法性（重名等）交给 git 校验
+        if name.starts_with('-') || name.contains(char::is_whitespace) {
+            return Err("标签名不能以 - 开头或包含空格".into());
+        }
+        let mut args: Vec<String> = vec!["-c".into(), "alias.tag=tag".into(), "tag".into()];
+        let msg = message.as_deref().map(str::trim).unwrap_or("");
+        if !msg.is_empty() {
+            args.push("-a".into());
+            args.push(name.into());
+            args.push("-m".into());
+            args.push(msg.into());
+        } else {
+            args.push(name.into());
+        }
+        let t = target.as_deref().map(str::trim).unwrap_or("");
+        if !t.is_empty() {
+            if !t.chars().all(|c| c.is_ascii_hexdigit()) {
+                return Err("非法的 commit hash".into());
+            }
+            args.push(t.into());
+        }
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        run(&repo, &arg_refs).map(|_| ())
+    })
+    .await
+}
+
+/// 删除本地 tag（远程同名 tag 不受影响，需在终端 push origin :refs/tags/<name>）
+#[tauri::command]
+pub async fn git_tag_delete(repo: String, name: String) -> Result<(), String> {
+    offload(move || {
+        if name.trim().is_empty() {
+            return Err("标签名不能为空".into());
+        }
+        run(&repo, &["-c", "alias.tag=tag", "tag", "-d", name.trim()]).map(|_| ())
+    })
+    .await
+}
+
+/// 推送单个 tag 到 origin
+#[tauri::command]
+pub async fn git_tag_push(repo: String, name: String) -> Result<(), String> {
+    offload(move || {
+        if name.trim().is_empty() {
+            return Err("标签名不能为空".into());
+        }
+        run(&repo, &["push", "origin", name.trim()]).map(|_| ())
+    })
+    .await
+}

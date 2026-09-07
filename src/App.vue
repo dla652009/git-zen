@@ -17,13 +17,16 @@ import {
   GitBranch,
   GitBranchPlus,
   Cloud,
+  CloudUpload,
+  Tag,
+  Trash2,
   X,
   Bot,
   ExternalLink,
 } from "@lucide/vue";
 import * as api from "./gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, aiCacheDelete } from "./ai";
-import type { Status, LogEntry, Branch } from "./gitApi";
+import type { Status, LogEntry, Branch, TagEntry } from "./gitApi";
 import { settings } from "./settings";
 import { Button, Input, Spinner, Md, Select, Tooltip } from "@/components/ui";
 import { Badge } from "@/components/ui";
@@ -62,6 +65,7 @@ function humanize(raw: string): { msg: string; detail?: string } {
     [/rejected.*fetch first|non-fast-forward/i, "远程有新提交，先 Pull 再 Push"],
     [/nothing to commit/i, "没有可提交的内容：先暂存文件"],
     [/authentication|permission denied|could not read Username|403/i, "认证失败：请检查系统 git 凭据（credential helper / ssh key）"],
+    [/does not appear to be a git repository|No configured push destination/i, "远程不可用：没有配置 origin（先在终端 git remote add origin <url>）或地址失效"],
     [/not a git repository/i, "所选目录不是 Git 仓库"],
     [/does not have any commits yet/i, "空仓库：还没有任何提交"],
     [/conflict/i, "产生合并冲突，请在终端解决后再试"],
@@ -89,6 +93,7 @@ interface RepoCache {
   status: Status;
   commits: LogEntry[];
   branchList: Branch[];
+  tags: TagEntry[];
 }
 const repoCache = new Map<string, RepoCache>();
 // 容量下限 1，兜底脏数据（localStorage 里被手改成非数字等）
@@ -143,16 +148,18 @@ async function refresh(opts: { fetch?: boolean } = {}) {
   remoteLink.value =
     (JSON.parse(localStorage.getItem("gz.remoteLinks") ?? "{}") as Record<string, string>)[repo.value] ?? "";
   try {
-    const [s, l, b] = await Promise.all([
+    const [s, l, b, tg] = await Promise.all([
       api.status(repo.value),
       fetchLog(0),
       api.branches(repo.value),
+      api.tagList(repo.value),
     ]);
     status.value = s;
     commits.value = l;
     branchList.value = b;
+    tags.value = tg;
     canLoadMore.value = l.length >= 300;
-    cachePut(repo.value, { status: s, commits: l, branchList: b });
+    cachePut(repo.value, { status: s, commits: l, branchList: b, tags: tg });
   } catch (e) {
     showError(String(e));
   }
@@ -546,6 +553,7 @@ async function activate(path: string) {
   status.value = null;
   commits.value = [];
   branchList.value = [];
+  tags.value = [];
   canLoadMore.value = false;
   fileHistoryModal.value = null;
   remoteRaw.value = "";
@@ -557,6 +565,7 @@ async function activate(path: string) {
     status.value = cached.status;
     commits.value = cached.commits;
     branchList.value = cached.branchList;
+    tags.value = cached.tags;
     canLoadMore.value = cached.commits.length >= 300;
     fetchOnce();
     api.branches(path)
@@ -569,10 +578,15 @@ async function activate(path: string) {
   await nextTick();
   if (seq !== activateSeq) return;
   try {
-    const [s, b] = await Promise.all([api.status(path), api.branches(path)]);
+    const [s, b, tg] = await Promise.all([
+      api.status(path),
+      api.branches(path),
+      api.tagList(path),
+    ]);
     if (seq !== activateSeq) return;
     status.value = s;
     branchList.value = b;
+    tags.value = tg;
     commits.value = [];
     canLoadMore.value = false;
     await nextTick();
@@ -741,7 +755,8 @@ async function saveReviewToFile() {
 }
 
 // ---- 分支树：本地 / 按远程前缀分组，可折叠 ----
-const collapsedGroups = ref(new Set<string>());
+// "gz:tags"（侧栏标签组）默认收起，键带前缀避免与分支树节点撞名
+const collapsedGroups = ref(new Set<string>(["gz:tags"]));
 function toggleGroup(g: string) {
   const next = new Set(collapsedGroups.value);
   if (next.has(g)) next.delete(g);
@@ -788,6 +803,44 @@ function remoteNodes(prefix: string): BNode[] {
     list.map((b) => ({ ...b, name: b.name.slice(prefix.length + 1) })),
     `remote:${prefix}:`,
   );
+}
+
+// ---- 标签：侧栏标签组（推送/删除）+ 新建弹窗；历史行右键可对任意提交建 tag ----
+const tags = ref<TagEntry[]>([]);
+const tagsFiltered = computed(() => {
+  const q = branchFilter.value.trim().toLowerCase();
+  if (!q) return tags.value;
+  return tags.value.filter((t) => t.name.toLowerCase().includes(q));
+});
+const showCreateTag = ref(false);
+const newTagName = ref("");
+const newTagMsg = ref("");
+const tagTarget = ref<string | null>(null); // null = 打在当前 HEAD
+
+function openCreateTag(target?: string) {
+  if (!repo.value) return;
+  newTagName.value = "";
+  newTagMsg.value = "";
+  tagTarget.value = target ?? null;
+  showCreateTag.value = true;
+}
+function confirmCreateTag() {
+  const name = newTagName.value.trim();
+  if (!name || busy.value) return;
+  const t = tagTarget.value;
+  showCreateTag.value = false;
+  run(() => api.tagCreate(repo.value, name, newTagMsg.value || undefined, t || undefined));
+}
+function askDeleteTag(name: string) {
+  openConfirm({
+    title: "删除标签",
+    body: `确认删除标签 ${name}？若它已推送过远程，远程上的同名标签不会被删除。`,
+    ok: () => api.tagDelete(repo.value, name),
+  });
+}
+function pushTag(name: string) {
+  if (busy.value || !repo.value) return;
+  run(() => api.tagPush(repo.value, name), "tagPush");
 }
 
 // ---- 创建分支：工具栏按钮 → 弹窗（可选前缀，基于当前分支，创建即切换）----
@@ -909,6 +962,50 @@ function askMergeInto(b: Branch) {
       await api.checkout(repo.value, target);
       await api.merge(repo.value, cur);
     },
+  });
+}
+
+// ---- amend / 撤销上次提交（都在改写历史，确认框负责安全提示）----
+// "已推送"判定：分支有上游且 ahead==0，即本地与远程一致，最近一次提交就在远程
+function pushedHead(): boolean {
+  const upstream = branchList.value.find((x) => x.current && !x.remote)?.upstream;
+  return !!upstream && (status.value?.ahead ?? 0) === 0;
+}
+function askAmend(p: { message: string; stagedCount: number; onDone: () => void }) {
+  openConfirm({
+    title: "追加到上次提交 (amend)",
+    body:
+      (p.stagedCount
+        ? `把暂存区的 ${p.stagedCount} 个文件改动并入上次提交`
+        : "不并入新的文件改动，仅重写上次提交") +
+      (p.message ? "，提交信息更新为输入框内容" : "，保留原提交信息") +
+      "。" +
+      (pushedHead()
+        ? "注意：上次提交已推送到远程，amend 会改写历史，之后需在终端强制推送（git push --force-with-lease）才能更新远程分支。"
+        : ""),
+    ok: async () => {
+      await api.amend(repo.value, p.message || undefined);
+      p.onDone();
+    },
+  });
+}
+function askUndoCommit() {
+  openConfirm({
+    title: "撤销上次提交",
+    body:
+      "将撤销最近一次提交，其全部改动回到暂存区，工作区文件保持不变。" +
+      (pushedHead()
+        ? "注意：该提交已推送到远程，撤销后本地会落后于远程，重新推送需在终端强制推送。"
+        : ""),
+    ok: () => api.undoCommit(repo.value),
+  });
+}
+// 删除 stash 记录（不恢复内容，不可找回）
+function askStashDrop(index: number, subject: string) {
+  openConfirm({
+    title: "删除 Stash 记录",
+    body: `确认删除「${subject}」？这条记录收纳的改动将无法恢复。`,
+    ok: () => api.stashDrop(repo.value, index),
   });
 }
 
@@ -1193,6 +1290,44 @@ onMounted(async () => {
             @delete="askDelete"
           />
         </template>
+
+        <!-- 标签组：默认收起；组头 + 号对当前 HEAD 新建，行 hover 出 推送/删除 -->
+        <div
+          class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium select-none hover:bg-muted"
+          @click="toggleGroup('gz:tags')"
+        >
+          <ChevronDown class="size-3 transition-transform" :class="collapsedGroups.has('gz:tags') && '-rotate-90'" />
+          <Tag class="size-3.5" />
+          标签
+          <span class="text-[11px] font-normal text-muted-foreground">{{ tags.length }}</span>
+          <Tooltip text="新建标签（打在当前 HEAD）">
+            <Plus
+              class="ml-auto size-3.5 opacity-60 transition-opacity hover:!opacity-100 hover:text-primary"
+              @click.stop="openCreateTag()"
+            />
+          </Tooltip>
+        </div>
+        <ul v-if="!collapsedGroups.has('gz:tags')" class="pb-1">
+          <li
+            v-for="t in tagsFiltered"
+            :key="t.name"
+            class="group/tag flex items-center gap-1 py-1.5 pr-3 pl-6 hover:bg-muted"
+            :title="`${t.annotated ? '附注标签' : '轻量标签'} · ${t.date} · 指向 ${t.target.slice(0, 10)}${t.message ? '\n' + t.message : ''}`"
+          >
+            <span class="truncate text-xs">{{ t.name }}</span>
+            <span class="ml-auto flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/tag:opacity-100">
+              <Tooltip text="推送标签到 origin">
+                <CloudUpload class="size-3.5 hover:text-primary" @click.stop="pushTag(t.name)" />
+              </Tooltip>
+              <Tooltip text="删除标签">
+                <Trash2 class="size-3.5 hover:text-destructive" @click.stop="askDeleteTag(t.name)" />
+              </Tooltip>
+            </span>
+          </li>
+          <li v-if="!tagsFiltered.length" class="py-1.5 pl-6 pr-3 text-xs text-muted-foreground">
+            {{ tags.length ? "无匹配标签" : "暂无标签 · 点右上 + 或历史区右键新建" }}
+          </li>
+        </ul>
       </aside>
 
       <!-- 左拖宽把手 -->
@@ -1253,9 +1388,13 @@ onMounted(async () => {
           :repo="repo"
           :status="status"
           :busy="busy"
+          :commit-count="commits.length"
           @action="(fn: () => Promise<unknown>) => run(fn)"
           @open-diff="(t: DiffTarget) => (diffState = { kind: 'file', target: t })"
           @file-history="(p: string) => (fileHistoryModal = p)"
+          @amend="askAmend"
+          @undo="askUndoCommit"
+          @stash-drop="askStashDrop"
           @discard="(t: DiffTarget) =>
             openConfirm({
               title: t.untracked ? '删除未跟踪文件' : '丢弃更改',
@@ -1297,6 +1436,39 @@ onMounted(async () => {
       </div>
     </div>
 
+    <!-- 新建标签弹窗（target 为空 = 打在当前 HEAD） -->
+    <div
+      v-if="showCreateTag"
+      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      @click.self="showCreateTag = false"
+    >
+      <div class="w-[400px] rounded-lg border border-border bg-card p-4 shadow-xl">
+        <div class="mb-2 font-medium">新建标签</div>
+        <Input
+          v-model="newTagName"
+          v-focus
+          placeholder="标签名，如 v1.0.0"
+          @keyup.enter="confirmCreateTag"
+          @keyup.esc="showCreateTag = false"
+        />
+        <Input
+          v-model="newTagMsg"
+          class="mt-2"
+          placeholder="附注信息（可选，填写即创建附注标签）"
+          @keyup.esc="showCreateTag = false"
+        />
+        <p class="mt-2 text-[11px] text-muted-foreground">
+          基于{{ tagTarget ? `提交 ${tagTarget.slice(0, 10)}` : `当前 HEAD（${status?.branch || "—"}）` }}创建。
+        </p>
+        <div class="mt-3 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" @click="showCreateTag = false">取消</Button>
+          <Button variant="default" size="sm" :disabled="!newTagName.trim() || busy" @click="confirmCreateTag">
+            创建
+          </Button>
+        </div>
+      </div>
+    </div>
+
     <!-- 历史行右键菜单 -->
     <div v-if="commitCtx" class="fixed inset-0 z-40" @click="commitCtx = null" @contextmenu.prevent="commitCtx = null">
       <div
@@ -1306,6 +1478,10 @@ onMounted(async () => {
         <button
           v-for="item in [
             { label: '复制 hash', fn: () => copyHash(commitCtx!.c.hash) },
+            {
+              label: '新建标签…',
+              fn: () => openCreateTag(commitCtx!.c.hash),
+            },
             {
               label: 'Checkout 到该提交',
               fn: () =>

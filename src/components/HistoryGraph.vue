@@ -101,6 +101,7 @@ const edgesSvg = computed(() => {
 
 function refVariant(ref: string): "default" | "muted" | "info" | "warning" {
   if (ref === "HEAD") return "warning";
+  if (ref.startsWith("tag: ")) return "muted"; // 标签与分支用色区分
   if (ref.startsWith("origin/")) return "info";
   return "default";
 }
@@ -143,7 +144,7 @@ function refVariant(ref: string): "default" | "muted" | "info" | "warning" {
         <Tooltip :text="tip(c)">
           <span class="flex-1 truncate">{{ c.subject }}</span>
         </Tooltip>
-        <Badge v-for="r in c.refs" :key="r" :variant="refVariant(r)">{{ r }}</Badge>
+        <Badge v-for="r in c.refs" :key="r" :variant="refVariant(r)">{{ r.replace(/^tag: /, "") }}</Badge>
         <span class="shrink-0 text-[11.5px] text-muted-foreground">{{ c.author }} · {{ c.date }}</span>
       </li>
     </ul>

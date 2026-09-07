@@ -110,5 +110,63 @@ export const revert = (repo: string, hash: string) =>
   invoke<void>("git_revert", { repo, hash });
 export const resetUnpushed = (repo: string) =>
   invoke<void>("git_reset_unpushed", { repo });
+
+// amend 上次提交：message 为空 = 保留原提交信息（--no-edit）
+export const amend = (repo: string, message?: string) =>
+  invoke<void>("git_amend", { repo, message: message ?? null });
+// 撤销最近一次提交（reset --soft HEAD~1，改动回到暂存区）
+export const undoCommit = (repo: string) =>
+  invoke<void>("git_undo_commit", { repo });
+
+// stash 记录（index 对应 stash@{N}）
+export interface StashEntry {
+  index: number;
+  hash: string;
+  date: string; // 相对日期
+  subject: string; // WIP on <分支>: … / On <分支>: 备注
+}
+export const stashList = (repo: string) =>
+  invoke<StashEntry[]>("git_stash_list", { repo });
+export const stashPush = (
+  repo: string,
+  message?: string,
+  includeUntracked?: boolean,
+) =>
+  invoke<void>("git_stash_push", {
+    repo,
+    message: message ?? null,
+    includeUntracked: includeUntracked ?? false,
+  });
+export const stashApply = (repo: string, index: number, pop: boolean) =>
+  invoke<void>("git_stash_apply", { repo, index, pop });
+export const stashDrop = (repo: string, index: number) =>
+  invoke<void>("git_stash_drop", { repo, index });
+
+// 标签（annotated = 附注标签，message 为附注信息；轻量标签 message 为空）
+export interface TagEntry {
+  name: string;
+  annotated: boolean;
+  target: string; // 指向的 commit 全 hash
+  date: string;
+  message: string;
+}
+export const tagList = (repo: string) =>
+  invoke<TagEntry[]>("git_tag_list", { repo });
+export const tagCreate = (
+  repo: string,
+  name: string,
+  message?: string,
+  target?: string,
+) =>
+  invoke<void>("git_tag_create", {
+    repo,
+    name,
+    message: message ?? null,
+    target: target ?? null,
+  });
+export const tagDelete = (repo: string, name: string) =>
+  invoke<void>("git_tag_delete", { repo, name });
+export const tagPush = (repo: string, name: string) =>
+  invoke<void>("git_tag_push", { repo, name });
 export const writeTextFile = (path: string, content: string) =>
   invoke<void>("git_write_file", { path, content });

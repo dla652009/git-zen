@@ -175,7 +175,7 @@
 - [x] **切换缓存容量可配置**：设置-个性化「性能 → 切换缓存」滑条（1-30，默认 5），
       存 settings.repoCacheSize；调小立即淘汰最旧快照，缓存仍为纯内存不落盘
 
-## M9 实用补全（进行中）
+## M9 实用补全（已完成）
 
 - [x] **提交统计热力图**：设置-用户信息页新增 GitHub 风格 12 个月热力图（列=周、行=周一..周日，
       五档配色随主题 primary，月份/星期标尺 + 图例，超宽横向滚动）。后端 `git_commit_stats`
@@ -190,18 +190,34 @@
       未推送提交、重置回上游分支；工作区有未提交改动时一并提示数量（reset --hard 会连带丢弃）；
       注明界面不可撤销、终端 reflog 可找回。后端 `git_reset_unpushed`（`-c alias.reset=reset`
       防别名劫持）；成功后清掉该分支的 AI Review 缓存（未推送的提交已变）
+- [x] **amend 追加到上次提交**：提交区新增「追加到上次提交」按钮——暂存区改动并入上次提交，
+      提交框有内容则同时更新提交信息、留空则 `--no-edit` 保留原信息（后端 `git_amend`，
+      `-c alias.commit=commit` 防劫持）。确认框按「有上游且 ahead==0 = 上次提交已推送」给出
+      改写历史警告；成功后清空提交框草稿
+- [x] **撤销上次提交**：提交区新增「撤销上次提交」按钮，`reset --soft HEAD~1`（后端
+      `git_undo_commit`），全部改动完整回到暂存区、工作区不动；根提交（仅 1 个提交）禁用，
+      已推送同样在确认框警告；确认框一并提示「重新推送需强制推送」
+- [x] **stash 暂存架**：未暂存区头 Archive 按钮开下拉菜单（懒加载列表）——收纳当前改动
+      （可选备注 + 「包含未跟踪文件」勾选，`stash push [-u] -m`）、点记录恢复（apply 保留记录）、
+      hover 恢复并删除（pop）/仅删除记录（drop，确认框）；收纳弹窗与菜单在切仓库时自动收起。
+      后端 `git_stash_list/push/apply/drop` 四命令（list 用 `%gd%H%ar%gs` 0x1f 分隔解析，
+      push 对 git 退出码 0 的 "No local changes to save" 转成明确中文报错）
+- [x] **tag 管理（最小集）**：侧栏新增「标签」组（默认收起，行 hover 推送/删除、组头 + 新建），
+      历史行右键「新建标签…」可对任意提交打 tag，新建弹窗支持附注信息（填了 = `-a -m` 附注标签，
+      留空 = 轻量标签）；后端 `git_tag_list/create/delete/push` 四命令（list 走 for-each-ref，
+      `*objectname` 解引用附注标签到真实提交；**for-each-ref 不支持 %x1f 转义，用 tab 分隔**）。
+      历史区 refs 徽标剥掉 `tag: ` 前缀并用 muted 配色区分分支；标签列表随 refresh/activate
+      一并刷新并纳入 LRU 快照；确认框提示删本地标签不影响远程同名标签
 
 ## 需求池（无需关注，后面排期）
 
 ### Git 核心补全
 
-- tag 管理：列表/创建/删除/推送 tag（目前完全没有 tag 支持，是最明显的缺口）
-- stash 列表/弹出/恢复
-- amend 上次提交 / 撤销上次提交（reset --soft HEAD~1）
-- blame 视图：每行最后修改者/提交
+- blame 视图：每行最后修改者/提交（diff 内逐行 blame 已做，独立视图边际价值待评估）
 - 右键「加入 .gitignore」（自动追加对应行）
 - cherry-pick（右键菜单，交互简单化只做单提交）
 - 多 remote 支持：push/pull 时可选 remote（目前写死 origin）
+- tag 补全：重命名、推送全部（--tags）、删除远程同名标签（push origin :refs/tags/）
 
 ### 效率
 

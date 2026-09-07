@@ -179,3 +179,24 @@ item.kind 直接报 null TypeError。
 正确姿势：**onMove 返回 false 拒绝不合法的落点**（仓库→文件夹位置），让库自己走
 "无位移"复位分支；自己的数据变更推迟到 nextTick 等落子流程结束；数据源侧再用
 syncBar 过滤脏值兜底。三个都做才稳，只做其一都会偶发复现。
+
+### for-each-ref 的 format 不支持 %x1f，pretty format 支持
+
+同一台 git（2.47）：`git log --pretty=format:%x1f` 会输出真实的 0x1F 控制字节
+（stash list 底层是 log，同样支持，git_stash_list 靠它分隔字段）；但
+`git for-each-ref --format=%x1f` 会**原样输出 `%x1f` 四个字符**——它用的是自己的
+%(atom) 插值语言，不认 pretty 的 %xNN 转义。for-each-ref 要分隔字段就用真实字符：
+tab 安全（ref 名禁止控制字符，contents:subject 恒为单行），git_tag_list 用 tab 分隔。
+
+### stash push 没有改动时退出码是 0
+
+`git stash push` 在工作区干净时不报错，而是输出 "No local changes to save" 并以
+退出码 0 结束——run() 按 stderr 判错完全探测不到。git_stash_push 对 stdout 做了
+检查并转成明确中文报错；以后包"空操作成功"类命令时记得查 stdout 文案。
+
+### 撤销/改写提交的"已推送"判定
+
+amend 和撤销上次提交都要判断最近一次提交是否已在远程：**分支有上游且 ahead==0**
+即本地与远程一致（上次提交就在远程），确认框给出改写历史/需强制推送的警告；
+ahead>0 或无上游则操作安全。撤销根提交（仓库唯一提交）时 HEAD~1 不存在会报错，
+前端按已加载提交数 ≤1 禁用按钮兜底。

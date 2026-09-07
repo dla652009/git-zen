@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, reactive, type Component } from "vue";
+import { ref, computed, reactive, watch, type Component } from "vue";
 import {
   Plus,
   Undo2,
@@ -9,20 +9,26 @@ import {
   FileQuestion,
   FileSymlink,
   GitMerge,
+  GitCommitHorizontal,
+  RotateCcw,
   Sparkles,
   History,
+  Archive,
+  ArchiveRestore,
+  Trash2,
 } from "@lucide/vue";
 import * as api from "../gitApi";
-import type { Status, StatusFile } from "../gitApi";
+import type { Status, StatusFile, StashEntry } from "../gitApi";
 import type { DiffTarget } from "./DiffViewer.vue";
 import { AI_PROMPTS, aiComplete, clipForAI } from "../ai";
 import { settings } from "../settings";
-import { Button, Textarea, Tooltip, Spinner } from "@/components/ui";
+import { Button, Textarea, Tooltip, Spinner, Input } from "@/components/ui";
 
 const props = defineProps<{
   repo: string;
   status: Status | null;
   busy: boolean;
+  commitCount: number; // 已加载提交数：>0 才可 amend，>1 才可撤销（根提交无 HEAD~1）
 }>();
 
 // 所有操作都抛回 App.run() 统一执行+刷新；diff 打开事件抛给 App
@@ -31,7 +37,76 @@ const emit = defineEmits<{
   openDiff: [target: DiffTarget];
   discard: [target: DiffTarget]; // 右键丢弃更改（App 侧二次确认）
   fileHistory: [path: string]; // 右键查看该文件历史
+  amend: [p: { message: string; stagedCount: number; onDone: () => void }]; // 追加到上次提交（App 侧确认）
+  undo: []; // 撤销上次提交（App 侧确认）
+  stashDrop: [index: number, subject: string]; // 删除 stash 记录（App 侧确认）
 }>();
+
+// 切仓库时收起 stash 菜单/弹窗，避免上一仓库的列表串到新仓库
+watch(
+  () => props.repo,
+  () => {
+    stashMenuOpen.value = false;
+    stashPushOpen.value = false;
+  },
+);
+
+// ---- amend / 撤销上次提交：改写历史，确认框在 App 侧 ----
+function askAmend() {
+  emit("amend", {
+    message: message.value,
+    stagedCount: staged.value.length,
+    onDone: () => {
+      if (message.value) message.value = ""; // 新信息已被 amend 使用，清空草稿
+    },
+  });
+}
+
+// ---- stash（暂存架）：菜单打开时懒加载列表，收纳/恢复走 App.run() ----
+const stashMenuOpen = ref(false);
+const stashAnchor = ref({ x: 0, y: 0 });
+const stashEntries = ref<StashEntry[] | null>(null); // null = 加载中
+const stashErr = ref("");
+const stashPushOpen = ref(false);
+const stashMsg = ref("");
+const stashUntracked = ref(false);
+
+async function toggleStashMenu(ev: MouseEvent) {
+  if (stashMenuOpen.value) {
+    stashMenuOpen.value = false;
+    return;
+  }
+  const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+  stashAnchor.value = {
+    x: Math.min(rect.left, window.innerWidth - 320),
+    y: rect.bottom + 4,
+  };
+  stashMenuOpen.value = true;
+  stashErr.value = "";
+  stashEntries.value = null;
+  try {
+    stashEntries.value = await api.stashList(props.repo);
+  } catch (e) {
+    stashErr.value = String(e).replace(/^Error: /, "");
+  }
+}
+// 恢复：pop=true 恢复并删除记录（冲突时 git 自动保留），pop=false 仅恢复
+function stashRestore(index: number, pop: boolean) {
+  stashMenuOpen.value = false;
+  emit("action", () => api.stashApply(props.repo, index, pop));
+}
+function openStashPush() {
+  stashMenuOpen.value = false;
+  stashMsg.value = "";
+  stashUntracked.value = false;
+  stashPushOpen.value = true;
+}
+function doStashPush() {
+  stashPushOpen.value = false;
+  const msg = stashMsg.value;
+  const untracked = stashUntracked.value;
+  emit("action", () => api.stashPush(props.repo, msg || undefined, untracked));
+}
 
 // 未暂存文件右键菜单
 const fileCtx = ref<{ x: number; y: number; f: StatusFile; cached: boolean } | null>(null);
@@ -198,6 +273,17 @@ async function genCommitMsg() {
       >
         全部暂存
       </Button>
+      <Tooltip text="Stash：收纳/恢复改动（切分支前的临时货架）">
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-6 w-6"
+          :class="!unstaged.length && 'ml-auto'"
+          @click="toggleStashMenu"
+        >
+          <Archive class="size-3.5" />
+        </Button>
+      </Tooltip>
     </div>
     <ul class="min-h-[80px] flex-1 overflow-y-auto px-1.5">
       <li
@@ -283,10 +369,118 @@ async function genCommitMsg() {
         <input v-model="pushAfterCommit" type="checkbox" class="accent-[var(--primary)]" />
         提交后推送到远程
       </label>
+      <!-- amend / 撤销上次提交：改动历史，确认框在 App 侧 -->
+      <div class="flex items-center gap-1.5">
+        <Tooltip text="把暂存的改动追加到上次提交（amend），可同时更新提交信息">
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-6 flex-1 px-2 text-[11px]"
+            :disabled="busy || commitCount < 1 || (!staged.length && !message.trim())"
+            @click="askAmend"
+          >
+            <GitCommitHorizontal class="size-3.5" />
+            追加到上次提交
+          </Button>
+        </Tooltip>
+        <Tooltip text="撤销最近一次提交，改动回到暂存区">
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-6 flex-1 px-2 text-[11px]"
+            :disabled="busy || commitCount <= 1"
+            @click="emit('undo')"
+          >
+            <RotateCcw class="size-3.5" />
+            撤销上次提交
+          </Button>
+        </Tooltip>
+      </div>
       <Button variant="default" class="w-full" :disabled="!canCommit" @click="doCommit">
         <Spinner v-if="busy" :size="14" />
         {{ busy ? "处理中…" : `提交${staged.length ? ` (${staged.length})` : ""}` }}
       </Button>
+    </div>
+
+    <!-- stash 下拉菜单：收纳入口 + 记录列表（恢复/恢复并删除/删除） -->
+    <div
+      v-if="stashMenuOpen"
+      class="fixed inset-0 z-30"
+      @click="stashMenuOpen = false"
+      @contextmenu.prevent="stashMenuOpen = false"
+    >
+      <div
+        class="fixed max-h-[60vh] w-[300px] overflow-y-auto rounded-md border border-border bg-card py-1 shadow-xl"
+        :style="{ left: stashAnchor.x + 'px', top: stashAnchor.y + 'px' }"
+      >
+        <div class="px-3 py-1 text-[10.5px] uppercase tracking-wider text-muted-foreground">
+          Stash · 暂存架
+        </div>
+        <button
+          v-if="unstaged.length || staged.length"
+          class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs hover:bg-muted"
+          @click.stop="openStashPush"
+        >
+          <Archive class="mr-1.5 inline size-3" />
+          收纳当前改动…
+        </button>
+        <div v-if="stashErr" class="px-3 py-2 text-[11px] text-destructive">{{ stashErr }}</div>
+        <div v-else-if="stashEntries === null" class="px-3 py-2">
+          <Spinner label="加载中…" />
+        </div>
+        <template v-else>
+          <div
+            v-for="e in stashEntries"
+            :key="e.index"
+            class="group/st flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted"
+            :title="`${e.subject} · ${e.date}\n点击恢复（保留记录）`"
+            @click.stop="stashRestore(e.index, false)"
+          >
+            <Archive class="size-3 shrink-0 text-muted-foreground" />
+            <span class="min-w-0 flex-1 truncate">{{ e.subject }}</span>
+            <span class="hidden shrink-0 items-center gap-1 group-hover/st:flex">
+              <Tooltip text="恢复并删除记录（pop）">
+                <ArchiveRestore
+                  class="size-3.5 hover:text-primary"
+                  @click.stop="stashRestore(e.index, true)"
+                />
+              </Tooltip>
+              <Tooltip text="仅删除记录（不恢复）">
+                <Trash2
+                  class="size-3.5 hover:text-destructive"
+                  @click.stop="emit('stashDrop', e.index, e.subject)"
+                />
+              </Tooltip>
+            </span>
+          </div>
+          <div v-if="!stashEntries.length" class="px-3 py-2 text-xs text-muted-foreground">
+            暂无 stash 记录
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- stash 收纳弹窗 -->
+    <div
+      v-if="stashPushOpen"
+      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      @click.self="stashPushOpen = false"
+    >
+      <div class="w-[380px] rounded-lg border border-border bg-card p-4 shadow-xl">
+        <div class="mb-2 font-medium">收纳改动到 Stash</div>
+        <Input v-model="stashMsg" placeholder="备注（可选）" />
+        <label class="mt-2 flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
+          <input v-model="stashUntracked" type="checkbox" class="accent-[var(--primary)]" />
+          包含未跟踪文件
+        </label>
+        <p class="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+          把已暂存与未暂存的改动一起收进暂存架，工作区恢复干净；稍后可从 stash 菜单恢复。
+        </p>
+        <div class="mt-3 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" @click="stashPushOpen = false">取消</Button>
+          <Button variant="default" size="sm" :disabled="busy" @click="doStashPush">收纳</Button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
