@@ -209,31 +209,51 @@
       历史区 refs 徽标剥掉 `tag: ` 前缀并用 muted 配色区分分支；标签列表随 refresh/activate
       一并刷新并纳入 LRU 快照；确认框提示删本地标签不影响远程同名标签
 
+## M10 精细暂存与历史检视（规划）
+
+> 主题：写路径补上"按块暂存"这块最大缺口，读路径补上提交对比与范围汇总；
+> M10 做完核心 Git 功能基本齐平，之后里程碑可转向打磨与发布。
+
+### 10.1 精细暂存与提交流
+
+- [ ] **hunk 级暂存**：DiffViewer 每个 hunk 块头加 暂存/取消暂存 按钮。方案：前端按 hunk
+      切分 patch 并重组（lib/patch.ts 已有 hunk 头解析基础），后端新命令经 stdin 喂
+      `git apply --cached`（取消暂存加 `-R`）。风险点：行计数错误（必要时 `--recount`）、
+      新增/删除/rename 文件的 hunk、二进制文件直接拒绝；需为 apply 链路补自检用例
+- [ ] **右键「加入 .gitignore」**：未跟踪文件右键追加路径（已存在该行则跳过；复用 git_write_file）
+- [ ] **cherry-pick 单提交**：历史右键 → 拣选该提交到当前分支（复用 revert 的确认套路；
+      空提交/冲突走 humanize 兜底）
+- [ ] **提交信息模板**：设置-个性化可配模板，提交框为空时预填；仓库有 .gitmessage 则优先读它
+
+### 10.2 历史检视与 AI（衔接 M9 标签）
+
+- [ ] **任意两提交对比（range diff）**：历史行右键「以此为基准」→ 顶部 chip 标注基准
+      （同文件历史 chip 交互）→ 再右键另一提交「与基准对比」，DiffViewer 新增 range 模式
+      （后端 `git_diff_range(A, B)`，文件列表 + patch）
+- [ ] **历史区按文件路径过滤**：git_log 已支持 file_path 参数，前端补入口
+      （文件右键「在历史区按此文件过滤」），与搜索框并存、chip 可退出
+- [ ] **AI 生成 Release Notes**：选 tag 范围（默认 上一个 tag..HEAD）→ 汇总提交清单 →
+      Markdown 报告（复用 AI Review 弹窗骨架 + 保存到本地），M9 的标签列表直接可用
+- [ ] **AI 冲突解读**（可选）：冲突文件 diff 弹窗加按钮，读 combined diff 输出双方改动意图
+      说明（只读，不做交互式解决）
+
 ## 需求池（无需关注，后面排期）
 
 ### Git 核心补全
 
-- blame 视图：每行最后修改者/提交（diff 内逐行 blame 已做，独立视图边际价值待评估）
-- 右键「加入 .gitignore」（自动追加对应行）
-- cherry-pick（右键菜单，交互简单化只做单提交）
+- blame 独立视图（DiffViewer 内逐行 blame 已覆盖主场景，独立视图边际价值待评估）
 - 多 remote 支持：push/pull 时可选 remote（目前写死 origin）
 - tag 补全：重命名、推送全部（--tags）、删除远程同名标签（push origin :refs/tags/）
 
 ### 效率
 
-- hunk 级暂存：diff 弹窗内按块 stage/unstage
 - 文件列表目录树/平铺双视图切换
-- 任意两个提交的 range diff 对比（历史区选中两个节点）
-- 提交信息模板（读仓库 .gitmessage 或自定义）
-- 拖拽文件到暂存区批量 stage
-- 历史区按文件路径过滤
+- 拖拽文件到暂存区批量 stage（「全部暂存」已覆盖主场景，优先级低）
 
 ### AI 拓展（衔接 M6）
 
-- AI 生成 Release Notes：选 tag/提交范围，汇总成 changelog
 - AI 从 CONTRIBUTING.md/仓库文档学习提交规范（不只靠近期提交推断）
 - AI 总结单文件的演进历史（这个文件为什么长成这样）
-- AI 冲突解读：冲突时展示双方意图说明（只读，不做交互式解决）
 
 ### 体验
 
