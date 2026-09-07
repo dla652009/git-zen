@@ -75,9 +75,10 @@ function humanize(raw: string): { msg: string; detail?: string } {
 // 刷新按钮动画 + 整页刷新遮罩
 const refreshing = ref(false);
 async function doRefresh() {
+  if (busy.value) return; // 操作进行中不并发刷新
   refreshing.value = true;
   try {
-    await refresh();
+    await refresh({ fetch: true });
   } finally {
     refreshing.value = false;
   }
@@ -131,8 +132,14 @@ function fetchLog(skip = 0) {
   return api.log(repo.value, skip, historyMode.value === "all" ? true : undefined);
 }
 
-async function refresh() {
+// fetch=true 时先静默 fetch 远程再拉数据——ahead/behind 基于本地 remote-tracking refs，
+// 不 fetch 就永远看不到「远程有新提交可拉」；离线时 fetch 失败不打扰，仍刷新本地状态。
+// 操作后的刷新（run()）不带 fetch：pull/push 已更新过 refs，无需重复网络请求
+async function refresh(opts: { fetch?: boolean } = {}) {
   if (!repo.value) return;
+  if (opts.fetch) {
+    await api.fetchAll(repo.value).catch(() => {});
+  }
   remoteLink.value =
     (JSON.parse(localStorage.getItem("gz.remoteLinks") ?? "{}") as Record<string, string>)[repo.value] ?? "";
   try {
@@ -181,14 +188,28 @@ function onHistoryScroll(e: Event) {
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 60) loadMorePage();
 }
 
-// 打开仓库时后台 fetch 一次刷 ahead/behind，静默失败
+// 打开/切回仓库时后台 fetch 一次，成功后把 status 一并重拉——
+// 否则 refs 已更新而头部 ahead/behind 徽标还停在 fetch 前的旧值（分支树与徽标不一致）。
+// 静默失败（离线时保留本地视图）；切换期间的过期结果按 path 守卫丢弃
 function fetchOnce() {
-  if (!repo.value) return;
-  api.fetchAll(repo.value)
-    .then(() => api.branches(repo.value))
+  const path = repo.value;
+  if (!path) return;
+  api.fetchAll(path)
+    .then(async () => {
+      if (repo.value !== path || busy.value) return;
+      const [s, b] = await Promise.all([api.status(path), api.branches(path)]);
+      if (repo.value !== path) return;
+      status.value = s;
+      branchList.value = b;
+      // 缓存快照同步更新，避免切回时又恢复 fetch 前的旧 status
+      const c = repoCache.get(path);
+      if (c) cachePut(path, { ...c, status: s, branchList: b });
+    })
     .catch(() => {});
-  api.remoteUrl(repo.value)
-    .then((u) => (remoteRaw.value = u))
+  api.remoteUrl(path)
+    .then((u) => {
+      if (repo.value === path) remoteRaw.value = u;
+    })
     .catch(() => {});
 }
 
@@ -855,6 +876,27 @@ function askMerge(b: Branch) {
     ok: () => api.merge(repo.value, targetName(b)),
   });
 }
+// 放弃未推送的提交：硬重置回上游。工作区未提交改动会被一并丢弃——确认框必须明示（含数量），
+// reflog 提示给后悔药；成功后清掉该分支的 AI Review 缓存（未推送的提交已变）
+function askDiscardUnpushed() {
+  const ahead = status.value?.ahead ?? 0;
+  if (!ahead) return;
+  const upstream =
+    branchList.value.find((x) => x.current && !x.remote)?.upstream || "上游分支";
+  const dirty = status.value?.files.length ?? 0;
+  openConfirm({
+    title: "放弃未推送的提交",
+    body:
+      `将丢弃这 ${ahead} 个未推送的提交，把 ${status.value?.branch} 重置回 ${upstream}。` +
+      (dirty ? `工作区 ${dirty} 个未提交的文件改动也会一并丢弃。` : "") +
+      "此操作无法在界面撤销（必要时可在终端用 git reflog 找回）。",
+    ok: async () => {
+      await api.resetUnpushed(repo.value);
+      aiCacheDelete(REVIEW_BUCKET, reviewKey());
+    },
+  });
+}
+
 // 把当前分支合并进目标分支：切过去合并后就留在目标分支（用户要求不切回）
 function askMergeInto(b: Branch) {
   const target = b.name;
@@ -898,7 +940,7 @@ function onGlobalKeydown(e: KeyboardEvent) {
     folderDd.value = null;
   } else if (e.key === "F5") {
     e.preventDefault();
-    refresh();
+    doRefresh();
   }
 }
 
@@ -963,7 +1005,14 @@ onMounted(async () => {
       <span class="max-w-[340px] truncate text-muted-foreground"><Tooltip :text="repo">{{ repo }}</Tooltip></span>
       <span class="flex-1" />
       <Badge v-if="status?.behind" variant="warning">↓{{ status.behind }}</Badge>
-      <Badge v-if="status?.ahead" variant="info">↑{{ status.ahead }}</Badge>
+      <Tooltip v-if="status?.ahead" text="放弃这些未推送的提交（重置回远程）">
+        <button
+          class="cursor-pointer border-0 bg-transparent p-0"
+          @click="askDiscardUnpushed"
+        >
+          <Badge variant="info" class="hover:bg-primary/30">↑{{ status.ahead }}</Badge>
+        </button>
+      </Tooltip>
       <Tooltip text="拉取远程更新并合并到当前分支">
         <Button size="sm" :disabled="!repo || busy" @click="run(() => api.pull(repo), 'pull')">
           <Spinner v-if="runningAction === 'pull'" :size="14" />
@@ -989,7 +1038,7 @@ onMounted(async () => {
           Review {{ status.ahead }}
         </Button>
       </Tooltip>
-      <Tooltip text="刷新仓库状态">
+      <Tooltip text="拉取远程并刷新仓库状态（含 fetch，离线时仅刷新本地）">
         <Button
           variant="ghost"
           size="icon"

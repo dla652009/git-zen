@@ -2,6 +2,16 @@
 
 > 缺陷和优化点的记录，任务完成后修复这里的内容。
 
+## 刷新 / 状态识别
+
+- [x] 刷新识别不到「远程有新提交可拉取」（↓N 徽标不出现）→ **根因双重**：① refresh()（F5/刷新按钮）
+      不 fetch——ahead/behind 是 `git status -b` 对本地 remote-tracking refs 算的，refs 只在
+      fetch/pull 时更新，不 fetch 刷新多少遍都是旧 refs；② fetchOnce()（启动/切仓库的后台 fetch）
+      完成后只重拉 branches 不重拉 status——refs 已更新但头部徽标/窗口标题还停在 fetch 前的值。
+      修复：刷新按钮与 F5 走 `refresh({fetch:true})`（fetch 失败静默，离线仍刷本地；顺带补了
+      busy 拦截防并发刷新）；fetchOnce 完成后 status+branches 一并重拉并同步 LRU 缓存快照，
+      加 path 守卫丢弃切换期间的过期结果。操作后刷新（run()）不带 fetch——pull/pull 已更新 refs
+
 ## T0 阻塞问题
 
 - [x] 刚进入/切换选项卡加载仓库概率卡死、窗口无响应 → **根因**：Tauri v2 同步 command 在主线程执行，

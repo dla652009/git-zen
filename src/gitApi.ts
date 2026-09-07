@@ -39,6 +39,14 @@ export interface BlameLine {
   time: number; // author-time（epoch 秒）
 }
 
+// 提交热力图：单日提交计数（git_commit_stats 已按天聚合，只含有提交的日期）
+export interface CommitDay {
+  date: string; // YYYY-MM-DD
+  count: number;
+}
+export const commitStats = (repo: string, since: string, author?: string) =>
+  invoke<CommitDay[]>("git_commit_stats", { repo, since, author: author ?? null });
+
 import { invoke } from "@tauri-apps/api/core";
 
 export const status = (repo: string) => invoke<Status>("git_status", { repo });
@@ -100,5 +108,7 @@ export const discard = (repo: string, path: string, untracked: boolean) =>
   invoke<void>("git_discard", { repo, path, untracked });
 export const revert = (repo: string, hash: string) =>
   invoke<void>("git_revert", { repo, hash });
+export const resetUnpushed = (repo: string) =>
+  invoke<void>("git_reset_unpushed", { repo });
 export const writeTextFile = (path: string, content: string) =>
   invoke<void>("git_write_file", { path, content });

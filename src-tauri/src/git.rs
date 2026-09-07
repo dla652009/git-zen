@@ -389,6 +389,71 @@ pub async fn git_diff_unpushed(repo: String) -> Result<String, String> {
     .await
 }
 
+/// 放弃未推送的提交：硬重置回上游（未提交的工作区改动一并丢弃，确认框负责明示；
+/// reflog 在 git 默认 gc 期内仍可找回）。ahead>0 才有入口，无上游由 git 报错兜底
+#[tauri::command]
+pub async fn git_reset_unpushed(repo: String) -> Result<(), String> {
+    offload(move || {
+        run(
+            &repo,
+            &["-c", "alias.reset=reset", "reset", "--hard", "@{upstream}"],
+        )
+        .map(|_| ())
+    })
+    .await
+}
+
+/// 提交热力图数据：since（YYYY-MM-DD）以来的提交按天计数（作者日期）。
+/// author 非空时按作者过滤（--author，传 user.email 即"只看当前提交者"）。
+/// Rust 侧聚合，只返回有提交的日期，避免大仓库传几万行原始日志
+#[derive(Serialize)]
+pub struct CommitDay {
+    date: String, // YYYY-MM-DD
+    count: u32,
+}
+
+#[tauri::command]
+pub async fn git_commit_stats(
+    repo: String,
+    since: String,
+    author: Option<String>,
+) -> Result<Vec<CommitDay>, String> {
+    offload(move || {
+        let mut args = vec![
+            "log".to_string(),
+            format!("--since={}", since),
+            "--pretty=format:%ad".to_string(),
+            "--date=short".to_string(),
+        ];
+        if let Some(a) = author.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            args.push(format!("--author={}", a));
+        }
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let out = match run(&repo, &arg_refs) {
+            Ok(o) => o,
+            Err(e) if e.contains("does not have any commits yet") => return Ok(vec![]),
+            Err(e) => return Err(e),
+        };
+        let mut counts: std::collections::HashMap<&str, u32> = std::collections::HashMap::new();
+        for l in out.lines() {
+            let d = l.trim();
+            if !d.is_empty() {
+                *counts.entry(d).or_insert(0) += 1;
+            }
+        }
+        let mut days: Vec<CommitDay> = counts
+            .into_iter()
+            .map(|(date, count)| CommitDay {
+                date: date.to_string(),
+                count,
+            })
+            .collect();
+        days.sort_by(|a, b| a.date.cmp(&b.date));
+        Ok(days)
+    })
+    .await
+}
+
 /// origin 远程的 URL（无远程返回空串）；前端据此推断网页链接
 #[tauri::command]
 pub async fn git_remote_url(repo: String) -> Result<String, String> {

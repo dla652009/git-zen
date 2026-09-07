@@ -5,6 +5,7 @@ import { THEMES, settings, type Settings } from "../settings";
 import * as api from "../gitApi";
 import { aiVerify } from "../ai";
 import { Button, Input, Spinner, Select, Switch } from "@/components/ui";
+import CommitHeatmap from "./CommitHeatmap.vue";
 
 const props = defineProps<{ repo: string; initialTab?: string }>();
 const emit = defineEmits<{ close: [] }>();
@@ -152,7 +153,8 @@ const NAV = [
 
 <template>
   <div class="fixed inset-0 z-30 flex items-center justify-center bg-black/50" @click.self="emit('close')">
-    <div class="flex h-[440px] w-[640px] overflow-hidden rounded-lg border border-border bg-card shadow-xl">
+    <!-- 880x520：热力图满幅 + 各页留白；窗口过小时回退 95vw/95vh（热力图横向滚动，内容区滚动） -->
+    <div class="flex h-[520px] max-h-[95vh] w-[880px] max-w-[95vw] overflow-hidden rounded-lg border border-border bg-card shadow-xl">
       <!-- 左侧导航 -->
       <nav class="w-36 shrink-0 space-y-0.5 border-r border-border bg-muted/30 p-2">
         <button
@@ -195,6 +197,12 @@ const NAV = [
               <p class="mt-2 text-[11px] text-muted-foreground">
                 保存到当前仓库的 git config（{{ props.repo || "未选择仓库" }}）
               </p>
+            </section>
+
+            <!-- 提交热力图（只统计上方邮箱名下的提交） -->
+            <section v-if="props.repo">
+              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">提交热力图</h3>
+              <CommitHeatmap :repo="props.repo" :author-email="userEmail" />
             </section>
           </template>
 
