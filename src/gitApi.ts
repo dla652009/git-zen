@@ -168,5 +168,8 @@ export const tagDelete = (repo: string, name: string) =>
   invoke<void>("git_tag_delete", { repo, name });
 export const tagPush = (repo: string, name: string) =>
   invoke<void>("git_tag_push", { repo, name });
+// 克隆远程仓库到本地（dest 为完整目标路径，完成后前端 addRepo + 切换打开）
+export const clone = (url: string, dest: string) =>
+  invoke<void>("git_clone", { url, dest });
 export const writeTextFile = (path: string, content: string) =>
   invoke<void>("git_write_file", { path, content });

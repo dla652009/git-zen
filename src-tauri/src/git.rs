@@ -909,3 +909,26 @@ pub async fn git_tag_push(repo: String, name: String) -> Result<(), String> {
     })
     .await
 }
+
+/// 克隆远程仓库到本地（dest 为完整目标路径，须不存在或为空目录）。
+/// cwd 用 dest 的父目录；url 前加 `--` 防止以 - 开头的地址被当成选项。
+/// 认证走系统 credential helper（GIT_TERMINAL_PROMPT=0 只是禁掉终端交互输密码）
+#[tauri::command]
+pub async fn git_clone(url: String, dest: String) -> Result<(), String> {
+    offload(move || {
+        let url = url.trim();
+        let dest = dest.trim();
+        if url.is_empty() || dest.is_empty() {
+            return Err("远程地址和目标路径不能为空".into());
+        }
+        let parent = std::path::Path::new(dest)
+            .parent()
+            .and_then(|p| p.to_str())
+            .ok_or_else(|| "目标路径不合法".to_string())?;
+        if parent.is_empty() || !std::path::Path::new(parent).is_dir() {
+            return Err(format!("目标父目录不存在: {parent}"));
+        }
+        run(parent, &["clone", "--", url, dest]).map(|_| ())
+    })
+    .await
+}

@@ -45,7 +45,8 @@ pub fn run() {
             git::git_tag_list,
             git::git_tag_create,
             git::git_tag_delete,
-            git::git_tag_push
+            git::git_tag_push,
+            git::git_clone
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

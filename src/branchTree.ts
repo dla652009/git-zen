@@ -6,7 +6,9 @@ export interface BNode {
   path: string; // 全路径，作折叠 key
   children: BNode[];
   count: number; // 后代叶子数
-  branch?: Branch; // 有值即叶子
+  // 有值即叶子。远程树副本 name 已剥掉远程前缀用于展示/嵌套，
+  // 操作需要完整引用名 → 附带 originName（origin/release/dev），见 App.remoteNodes
+  branch?: Branch & { originName?: string };
 }
 
 export function buildNodes(branches: Branch[], keyPrefix = ""): BNode[] {

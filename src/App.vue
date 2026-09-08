@@ -18,6 +18,7 @@ import {
   GitBranchPlus,
   Cloud,
   CloudUpload,
+  Download,
   Tag,
   Trash2,
   X,
@@ -64,6 +65,9 @@ function humanize(raw: string): { msg: string; detail?: string } {
     [/has no upstream|no tracking information/i, "当前分支没有上游，先在终端执行一次：git push -u origin <分支名>"],
     [/rejected.*fetch first|non-fast-forward/i, "远程有新提交，先 Pull 再 Push"],
     [/nothing to commit/i, "没有可提交的内容：先暂存文件"],
+    [/already exists and is not an empty directory/i, "目标目录已存在且非空：换一个目录名或位置"],
+    [/could not read from remote repository/i, "无法读取远程仓库：URL 错误、无权访问或认证失败"],
+    [/repository .* does not exist/i, "仓库不存在：检查 URL 拼写与访问权限"],
     [/authentication|permission denied|could not read Username|403/i, "认证失败：请检查系统 git 凭据（credential helper / ssh key）"],
     [/does not appear to be a git repository|No configured push destination/i, "远程不可用：没有配置 origin（先在终端 git remote add origin <url>）或地址失效"],
     [/not a git repository/i, "所选目录不是 Git 仓库"],
@@ -273,6 +277,67 @@ async function openRepo() {
   if (!dir) return;
   addRepo(dir);
   switchRepo(dir);
+}
+
+// ---- 打开仓库：先选 本地目录 / 从远程克隆；克隆完成后自动加入选项卡并打开 ----
+const openModal = ref<"choose" | "remote" | null>(null);
+const remoteUrlInput = ref("");
+const cloneParent = ref("");
+const cloneName = ref("");
+const cloneNameTouched = ref(false);
+const cloneBusy = ref(false);
+const cloneErr = ref("");
+const cloneErrDetail = ref("");
+
+// 从 URL 推断默认目录名：取最后一段并去掉 .git 后缀（scp 风格 git@host:path 也覆盖）
+function deriveRepoName(url: string): string {
+  const last = url.trim().replace(/\/+$/, "").split(/[\\/:]/).pop() ?? "";
+  return last.replace(/\.git$/i, "");
+}
+watch(remoteUrlInput, () => {
+  if (!cloneNameTouched.value) cloneName.value = deriveRepoName(remoteUrlInput.value);
+});
+
+function openRemoteClone() {
+  remoteUrlInput.value = "";
+  cloneParent.value = "";
+  cloneName.value = "";
+  cloneNameTouched.value = false;
+  cloneErr.value = "";
+  cloneErrDetail.value = "";
+  openModal.value = "remote";
+}
+
+async function pickCloneParent() {
+  const dir = await open({ directory: true });
+  if (dir) cloneParent.value = dir;
+}
+
+async function doClone() {
+  const url = remoteUrlInput.value.trim();
+  const parent = cloneParent.value;
+  const name = cloneName.value.trim();
+  if (!url || !parent || !name || cloneBusy.value) return;
+  if (/[\\/:]/.test(name) || name === "." || name === "..") {
+    cloneErr.value = "目录名不能包含路径分隔符或特殊字符";
+    return;
+  }
+  cloneBusy.value = true;
+  cloneErr.value = "";
+  cloneErrDetail.value = "";
+  const dest = `${parent.replace(/[\\/]+$/, "")}/${name}`;
+  try {
+    await api.clone(url, dest);
+    openModal.value = null;
+    addRepo(dest);
+    switchRepo(dest);
+  } catch (e) {
+    const h = humanize(String(e));
+    cloneErr.value = h.msg;
+    cloneErrDetail.value = h.detail ?? "";
+  } finally {
+    cloneBusy.value = false;
+  }
 }
 
 // ---- 仓库选项卡：持久化所有导入过的仓库，支持重命名/删除/拖动排序 ----
@@ -796,13 +861,20 @@ function toggleRemote(p: string) {
   else next.add(p);
   openRemotes.value = next;
 }
-// 远程组内去掉远程前缀再建树，避免顶层重复出现 origin
+// 远程组内去掉远程前缀再建树，避免顶层重复出现 origin。
+// 拷贝附 originName 保留完整引用名（origin/release/dev）——剥了前缀的 name 只是展示名，
+// 合并/删除要作用于完整跟踪分支；曾因在已剥名的 name 上再剥一次前缀，
+// 双击 release/dev 被 checkout 成 pathspec 'dev'（BUGS.md 远程分支切换）
+function fullName(b: Branch): string {
+  return (b as Branch & { originName?: string }).originName ?? b.name;
+}
 function remoteNodes(prefix: string): BNode[] {
-  const list = remoteGroups.value.find(([p]) => p === prefix)?.[1] ?? [];
-  return buildNodes(
-    list.map((b) => ({ ...b, name: b.name.slice(prefix.length + 1) })),
-    `remote:${prefix}:`,
-  );
+  const list = (remoteGroups.value.find(([p]) => p === prefix)?.[1] ?? []).map((b) => ({
+    ...b,
+    name: b.name.slice(prefix.length + 1),
+    originName: b.name,
+  }));
+  return buildNodes(list, `remote:${prefix}:`);
 }
 
 // ---- 标签：侧栏标签组（推送/删除）+ 新建弹窗；历史行右键可对任意提交建 tag ----
@@ -871,16 +943,15 @@ function confirmCreateBranch() {
 
 // ---- 切换分支：乐观更新选中态 + 历史区 loading，失败由 refresh 回滚真实状态 ----
 const historyLoading = ref(false);
-function targetName(b: Branch): string {
-  return b.remote ? b.name.replace(/^[^/]+\//, "") : b.name;
-}
 async function switchBranch(b: Branch) {
   if (b.current || busy.value) return;
-  if (status.value && !b.remote) status.value.branch = targetName(b);
+  if (status.value && !b.remote) status.value.branch = b.name;
   branchList.value.forEach((x) => (x.current = x.name === b.name));
   historyLoading.value = true;
   try {
-    await run(() => api.checkout(repo.value, targetName(b)));
+    // 远程叶子 name 已是剥掉远程前缀的 DWIM 名（release/dev），checkout 自动建同名本地跟踪分支；
+    // 本地叶子 name 即分支名。不能用完整引用名（origin/xxx）checkout，那会进 detached HEAD
+    await run(() => api.checkout(repo.value, b.name));
   } finally {
     historyLoading.value = false;
   }
@@ -903,11 +974,13 @@ function openConfirm(s: ConfirmState) {
 
 function askDelete(b: Branch) {
   if (b.remote) {
-    const remote = b.name.split("/")[0];
-    const short = b.name.replace(/^[^/]+\//, "");
+    // 远程叶子用完整引用名拆 远程名/分支名（origin/release/dev → origin + release/dev）
+    const full = fullName(b);
+    const remote = full.split("/")[0];
+    const short = full.replace(/^[^/]+\//, "");
     openConfirm({
       title: "删除远程分支",
-      body: `确认删除远程分支 ${b.name}？该操作直接作用于远程仓库。`,
+      body: `确认删除远程分支 ${full}？该操作直接作用于远程仓库。`,
       ok: () => api.pushDelete(repo.value, remote, short),
     });
     return;
@@ -923,10 +996,12 @@ function doRename(b: Branch, newName: string) {
   run(() => api.branchRename(repo.value, b.name, newName));
 }
 function askMerge(b: Branch) {
+  // 合并远程分支 = 合并其完整跟踪引用（origin/release/dev）；本地分支直接用名字
+  const target = b.remote ? fullName(b) : b.name;
   openConfirm({
     title: "合并分支",
-    body: `将 ${targetName(b)} 合并到当前分支 ${status.value?.branch ?? ""}？`,
-    ok: () => api.merge(repo.value, targetName(b)),
+    body: `将 ${target} 合并到当前分支 ${status.value?.branch ?? ""}？`,
+    ok: () => api.merge(repo.value, target),
   });
 }
 // 放弃未推送的提交：硬重置回上游。工作区未提交改动会被一并丢弃——确认框必须明示（含数量），
@@ -1093,8 +1168,8 @@ onMounted(async () => {
       </div>
     </Transition>
     <header class="flex items-center gap-2 border-b border-border px-3 py-2">
-      <Tooltip text="打开仓库">
-        <Button variant="ghost" size="sm" @click="openRepo">
+      <Tooltip text="打开仓库（本地目录 / 从远程克隆）">
+        <Button variant="ghost" size="sm" @click="openModal = 'choose'">
           <FolderOpen class="size-4" />
           打开
         </Button>
@@ -1433,6 +1508,89 @@ onMounted(async () => {
             创建
           </Button>
         </div>
+      </div>
+    </div>
+
+    <!-- 打开仓库：本地 / 从远程克隆 -->
+    <div
+      v-if="openModal"
+      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      @click.self="openModal = null"
+    >
+      <div class="w-[480px] rounded-lg border border-border bg-card p-4 shadow-xl">
+        <!-- 选择入口 -->
+        <template v-if="openModal === 'choose'">
+          <div class="mb-3 font-medium">打开仓库</div>
+          <div class="grid grid-cols-2 gap-3">
+            <button
+              class="cursor-pointer rounded-md border border-border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-primary/5"
+              @click="
+                openModal = null;
+                openRepo();
+              "
+            >
+              <FolderOpen class="mb-1.5 size-5 text-primary" />
+              <div class="text-sm font-medium">本地目录</div>
+              <div class="mt-0.5 text-[11px] text-muted-foreground">选择本机已有的 Git 仓库</div>
+            </button>
+            <button
+              class="cursor-pointer rounded-md border border-border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-primary/5"
+              @click="openRemoteClone"
+            >
+              <Download class="mb-1.5 size-5 text-primary" />
+              <div class="text-sm font-medium">从远程克隆</div>
+              <div class="mt-0.5 text-[11px] text-muted-foreground">输入 URL 克隆到本地并打开</div>
+            </button>
+          </div>
+        </template>
+        <!-- 远程克隆表单 -->
+        <template v-else>
+          <div class="mb-3 font-medium">从远程克隆</div>
+          <Input
+            v-model="remoteUrlInput"
+            v-focus
+            placeholder="远程地址：https://host/user/repo.git 或 git@host:user/repo.git"
+            @keyup.esc="openModal = null"
+          />
+          <div class="mt-2 flex items-center gap-2">
+            <Button variant="secondary" size="sm" class="shrink-0" @click="pickCloneParent">
+              选择位置…
+            </Button>
+            <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground" :title="cloneParent">
+              {{ cloneParent || "未选择克隆到哪个目录" }}
+            </span>
+          </div>
+          <Input
+            v-model="cloneName"
+            class="mt-2"
+            placeholder="目录名（输入地址后自动推断，可修改）"
+            @input="cloneNameTouched = true"
+            @keyup.enter="doClone"
+            @keyup.esc="openModal = null"
+          />
+          <div v-if="cloneErr" class="mt-2 text-[11px] text-destructive">
+            {{ cloneErr }}
+            <details v-if="cloneErrDetail" class="mt-1">
+              <summary class="cursor-pointer text-muted-foreground">详细信息</summary>
+              <pre class="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-[10.5px] text-muted-foreground">{{ cloneErrDetail }}</pre>
+            </details>
+          </div>
+          <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+            将克隆到「位置 / 目录名」，完成后自动打开。认证走系统凭据（credential helper / ssh key）。
+          </p>
+          <div class="mt-3 flex justify-end gap-2">
+            <Button variant="ghost" size="sm" @click="openModal = null">取消</Button>
+            <Button
+              variant="default"
+              size="sm"
+              :disabled="!remoteUrlInput.trim() || !cloneParent || !cloneName.trim() || cloneBusy"
+              @click="doClone"
+            >
+              <Spinner v-if="cloneBusy" :size="14" />
+              {{ cloneBusy ? "克隆中…" : "克隆并打开" }}
+            </Button>
+          </div>
+        </template>
       </div>
     </div>
 

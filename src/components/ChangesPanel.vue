@@ -365,34 +365,32 @@ async function genCommitMsg() {
         </Tooltip>
       </div>
       <div v-if="aiErr" class="text-[11px] leading-relaxed text-destructive">{{ aiErr }}</div>
-      <label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-        <input v-model="pushAfterCommit" type="checkbox" class="accent-[var(--primary)]" />
-        提交后推送到远程
-      </label>
-      <!-- amend / 撤销上次提交：改动历史，确认框在 App 侧 -->
+      <!-- 勾选框与 amend/撤销 icons 同行，省纵向空间；两者改写历史，确认框在 App 侧 -->
       <div class="flex items-center gap-1.5">
-        <Tooltip text="把暂存的改动追加到上次提交（amend），可同时更新提交信息">
+        <label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+          <input v-model="pushAfterCommit" type="checkbox" class="accent-[var(--primary)]" />
+          提交后推送到远程
+        </label>
+        <Tooltip text="追加到上次提交（amend）：把暂存的改动并入，可同时更新提交信息">
           <Button
             variant="ghost"
-            size="sm"
-            class="h-6 flex-1 px-2 text-[11px]"
+            size="icon"
+            class="ml-auto size-8 shrink-0"
             :disabled="busy || commitCount < 1 || (!staged.length && !message.trim())"
             @click="askAmend"
           >
-            <GitCommitHorizontal class="size-3.5" />
-            追加到上次提交
+            <GitCommitHorizontal class="size-4" />
           </Button>
         </Tooltip>
-        <Tooltip text="撤销最近一次提交，改动回到暂存区">
+        <Tooltip text="撤销最近一次提交（改动完整回到暂存区）">
           <Button
             variant="ghost"
-            size="sm"
-            class="h-6 flex-1 px-2 text-[11px]"
+            size="icon"
+            class="size-8 shrink-0"
             :disabled="busy || commitCount <= 1"
             @click="emit('undo')"
           >
-            <RotateCcw class="size-3.5" />
-            撤销上次提交
+            <RotateCcw class="size-4" />
           </Button>
         </Tooltip>
       </div>

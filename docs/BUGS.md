@@ -60,6 +60,14 @@
 
 ## 分支区（左侧栏）
 
+- [x] 双击切换两级远程分支报 `pathspec 'dev' did not match` → **根因：前缀被剥两次**。
+      远程树构建（remoteNodes）把 `origin/release/dev` 拷贝成剥掉远程前缀的展示名
+      `release/dev` 用于树形嵌套；而 switchBranch/askMerge/askDelete 假设拿到的还是全名，
+      `targetName()` 又剥一次第一段 → `release/dev` 变成 `dev`。一级分支（origin/main →
+      main）碰巧不受影响，两级以上全部中招（合并远程分支、删远程分支同样错）。
+      修复：树拷贝附 `originName` 保留完整引用名（BNode.branch 类型放宽）——checkout 直接用
+      已剥名的 name（DWIM 自动建同名本地跟踪分支，完整名反而会 detached HEAD），
+      合并/删除用 fullName（originName）拆远程名与分支名
 - [x] 本地/origin 一级栏 → GitBranch / Cloud 图标 + font-medium 强调 + 数量徽标
 - [x] 诡异空分支 → 根因：无 `/` 前缀或 `*/HEAD` 符号引用被剥前缀后变空串。已过滤 `*/HEAD` 和无效名，不再产生空项
 - [x] 远程分支栏默认收起 → 远程组改记「展开」集合（openRemotes），默认全部收起，本地保持默认展开
