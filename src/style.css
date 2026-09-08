@@ -18,7 +18,14 @@
   --diff-add-bg: #223326;
   --diff-add-text: #7fd88f;
   --diff-del-bg: #3a2226;
-  --diff-del-text: #ff9ba3;
+  --diff-del-text: #f2939c;
+
+  /* 状态语义色（降饱和：原 Tailwind 400 系在深色底上偏艳） */
+  --c-add: #5cb87a;
+  --c-mod: #5f9fd8;
+  --c-del: #e07078;
+  --c-ren: #9d8cf0;
+  --c-conf: #cf9c44;
 }
 
 [data-theme="light"],
@@ -39,6 +46,13 @@
   --diff-add-text: #1a7f37;
   --diff-del-bg: #fce8ea;
   --diff-del-text: #c53038;
+
+  /* 状态语义色（浅色用深语义色保证对比度） */
+  --c-add: #1a7f37;
+  --c-mod: #1a6fb5;
+  --c-del: #c53038;
+  --c-ren: #6d5ef0;
+  --c-conf: #a16207;
 }
 
 [data-theme="catppuccin-mocha"] {
@@ -57,7 +71,14 @@
   --diff-add-bg: #223326;
   --diff-add-text: #7fd88f;
   --diff-del-bg: #3a2226;
-  --diff-del-text: #ff9ba3;
+  --diff-del-text: #f2939c;
+
+  /* 状态语义色（降饱和：原 Tailwind 400 系在深色底上偏艳） */
+  --c-add: #5cb87a;
+  --c-mod: #5f9fd8;
+  --c-del: #e07078;
+  --c-ren: #9d8cf0;
+  --c-conf: #cf9c44;
 }
 
 [data-theme="catppuccin-latte"] {
@@ -77,6 +98,13 @@
   --diff-add-text: #1a7f37;
   --diff-del-bg: #fce8ea;
   --diff-del-text: #c53038;
+
+  /* 状态语义色（浅色用深语义色保证对比度） */
+  --c-add: #1a7f37;
+  --c-mod: #1a6fb5;
+  --c-del: #c53038;
+  --c-ren: #6d5ef0;
+  --c-conf: #a16207;
 }
 
 [data-theme="one-dark"] {
@@ -95,7 +123,14 @@
   --diff-add-bg: #223326;
   --diff-add-text: #7fd88f;
   --diff-del-bg: #3a2226;
-  --diff-del-text: #ff9ba3;
+  --diff-del-text: #f2939c;
+
+  /* 状态语义色（降饱和：原 Tailwind 400 系在深色底上偏艳） */
+  --c-add: #5cb87a;
+  --c-mod: #5f9fd8;
+  --c-del: #e07078;
+  --c-ren: #9d8cf0;
+  --c-conf: #cf9c44;
 }
 
 [data-theme="github-dark"] {
@@ -114,7 +149,14 @@
   --diff-add-bg: #223326;
   --diff-add-text: #7fd88f;
   --diff-del-bg: #3a2226;
-  --diff-del-text: #ff9ba3;
+  --diff-del-text: #f2939c;
+
+  /* 状态语义色（降饱和：原 Tailwind 400 系在深色底上偏艳） */
+  --c-add: #5cb87a;
+  --c-mod: #5f9fd8;
+  --c-del: #e07078;
+  --c-ren: #9d8cf0;
+  --c-conf: #cf9c44;
 }
 
 @theme inline {
@@ -159,4 +201,30 @@ body,
 .sortable-fallback,
 .sortable-drag {
   pointer-events: none !important;
+}
+
+/* 键盘可达性：统一焦点环（鼠标点击不触发，仅 :focus-visible） */
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--primary) 65%, transparent);
+  outline-offset: 1px;
+}
+
+/* 弹层入场动效（菜单/弹窗卡片加 .pop-in 即用；prefers-reduced-motion 时全局降级） */
+.pop-in {
+  animation: pop-in 0.14s ease;
+}
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98) translateY(-2px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

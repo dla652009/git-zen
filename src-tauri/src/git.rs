@@ -932,3 +932,120 @@ pub async fn git_clone(url: String, dest: String) -> Result<(), String> {
     })
     .await
 }
+
+// ---------- M10：.gitignore / cherry-pick / Release Notes 数据 ----------
+
+/// 把路径追加进仓库根 .gitignore（整行已存在则跳过；文件不存在则创建）
+#[tauri::command]
+pub async fn git_ignore_add(repo: String, path: String) -> Result<(), String> {
+    offload(move || {
+        let p = path.trim();
+        if p.is_empty() {
+            return Err("路径不能为空".into());
+        }
+        let f = std::path::Path::new(&repo).join(".gitignore");
+        let mut content = std::fs::read_to_string(&f).unwrap_or_default();
+        if content.lines().any(|l| l.trim() == p) {
+            return Ok(());
+        }
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(p);
+        content.push('\n');
+        std::fs::write(&f, content).map_err(|e| format!("写入 .gitignore 失败: {e}"))
+    })
+    .await
+}
+
+/// cherry-pick 单个提交到当前分支；空拣选/冲突交给 humanize
+#[tauri::command]
+pub async fn git_cherry_pick(repo: String, hash: String) -> Result<(), String> {
+    offload(move || {
+        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err("非法的 commit hash".into());
+        }
+        run(
+            &repo,
+            &[
+                "-c",
+                "alias.cherry-pick=cherry-pick",
+                "cherry-pick",
+                hash.trim(),
+            ],
+        )
+        .map(|_| ())
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct CommitBrief {
+    hash: String,   // 短 hash
+    author: String,
+    date: String,   // YYYY-MM-DD
+    subject: String,
+}
+
+/// Release Notes 数据：from..to 区间内的提交清单（from 空 = 全部可达提交；to 空 = HEAD）。
+/// from 允许 tag 名（如 v1.0），只拦 - 开头防选项注入，其余交给 git 校验
+#[tauri::command]
+pub async fn git_commits_range(
+    repo: String,
+    from: String,
+    to: Option<String>,
+) -> Result<Vec<CommitBrief>, String> {
+    offload(move || {
+        let from = from.trim();
+        let to = to.as_deref().map(str::trim).filter(|s| !s.is_empty()).unwrap_or("HEAD");
+        if from.starts_with('-') || to.starts_with('-') {
+            return Err("非法的提交范围".into());
+        }
+        let range = if from.is_empty() {
+            to.to_string()
+        } else {
+            format!("{from}..{to}")
+        };
+        let out = run(
+            &repo,
+            &["log", &range, "--pretty=%h%x1f%an%x1f%ad%x1f%s", "--date=short"],
+        )?;
+        Ok(out
+            .lines()
+            .filter_map(|l| {
+                let f: Vec<&str> = l.split('\x1f').collect();
+                (f.len() == 4).then(|| CommitBrief {
+                    hash: f[0].into(),
+                    author: f[1].into(),
+                    date: f[2].into(),
+                    subject: f[3].into(),
+                })
+            })
+            .collect())
+    })
+    .await
+}
+
+/// HEAD 可达的最近 tag（git describe --tags --abbrev=0）；无 tag 返回空串。
+/// Release Notes 的默认对比起点
+#[tauri::command]
+pub async fn git_latest_tag(repo: String) -> Result<String, String> {
+    offload(move || {
+        Ok(run(&repo, &["describe", "--tags", "--abbrev=0"])
+            .unwrap_or_default()
+            .trim()
+            .to_string())
+    })
+    .await
+}
+
+/// 判断路径是否是 git 仓库（拖拽文件夹进窗口打开时校验）
+#[tauri::command]
+pub async fn git_check_repo(path: String) -> Result<bool, String> {
+    offload(move || {
+        Ok(run(&path, &["rev-parse", "--is-inside-work-tree"])
+            .map(|o| o.trim() == "true")
+            .unwrap_or(false))
+    })
+    .await
+}

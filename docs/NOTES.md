@@ -188,6 +188,12 @@ syncBar 过滤脏值兜底。三个都做才稳，只做其一都会偶发复现
 %(atom) 插值语言，不认 pretty 的 %xNN 转义。for-each-ref 要分隔字段就用真实字符：
 tab 安全（ref 名禁止控制字符，contents:subject 恒为单行），git_tag_list 用 tab 分隔。
 
+### git apply 的 --whitespace 没有 nofix 这个值
+
+合法值只有 nowarn / warn / fix / error / error-all（实测 2.47 报
+"unrecognized whitespace option 'nofix'"）。**默认行为就是不修正只警告**，
+想要"绝不改动补丁内容"直接不加 --whitespace 参数即可。
+
 ### stash push 没有改动时退出码是 0
 
 `git stash push` 在工作区干净时不报错，而是输出 "No local changes to save" 并以

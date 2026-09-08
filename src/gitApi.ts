@@ -171,5 +171,28 @@ export const tagPush = (repo: string, name: string) =>
 // 克隆远程仓库到本地（dest 为完整目标路径，完成后前端 addRepo + 切换打开）
 export const clone = (url: string, dest: string) =>
   invoke<void>("git_clone", { url, dest });
+
+// ---- M10 ----
+
+// 路径追加进仓库根 .gitignore（已存在该行则跳过）
+export const ignoreAdd = (repo: string, path: string) =>
+  invoke<void>("git_ignore_add", { repo, path });
+export const cherryPick = (repo: string, hash: string) =>
+  invoke<void>("git_cherry_pick", { repo, hash });
+// Release Notes 数据：from..to 区间提交清单（from 空 = 全部可达；to 空 = HEAD；from 可为 tag 名）
+export interface CommitBrief {
+  hash: string;
+  author: string;
+  date: string;
+  subject: string;
+}
+export const commitsRange = (repo: string, from: string, to?: string) =>
+  invoke<CommitBrief[]>("git_commits_range", { repo, from, to: to ?? null });
+// HEAD 可达的最近 tag（无 tag 返回空串）
+export const latestTag = (repo: string) =>
+  invoke<string>("git_latest_tag", { repo });
+// 判断路径是否是 git 仓库（拖拽文件夹进窗口打开时校验）
+export const checkRepo = (path: string) =>
+  invoke<boolean>("git_check_repo", { path });
 export const writeTextFile = (path: string, content: string) =>
   invoke<void>("git_write_file", { path, content });

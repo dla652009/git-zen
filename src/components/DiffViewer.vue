@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
-import { X, Bot } from "@lucide/vue";
+import { X, Bot, WrapText } from "@lucide/vue";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite } from "../ai";
@@ -55,18 +55,6 @@ const text = ref("");
 const loading = ref(true);
 const err = ref("");
 
-// 解释结果本地缓存：commit 用 hash 键（不可变，永久有效）；文件用 路径+模式 键（可能过期，可重生成）
-function explainId(): string {
-  return props.commit
-    ? `${props.repo}::commit::${props.commit.hash}`
-    : `${props.repo}::${props.file!.cached ? "s" : "w"}::${props.file!.path}`;
-}
-onMounted(() => {
-  // 缓存命中：直接预填解释面板，diff 主区照常加载；可点 Bot 按钮重新生成覆盖
-  const saved = aiCacheRead("explain", explainId());
-  if (saved !== undefined) explainText.value = saved;
-});
-
 onMounted(async () => {
   try {
     if (props.commit) {
@@ -84,6 +72,18 @@ onMounted(async () => {
   }
 });
 
+// 解释结果本地缓存：commit 用 hash 键（不可变，永久有效）；文件用 路径+模式 键（可能过期，可重生成）
+function explainId(): string {
+  return props.commit
+    ? `${props.repo}::commit::${props.commit.hash}`
+    : `${props.repo}::${props.file!.cached ? "s" : "w"}::${props.file!.path}`;
+}
+onMounted(() => {
+  // 缓存命中：直接预填解释面板，diff 主区照常加载；可点 Bot 按钮重新生成覆盖
+  const saved = aiCacheRead("explain", explainId());
+  if (saved !== undefined) explainText.value = saved;
+});
+
 // AI 解释变更：直接消费已加载的 patch 文本；结果写入 localStorage 二次打开秒显
 const explainBusy = ref(false);
 const explainErr = ref("");
@@ -97,8 +97,11 @@ async function loadExplain() {
   explainErr.value = "";
   explainText.value = "";
   try {
+    // 冲突文件用专用提示词解读双方意图；普通变更用通用解释
     explainText.value = await aiComplete(
-      AI_PROMPTS.explainDiff.system,
+      props.file?.conflict
+        ? AI_PROMPTS.conflictExplain.system
+        : AI_PROMPTS.explainDiff.system,
       clipForAI(text.value),
     );
     aiCacheWrite("explain", explainId(), explainText.value);
@@ -120,6 +123,33 @@ function onKey(e: KeyboardEvent) {
 }
 onMounted(() => window.addEventListener("keydown", onKey));
 onUnmounted(() => window.removeEventListener("keydown", onKey));
+
+// ---- 阅读细节：折行开关 / 导出 patch ----
+const wrap = ref(localStorage.getItem("gz.diffWrap") !== "0");
+function toggleWrap() {
+  wrap.value = !wrap.value;
+  localStorage.setItem("gz.diffWrap", wrap.value ? "1" : "0");
+}
+const savedPatchTip = ref(false);
+async function exportPatch() {
+  if (!text.value.trim()) return;
+  const base = props.commit
+    ? `patch-${props.commit.hash.slice(0, 8)}`
+    : `patch-${props.file!.path.split(/[\\/]/).pop()}`;
+  const target = await saveDialog({
+    title: "导出 patch",
+    defaultPath: `${base}.patch`,
+    filters: [{ name: "Patch", extensions: ["patch", "diff"] }],
+  });
+  if (!target) return;
+  try {
+    await api.writeTextFile(target, text.value);
+    savedPatchTip.value = true;
+    setTimeout(() => (savedPatchTip.value = false), 2000);
+  } catch (e) {
+    err.value = String(e);
+  }
+}
 
 // 按文件切段 + 行着色收敛到 lib/patch.ts（unified 与合并冲突的 combined 格式都支持）
 const sections = computed(() => patchSections(text.value));
@@ -229,7 +259,7 @@ onUnmounted(() => {
 <template>
   <!-- 固定高度，避免加载前后高度跳动 -->
   <div class="fixed inset-0 z-20 flex items-center justify-center bg-black/50" @click.self="emit('close')">
-    <div class="flex h-[80vh] w-[80vw] flex-col rounded-lg border border-border bg-card shadow-xl">
+    <div class="pop-in flex h-[80vh] w-[80vw] flex-col rounded-lg border border-border bg-card shadow-xl">
       <header class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
         <span class="truncate font-medium">
           {{ commit ? commit.subject : file?.path }}
@@ -239,13 +269,23 @@ onUnmounted(() => {
         </span>
         <Badge v-if="file?.conflict" variant="warning">合并冲突</Badge>
         <span class="flex-1" />
+        <Tooltip text="切换折行">
+          <Button variant="ghost" size="icon" class="h-6 w-6" aria-label="切换折行" @click="toggleWrap">
+            <WrapText class="size-3.5" :class="!wrap && 'opacity-40'" />
+          </Button>
+        </Tooltip>
+        <Tooltip :text="savedPatchTip ? '已导出 ✓' : '导出 .patch'">
+          <Button variant="ghost" size="icon" class="h-6 w-6" aria-label="导出 patch" @click="exportPatch">
+            <FileDown class="size-3.5" />
+          </Button>
+        </Tooltip>
         <Tooltip v-if="settings.aiEnabled === 'on'" text="AI 解释这段变更">
-          <Button variant="ghost" size="sm" :disabled="explainBusy" @click="explain">
+          <Button variant="ghost" size="sm" aria-label="AI 解释变更" :disabled="explainBusy" @click="explain">
             <Spinner v-if="explainBusy" :size="14" />
             <Bot v-else class="size-3.5 text-primary" />
           </Button>
         </Tooltip>
-        <Button variant="ghost" size="icon" @click="emit('close')"><X class="size-4" /></Button>
+        <Button variant="ghost" size="icon" aria-label="关闭" @click="emit('close')"><X class="size-4" /></Button>
       </header>
 
         <!-- 双栏：左文件列表 / 右选中文件的 diff（参考 FileHistoryModal 布局） -->
@@ -283,13 +323,16 @@ onUnmounted(() => {
             >
               {{ selectedFile }}
             </div>
-            <pre class="whitespace-pre-wrap [overflow-wrap:anywhere]"><span
+            <pre
+              :class="wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'whitespace-pre'"
+              class="font-mono text-xs leading-5"
+            ><span
               v-for="(l, i) in sections.find((s) => s.file === selectedFile)?.lines ?? []"
               :key="i"
               :class="l.cls"
-              class="block"
+              class="flex"
               :title="tipFor(l)"
-            >{{ l.text || " " }}</span></pre>
+            ><span class="w-10 shrink-0 select-none pr-1.5 text-right opacity-45">{{ l.oldLine ?? "" }}</span><span class="w-10 shrink-0 select-none pr-2 text-right opacity-45">{{ l.newLine ?? "" }}</span><span class="min-w-0 flex-1">{{ l.text || " " }}</span></span></pre>
           </template>
         </div>
       </div>

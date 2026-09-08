@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -14,13 +15,14 @@ import {
   Search,
   Settings as SettingsIcon,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   GitBranch,
   GitBranchPlus,
   Cloud,
-  CloudUpload,
   Download,
   Tag,
-  Trash2,
+  Sparkles,
   X,
   Bot,
   ExternalLink,
@@ -29,8 +31,19 @@ import * as api from "./gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, aiCacheDelete } from "./ai";
 import type { Status, LogEntry, Branch, TagEntry } from "./gitApi";
 import { settings } from "./settings";
-import { Button, Input, Spinner, Md, Select, Tooltip } from "@/components/ui";
-import { Badge } from "@/components/ui";
+import {
+  Button,
+  Input,
+  Spinner,
+  Md,
+  Select,
+  Tooltip,
+  Badge,
+  Toast,
+  ContextMenu,
+  toast,
+  type MenuItem,
+} from "@/components/ui";
 import HistoryGraph from "./components/HistoryGraph.vue";
 import ChangesPanel from "./components/ChangesPanel.vue";
 import DiffViewer from "./components/DiffViewer.vue";
@@ -65,6 +78,7 @@ function humanize(raw: string): { msg: string; detail?: string } {
     [/has no upstream|no tracking information/i, "当前分支没有上游，先在终端执行一次：git push -u origin <分支名>"],
     [/rejected.*fetch first|non-fast-forward/i, "远程有新提交，先 Pull 再 Push"],
     [/nothing to commit/i, "没有可提交的内容：先暂存文件"],
+    [/cherry-pick is now empty|previous cherry-pick/i, "该提交的改动已在当前分支上（空拣选），无需重复 cherry-pick"],
     [/already exists and is not an empty directory/i, "目标目录已存在且非空：换一个目录名或位置"],
     [/could not read from remote repository/i, "无法读取远程仓库：URL 错误、无权访问或认证失败"],
     [/repository .* does not exist/i, "仓库不存在：检查 URL 拼写与访问权限"],
@@ -133,12 +147,19 @@ watch(
 const historyMode = ref<"current" | "all">("current");
 // 文件变更历史弹窗（单文件 --follow）
 const fileHistoryModal = ref<string | null>(null);
+// 历史区按文件路径过滤（git log -- path）：文件右键进入，chip 退出
+const historyFilePath = ref<string | null>(null);
 const remoteRaw = ref(""); // origin 的 URL（git remote get-url）
 const remoteLink = ref(""); // 用户在设置里自定义的网页链接（留空自动推断）
 
-// 统一的历史拉取入口：带上 视图范围（--all）与文件历史（--follow -- path）
+// 统一的历史拉取入口：带上 视图范围（--all）、文件历史（--follow -- path）与文件路径过滤
 function fetchLog(skip = 0) {
-  return api.log(repo.value, skip, historyMode.value === "all" ? true : undefined);
+  return api.log(
+    repo.value,
+    skip,
+    historyMode.value === "all" ? true : undefined,
+    historyFilePath.value ?? undefined,
+  );
 }
 
 // fetch=true 时先静默 fetch 远程再拉数据——ahead/behind 基于本地 remote-tracking refs，
@@ -193,12 +214,6 @@ async function loadMorePage() {
   }
 }
 
-// 滚动到底自动加载下一页
-function onHistoryScroll(e: Event) {
-  const el = e.target as HTMLElement;
-  if (el.scrollTop + el.clientHeight >= el.scrollHeight - 60) loadMorePage();
-}
-
 // 打开/切回仓库时后台 fetch 一次，成功后把 status 一并重拉——
 // 否则 refs 已更新而头部 ahead/behind 徽标还停在 fetch 前的旧值（分支树与徽标不一致）。
 // 静默失败（离线时保留本地视图）；切换期间的过期结果按 path 守卫丢弃
@@ -224,8 +239,8 @@ function fetchOnce() {
     .catch(() => {});
 }
 
-// 视图范围 / 文件历史变化 → 重载当前历史（两段式：遮罩先盖）
-watch(historyMode, () => {
+// 视图范围 / 文件路径过滤变化 → 重载当前历史（两段式：遮罩先盖）
+watch([historyMode, historyFilePath], () => {
   if (!repo.value) return;
   historyLoading.value = true;
   nextTick().then(async () => {
@@ -270,6 +285,20 @@ async function run(fn: () => Promise<unknown>, name = "") {
     busy.value = false;
     runningAction.value = "";
   }
+}
+
+// 头部 Pull/Push：成功给轻量 toast（失败仍走确认框）
+function doPull() {
+  run(async () => {
+    await api.pull(repo.value);
+    toast("已拉取");
+  }, "pull");
+}
+function doPush() {
+  run(async () => {
+    await api.push(repo.value, status.value?.branch ?? "");
+    toast("已推送");
+  }, "push");
 }
 
 async function openRepo() {
@@ -621,6 +650,7 @@ async function activate(path: string) {
   tags.value = [];
   canLoadMore.value = false;
   fileHistoryModal.value = null;
+  historyFilePath.value = null;
   remoteRaw.value = "";
   remoteLink.value = "";
 
@@ -736,8 +766,11 @@ const showSettingsTab = ref<string | undefined>(undefined);
 
 // 历史行右键菜单：复制 hash / checkout / revert
 const commitCtx = ref<{ x: number; y: number; c: LogEntry } | null>(null);
+function copyText(text: string) {
+  navigator.clipboard.writeText(text).catch(() => showError("复制失败"));
+}
 function copyHash(hash: string) {
-  navigator.clipboard.writeText(hash).catch(() => showError("复制失败"));
+  copyText(hash);
 }
 function onCommitMenu(p: { x: number; y: number; c: LogEntry }) {
   commitCtx.value = p;
@@ -814,6 +847,79 @@ async function saveReviewToFile() {
     await api.writeTextFile(target, reviewText.value);
     reviewSaved.value = true;
     setTimeout(() => (reviewSaved.value = false), 2000);
+  } catch (e) {
+    showError(String(e));
+  }
+}
+
+// ---- AI Release Notes：选 tag 范围汇总提交 → Markdown 报告（复用 Review 弹窗骨架）----
+// 默认起点 = describe --tags 的最近 tag；仓库无 tag 时可汇总全部提交
+const notesOpen = ref(false);
+const notesBusy = ref(false);
+const notesText = ref("");
+const notesErr = ref("");
+const notesSaved = ref(false);
+const notesFrom = ref(""); // tag 名；"__all__" = 全部提交
+const notesLatest = ref(""); // HEAD 可达的最近 tag
+
+const notesOptions = computed(() => {
+  const opts: { value: string; label: string }[] = [];
+  if (notesLatest.value)
+    opts.push({ value: notesLatest.value, label: `最近标签 ${notesLatest.value}` });
+  for (const t of tags.value) {
+    if (t.name !== notesLatest.value) opts.push({ value: t.name, label: t.name });
+  }
+  if (!opts.length) opts.push({ value: "__all__", label: "全部提交（仓库还没有标签）" });
+  return opts;
+});
+
+async function openReleaseNotes() {
+  if (!aiConfigured()) {
+    showSettingsTab.value = "ai";
+    showSettings.value = true;
+    return;
+  }
+  notesOpen.value = true;
+  notesText.value = "";
+  notesErr.value = "";
+  notesLatest.value = await api.latestTag(repo.value).catch(() => "");
+  notesFrom.value = notesLatest.value || "__all__";
+  genReleaseNotes();
+}
+async function genReleaseNotes() {
+  if (notesBusy.value || !repo.value) return;
+  notesBusy.value = true;
+  notesErr.value = "";
+  notesText.value = "";
+  try {
+    const from = notesFrom.value === "__all__" ? "" : notesFrom.value;
+    const list = await api.commitsRange(repo.value, from);
+    if (!list.length) {
+      notesErr.value = "该范围内没有提交";
+      return;
+    }
+    const user =
+      `【仓库】${repo.value.split(/[\\/]/).pop() || repo.value}\n【范围】${from ? `${from}..HEAD` : "全部提交"}\n\n` +
+      list.map((c) => `${c.hash} ${c.date} ${c.author} ${c.subject}`).join("\n");
+    notesText.value = await aiComplete(AI_PROMPTS.releaseNotes.system, clipForAI(user));
+  } catch (e) {
+    notesErr.value = String(e).replace(/^Error: /, "");
+  } finally {
+    notesBusy.value = false;
+  }
+}
+async function saveNotesToFile() {
+  if (!notesText.value) return;
+  const target = await saveDialog({
+    title: "保存 Release Notes",
+    defaultPath: `Release-notes-${new Date().toISOString().slice(0, 10)}.md`,
+    filters: [{ name: "Markdown", extensions: ["md"] }],
+  });
+  if (!target) return;
+  try {
+    await api.writeTextFile(target, notesText.value);
+    notesSaved.value = true;
+    setTimeout(() => (notesSaved.value = false), 2000);
   } catch (e) {
     showError(String(e));
   }
@@ -915,6 +1021,167 @@ function pushTag(name: string) {
   run(() => api.tagPush(repo.value, name), "tagPush");
 }
 
+// ---- M11 交互手感：右键菜单 / 侧栏折叠 / 分支切换器 / 拖拽打开 ----
+// 行主操作（单击切换）不进菜单；危险操作换入口不换确认
+
+const branchMenu = ref<{ x: number; y: number; b: Branch } | null>(null);
+function branchMenuItems(b: Branch): MenuItem[] {
+  if (b.remote) {
+    const full = fullName(b);
+    return [
+      { label: "复制分支名", fn: () => copyText(full) },
+      { separator: true, label: "" },
+      { label: "删除远程分支", danger: true, fn: () => askDelete(b) },
+    ];
+  }
+  const cur = b.current;
+  return [
+    { label: "复制分支名", fn: () => copyText(b.name) },
+    { label: "重命名…", disabled: cur, fn: () => (branchRename.value = { b, draft: b.name }) },
+    { separator: true, label: "" },
+    { label: "合并到当前分支", disabled: cur, fn: () => askMerge(b) },
+    { label: "把当前分支合并到该分支", disabled: cur, fn: () => askMergeInto(b) },
+    { separator: true, label: "" },
+    { label: "删除（未合并会拒绝）", danger: true, fn: () => askDelete(b) },
+    {
+      label: "强制删除（-D，未合并提交将丢失）",
+      danger: true,
+      fn: () =>
+        openConfirm({
+          title: "强制删除分支",
+          body: `确认强制删除本地分支 ${b.name}？未合并的提交将丢失，界面不可撤销。`,
+          ok: () => api.branchDelete(repo.value, b.name, true),
+        }),
+    },
+  ];
+}
+// 重命名：菜单触发 → 弹窗输入（替代原行内编辑）
+const branchRename = ref<{ b: Branch; draft: string } | null>(null);
+function confirmBranchRename() {
+  const r = branchRename.value;
+  const name = r?.draft.trim();
+  branchRename.value = null;
+  if (!r || !name || name === r.b.name) return;
+  run(() => api.branchRename(repo.value, r.b.name, name));
+}
+
+const tagMenu = ref<{ x: number; y: number; name: string } | null>(null);
+function tagMenuItems(name: string): MenuItem[] {
+  return [
+    { label: "复制标签名", fn: () => copyText(name) },
+    { label: "推送到 origin", fn: () => pushTag(name) },
+    { separator: true, label: "" },
+    { label: "删除标签", danger: true, fn: () => askDeleteTag(name) },
+  ];
+}
+// 标签组头右键：原 hover 图标（AI Release Notes / 新建）迁入菜单
+const tagHeaderMenu = ref<{ x: number; y: number } | null>(null);
+
+// ↑N 徽标下拉：徽标回归「指示 + 汇总入口」，破坏动作藏进菜单（仍有确认框兜底）
+const aheadMenu = ref<{ x: number; y: number } | null>(null);
+function aheadMenuItems(): MenuItem[] {
+  return [
+    { label: `AI Review ${status.value?.ahead ?? 0} 个未推送提交`, fn: () => startReview() },
+    { label: "放弃这些提交（重置回远程）", danger: true, fn: askDiscardUnpushed },
+  ];
+}
+
+// 侧栏折叠：双击把手 / Ctrl+Shift+L|R，状态持久化
+const leftFold = ref(localStorage.getItem("gz.fold.left") === "1");
+const rightFold = ref(localStorage.getItem("gz.fold.right") === "1");
+function toggleFold(side: "l" | "r") {
+  if (side === "l") {
+    leftFold.value = !leftFold.value;
+    localStorage.setItem("gz.fold.left", leftFold.value ? "1" : "0");
+  } else {
+    rightFold.value = !rightFold.value;
+    localStorage.setItem("gz.fold.right", rightFold.value ? "1" : "0");
+  }
+}
+
+// 分支快速切换器（Ctrl+B）：复用仓库切换器的交互骨架
+const showBranchSwitcher = ref(false);
+const bsQuery = ref("");
+const bsIndex = ref(0);
+const bsResults = computed(() => {
+  const q = bsQuery.value.trim().toLowerCase();
+  // 远程分支拷贝成剥前缀的 DWIM 名（switchBranch 直接 checkout 该名建跟踪分支）
+  const list = branchList.value
+    .filter((b) => !b.name.endsWith("/HEAD"))
+    .map((b): Branch & { originName?: string } =>
+      b.remote ? { ...b, name: b.name.replace(/^[^/]+\//, ""), originName: b.name } : b,
+    );
+  if (!q) return list;
+  return list
+    .filter((b) => b.name.toLowerCase().includes(q))
+    .sort(
+      (a, b) =>
+        Number(b.name.toLowerCase().startsWith(q)) - Number(a.name.toLowerCase().startsWith(q)),
+    );
+});
+function openBranchSwitcher() {
+  if (!repo.value) return;
+  bsQuery.value = "";
+  bsIndex.value = 0;
+  showBranchSwitcher.value = true;
+}
+function pickBranch(b: Branch) {
+  showBranchSwitcher.value = false;
+  switchBranch(b);
+}
+function onBranchSwitcherKeydown(e: KeyboardEvent) {
+  const n = bsResults.value.length;
+  if (e.key === "ArrowDown") {
+    e.preventDefault();
+    bsIndex.value = n ? (bsIndex.value + 1) % n : 0;
+  } else if (e.key === "ArrowUp") {
+    e.preventDefault();
+    bsIndex.value = n ? (bsIndex.value - 1 + n) % n : 0;
+  } else if (e.key === "Enter") {
+    e.preventDefault();
+    const b = bsResults.value[bsIndex.value];
+    if (b) pickBranch(b);
+  } else if (e.key === "Escape") {
+    showBranchSwitcher.value = false;
+  }
+}
+watch(bsQuery, () => (bsIndex.value = 0));
+watch(bsIndex, (i) => {
+  document.getElementById(`bs-item-${i}`)?.scrollIntoView({ block: "nearest" });
+});
+
+// 拖拽仓库文件夹进窗口 = 打开（非仓库目录给出明确提示）
+const dragOver = ref(false);
+async function openDropped(path: string) {
+  try {
+    if (!(await api.checkRepo(path))) {
+      showError(`「${path.split(/[\\/]/).pop() || path}」不是 Git 仓库`);
+      return;
+    }
+    addRepo(path);
+    switchRepo(path);
+  } catch (e) {
+    showError(String(e));
+  }
+}
+let unDrag: (() => void) | null = null;
+onMounted(async () => {
+  try {
+    unDrag = await getCurrentWebview().onDragDropEvent((e) => {
+      if (e.payload.type === "drop") {
+        dragOver.value = false;
+        const p = e.payload.paths[0];
+        if (p) openDropped(p);
+      } else {
+        dragOver.value = e.payload.type !== "leave";
+      }
+    });
+  } catch {
+    /* 拖拽事件不可用时静默降级，不影响其它功能 */
+  }
+});
+onUnmounted(() => unDrag?.());
+
 // ---- 创建分支：工具栏按钮 → 弹窗（可选前缀，基于当前分支，创建即切换）----
 const prefixes = computed(() =>
   settings.branchPrefix
@@ -970,7 +1237,10 @@ const confirmChecked = ref(false);
 function openConfirm(s: ConfirmState) {
   confirmChecked.value = false;
   confirmState.value = s;
+  // 危险操作的安全默认：焦点落「取消」，Enter 天然触发取消而非确认
+  nextTick(() => confirmCancelBtn.value?.$el.focus());
 }
+const confirmCancelBtn = ref<{ $el: HTMLButtonElement } | null>(null);
 
 function askDelete(b: Branch) {
   if (b.remote) {
@@ -991,9 +1261,6 @@ function askDelete(b: Branch) {
     checkbox: "强制删除（-D，未合并的提交将丢失）",
     ok: (force) => api.branchDelete(repo.value, b.name, force),
   });
-}
-function doRename(b: Branch, newName: string) {
-  run(() => api.branchRename(repo.value, b.name, newName));
 }
 function askMerge(b: Branch) {
   // 合并远程分支 = 合并其完整跟踪引用（origin/release/dev）；本地分支直接用名字
@@ -1087,7 +1354,26 @@ function askStashDrop(index: number, subject: string) {
 // ---- 全局快捷键 ----
 // Ctrl+Tab / Ctrl+Shift+Tab：下一个/上一个仓库选项卡
 // Ctrl+1..9：跳到第 N 个选项卡
-// F5：刷新
+// Ctrl+P：仓库切换器；Ctrl+B：分支切换器
+// Ctrl+Shift+L / R：折叠/展开左右侧栏；F5：刷新；Esc：按层级关闭最上层浮层
+function closeTopOverlay() {
+  // 菜单类（右键/下拉）由 ContextMenu 自身捕获 Esc，这里兜底旧浮层；确认框=取消
+  if (folderDd.value) return (folderDd.value = null);
+  if (error.value) return (error.value = "");
+  if (confirmState.value) return (confirmState.value = null);
+  if (showSwitcher.value) return (showSwitcher.value = false);
+  if (showBranchSwitcher.value) return (showBranchSwitcher.value = false);
+  if (showCreateBranch.value) return (showCreateBranch.value = false);
+  if (showCreateTag.value) return (showCreateTag.value = false);
+  if (openModal.value) return (openModal.value = null);
+  if (notesOpen.value) return (notesOpen.value = false);
+  if (reviewOpen.value) return (reviewOpen.value = false);
+  if (showGroupMgr.value) return (showGroupMgr.value = false);
+  if (groupModal.value) return (groupModal.value = null);
+  if (renameTarget.value) return (renameTarget.value = "");
+  if (branchRename.value) return (branchRename.value = null);
+}
+
 function onGlobalKeydown(e: KeyboardEvent) {
   if (e.ctrlKey && e.key === "Tab") {
     e.preventDefault();
@@ -1104,12 +1390,21 @@ function onGlobalKeydown(e: KeyboardEvent) {
     const t = barOrder.value.filter((x): x is BarRepo => x.kind === "repo")[Number(e.key) - 1];
     if (t) activate(t.path);
   } else if (e.ctrlKey && (e.key === "p" || e.key === "P")) {
-    // 仓库快速切换器
     e.preventDefault();
     if (showSwitcher.value) showSwitcher.value = false;
     else openSwitcher();
+  } else if (e.ctrlKey && (e.key === "b" || e.key === "B")) {
+    e.preventDefault();
+    if (showBranchSwitcher.value) showBranchSwitcher.value = false;
+    else openBranchSwitcher();
+  } else if (e.ctrlKey && e.shiftKey && (e.key === "L" || e.key === "l")) {
+    e.preventDefault();
+    toggleFold("l");
+  } else if (e.ctrlKey && e.shiftKey && (e.key === "R" || e.key === "r")) {
+    e.preventDefault();
+    toggleFold("r");
   } else if (e.key === "Escape") {
-    folderDd.value = null;
+    closeTopOverlay();
   } else if (e.key === "F5") {
     e.preventDefault();
     doRefresh();
@@ -1158,6 +1453,7 @@ onMounted(async () => {
 
 <template>
   <div class="relative flex h-full flex-col">
+    <Toast />
     <!-- 整页刷新遮罩（点刷新按钮时盖全页，替代仅按钮动画） -->
     <Transition name="fade">
       <div
@@ -1168,8 +1464,8 @@ onMounted(async () => {
       </div>
     </Transition>
     <header class="flex items-center gap-2 border-b border-border px-3 py-2">
-      <Tooltip text="打开仓库（本地目录 / 从远程克隆）">
-        <Button variant="ghost" size="sm" @click="openModal = 'choose'">
+      <Tooltip text="打开仓库">
+        <Button variant="ghost" size="sm" aria-label="打开仓库" @click="openModal = 'choose'">
           <FolderOpen class="size-4" />
           打开
         </Button>
@@ -1177,56 +1473,49 @@ onMounted(async () => {
       <span class="max-w-[340px] truncate text-muted-foreground"><Tooltip :text="repo">{{ repo }}</Tooltip></span>
       <span class="flex-1" />
       <Badge v-if="status?.behind" variant="warning">↓{{ status.behind }}</Badge>
-      <Tooltip v-if="status?.ahead" text="放弃这些未推送的提交（重置回远程）">
+      <Tooltip v-if="status?.ahead" text="未推送的提交：Review 或放弃">
         <button
           class="cursor-pointer border-0 bg-transparent p-0"
-          @click="askDiscardUnpushed"
+          aria-label="未推送提交菜单"
+          @click.stop="aheadMenu = { x: $event.clientX, y: $event.clientY }"
         >
           <Badge variant="info" class="hover:bg-primary/30">↑{{ status.ahead }}</Badge>
         </button>
       </Tooltip>
-      <Tooltip text="拉取远程更新并合并到当前分支">
-        <Button size="sm" :disabled="!repo || busy" @click="run(() => api.pull(repo), 'pull')">
+      <span class="mx-1 h-4 w-px bg-border" />
+      <Tooltip text="新建分支">
+        <Button variant="ghost" size="icon" :disabled="!repo || busy" aria-label="新建分支" @click="openCreateBranch">
+          <GitBranchPlus class="size-4" />
+        </Button>
+      </Tooltip>
+      <Tooltip text="拉取并合并远程更新">
+        <Button size="sm" :disabled="!repo || busy" @click="doPull">
           <Spinner v-if="runningAction === 'pull'" :size="14" />
           <ArrowDownToLine v-else class="size-3.5" />
           Pull
         </Button>
       </Tooltip>
-      <Tooltip text="推送本地提交到远程（无上游时自动建立跟踪）">
-        <Button size="sm" :disabled="!repo || busy" @click="run(() => api.push(repo, status?.branch ?? ''), 'push')">
+      <Tooltip text="推送（无上游自动建立跟踪）">
+        <Button size="sm" :disabled="!repo || busy" @click="doPush">
           <Spinner v-if="runningAction === 'push'" :size="14" />
           <ArrowUpFromLine v-else class="size-3.5" />
           Push
         </Button>
       </Tooltip>
-      <Tooltip v-if="status?.ahead && settings.aiEnabled === 'on'" text="AI Review 未推送的提交">
-        <Button
-          size="sm"
-          :disabled="busy || reviewBusy"
-          @click="startReview"
-        >
-          <Spinner v-if="reviewBusy" :size="14" />
-          <Bot v-else class="size-3.5 text-primary" />
-          Review {{ status.ahead }}
-        </Button>
-      </Tooltip>
-      <Tooltip text="拉取远程并刷新仓库状态（含 fetch，离线时仅刷新本地）">
+      <span class="mx-1 h-4 w-px bg-border" />
+      <Tooltip text="刷新（含 fetch，离线仅本地）">
         <Button
           variant="ghost"
           size="icon"
           :disabled="!repo || busy || refreshing"
+          aria-label="刷新"
           @click="doRefresh"
         >
           <RefreshCw class="size-4" :class="refreshing && 'animate-spin'" />
         </Button>
       </Tooltip>
-      <Tooltip text="新建分支">
-        <Button variant="ghost" size="icon" :disabled="!repo || busy" @click="openCreateBranch">
-          <GitBranchPlus class="size-4" />
-        </Button>
-      </Tooltip>
       <Tooltip text="设置">
-        <Button variant="ghost" size="icon" @click="showSettings = true">
+        <Button variant="ghost" size="icon" aria-label="设置" @click="showSettings = true">
           <SettingsIcon class="size-4" />
         </Button>
       </Tooltip>
@@ -1294,6 +1583,7 @@ onMounted(async () => {
             </Tooltip>
             <X
               class="size-3 opacity-0 transition-opacity group-hover/tab:opacity-60 hover:!opacity-100 hover:text-destructive"
+              aria-label="关闭仓库选项卡"
               @mousedown.stop
               @click.stop="closeTab(item.path)"
             />
@@ -1308,8 +1598,9 @@ onMounted(async () => {
     </div>
 
     <div class="flex min-h-0 flex-1">
-      <!-- 分支侧栏（可拖宽） -->
+      <!-- 分支侧栏（可拖宽 / 双击把手折叠） -->
       <aside
+        v-show="!leftFold"
         class="shrink-0 overflow-y-auto border-r border-border"
         :style="{ width: leftW + 'px' }"
       >
@@ -1337,12 +1628,8 @@ onMounted(async () => {
           v-if="!collapsedGroups.has('local')"
           v-model="collapsedGroups"
           :nodes="localNodes"
-          manage
           @switch="switchBranch"
-          @delete="askDelete"
-          @rename="doRename"
-          @merge="askMerge"
-          @merge-into="askMergeInto"
+          @menu="(b, x, y) => (branchMenu = { x, y, b })"
         />
 
         <!-- 远程分组：一级栏图标+强调，默认收起 -->
@@ -1360,55 +1647,56 @@ onMounted(async () => {
             v-if="openRemotes.has(prefix)"
             v-model="collapsedGroups"
             :nodes="remoteNodes(prefix)"
-            manage
             @switch="switchBranch"
-            @delete="askDelete"
+            @menu="(b, x, y) => (branchMenu = { x, y, b })"
           />
         </template>
 
-        <!-- 标签组：默认收起；组头 + 号对当前 HEAD 新建，行 hover 出 推送/删除 -->
+        <!-- 标签组：右键组头出 新建/AI Release Notes，右键行出 推送/删除/复制 -->
         <div
           class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium select-none hover:bg-muted"
+          title="右键：新建标签 / AI Release Notes"
           @click="toggleGroup('gz:tags')"
+          @contextmenu.prevent="tagHeaderMenu = { x: $event.clientX, y: $event.clientY }"
         >
           <ChevronDown class="size-3 transition-transform" :class="collapsedGroups.has('gz:tags') && '-rotate-90'" />
           <Tag class="size-3.5" />
           标签
-          <span class="text-[11px] font-normal text-muted-foreground">{{ tags.length }}</span>
-          <Tooltip text="新建标签（打在当前 HEAD）">
-            <Plus
-              class="ml-auto size-3.5 opacity-60 transition-opacity hover:!opacity-100 hover:text-primary"
-              @click.stop="openCreateTag()"
-            />
-          </Tooltip>
+          <span class="ml-auto text-[11px] font-normal text-muted-foreground">{{ tags.length }}</span>
         </div>
         <ul v-if="!collapsedGroups.has('gz:tags')" class="pb-1">
           <li
             v-for="t in tagsFiltered"
             :key="t.name"
-            class="group/tag flex items-center gap-1 py-1.5 pr-3 pl-6 hover:bg-muted"
-            :title="`${t.annotated ? '附注标签' : '轻量标签'} · ${t.date} · 指向 ${t.target.slice(0, 10)}${t.message ? '\n' + t.message : ''}`"
+            class="flex cursor-pointer items-center gap-1 py-1.5 pr-3 pl-6 hover:bg-muted"
+            :title="`${t.annotated ? '附注标签' : '轻量标签'} · ${t.date} · 指向 ${t.target.slice(0, 10)}${t.message ? '\n' + t.message : ''}（右键更多操作）`"
+            @contextmenu.prevent="tagMenu = { x: $event.clientX, y: $event.clientY, name: t.name }"
           >
             <span class="truncate text-xs">{{ t.name }}</span>
-            <span class="ml-auto flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover/tag:opacity-100">
-              <Tooltip text="推送标签到 origin">
-                <CloudUpload class="size-3.5 hover:text-primary" @click.stop="pushTag(t.name)" />
-              </Tooltip>
-              <Tooltip text="删除标签">
-                <Trash2 class="size-3.5 hover:text-destructive" @click.stop="askDeleteTag(t.name)" />
-              </Tooltip>
-            </span>
           </li>
           <li v-if="!tagsFiltered.length" class="py-1.5 pl-6 pr-3 text-xs text-muted-foreground">
-            {{ tags.length ? "无匹配标签" : "暂无标签 · 点右上 + 或历史区右键新建" }}
+            {{ tags.length ? "无匹配标签" : "暂无标签 · 右键组头新建" }}
           </li>
         </ul>
       </aside>
 
-      <!-- 左拖宽把手 -->
-      <div class="w-1 shrink-0 cursor-col-resize hover:bg-primary/40" @mousedown="startResize('l')" />
+      <!-- 左把手：拖宽 / 双击折叠（Ctrl+Shift+L）；折叠后点箭头展开 -->
+      <div
+        class="flex shrink-0 cursor-col-resize items-center justify-center hover:bg-primary/40"
+        :class="leftFold ? 'w-3' : 'w-1'"
+        :title="leftFold ? '展开侧栏（Ctrl+Shift+L）' : '拖宽 · 双击折叠'"
+        @dblclick="toggleFold('l')"
+        @mousedown="!leftFold && startResize('l')"
+      >
+        <ChevronRight
+          v-if="leftFold"
+          class="size-3 text-muted-foreground"
+          aria-label="展开左侧栏"
+          @click.stop="toggleFold('l')"
+        />
+      </div>
 
-      <!-- 历史 -->
+      <!-- 历史（滚动与虚拟化内聚在 HistoryGraph，App 只接加载更多） -->
       <section class="flex min-w-0 flex-1 flex-col">
         <div class="flex items-center gap-2 border-b border-border px-2 py-1.5">
           <!-- 视图范围：当前分支 / 所有分支 -->
@@ -1420,12 +1708,21 @@ onMounted(async () => {
               { value: 'all', label: '所有分支' },
             ]"
           />
+          <!-- 文件路径过滤 chip，× 退出 -->
+          <div
+            v-if="historyFilePath"
+            class="flex shrink-0 cursor-default items-center gap-1 rounded bg-muted px-2 py-1 text-[11px]"
+            :title="`历史已按文件过滤：${historyFilePath}`"
+          >
+            {{ historyFilePath.split(/[\\/]/).pop() }}
+            <X class="size-3 cursor-pointer hover:text-destructive" @click="historyFilePath = null" />
+          </div>
           <div class="relative min-w-0 flex-1">
             <Search class="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input v-model="filter" placeholder="搜索提交信息 / 作者…" class="h-7 pl-8 text-xs" />
           </div>
         </div>
-        <div class="relative min-h-0 flex-1 overflow-y-auto" @scroll="onHistoryScroll">
+        <div class="relative min-h-0 flex-1">
           <!-- 切换分支时的 loading 遮罩 -->
           <Transition name="fade">
             <div
@@ -1441,18 +1738,58 @@ onMounted(async () => {
             :filter="filter"
             @open-commit="(c: LogEntry) => (diffState = { kind: 'commit', target: c })"
             @commit-menu="onCommitMenu"
+            @load-more="loadMorePage"
           />
           <div v-else-if="repo" class="grid h-full place-items-center text-muted-foreground">
             暂无提交
           </div>
-          <div v-else class="grid h-full place-items-center text-muted-foreground">
-            先打开一个 Git 仓库
+          <!-- 空态首屏：欢迎 + 最近仓库 + 拖拽提示 -->
+          <div v-else class="grid h-full place-items-center">
+            <div class="flex w-[380px] flex-col items-center gap-4 text-center">
+              <GitBranch class="size-10 text-primary/40" />
+              <div>
+                <div class="font-medium">打开一个 Git 仓库开始</div>
+                <div class="mt-1 text-xs text-muted-foreground">
+                  把仓库文件夹拖进窗口，或从下面选择最近打开的
+                </div>
+              </div>
+              <Button size="sm" @click="openModal = 'choose'">
+                <FolderOpen class="size-3.5" />
+                打开仓库…
+              </Button>
+              <ul v-if="repos.length" class="max-h-44 w-full space-y-0.5 overflow-y-auto text-left">
+                <li v-for="r in repos.slice(0, 8)" :key="r.path">
+                  <button
+                    class="flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-xs hover:bg-muted"
+                    :title="r.path"
+                    @click="switchRepo(r.path)"
+                  >
+                    <span class="size-1.5 shrink-0 rounded-full bg-border" />
+                    <span class="shrink-0 font-medium">{{ r.name }}</span>
+                    <span class="min-w-0 flex-1 truncate text-right text-[10.5px] text-muted-foreground">{{ r.path }}</span>
+                  </button>
+                </li>
+              </ul>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- 右拖宽把手 -->
-      <div class="w-1 shrink-0 cursor-col-resize hover:bg-primary/40" @mousedown="startResize('r')" />
+      <!-- 右把手：拖宽 / 双击折叠（Ctrl+Shift+R）；折叠后点箭头展开 -->
+      <div
+        class="flex shrink-0 cursor-col-resize items-center justify-center hover:bg-primary/40"
+        :class="rightFold ? 'w-3' : 'w-1'"
+        :title="rightFold ? '展开侧栏（Ctrl+Shift+R）' : '拖宽 · 双击折叠'"
+        @dblclick="toggleFold('r')"
+        @mousedown="!rightFold && startResize('r')"
+      >
+        <ChevronLeft
+          v-if="rightFold"
+          class="size-3 text-muted-foreground"
+          aria-label="展开右侧栏"
+          @click.stop="toggleFold('r')"
+        />
+      </div>
 
       <!-- 变更 -->
       <aside
@@ -1464,9 +1801,11 @@ onMounted(async () => {
           :status="status"
           :busy="busy"
           :commit-count="commits.length"
+          :recent-messages="[...new Set(commits.slice(0, 8).map((c) => c.subject))].slice(0, 5)"
           @action="(fn: () => Promise<unknown>) => run(fn)"
           @open-diff="(t: DiffTarget) => (diffState = { kind: 'file', target: t })"
           @file-history="(p: string) => (fileHistoryModal = p)"
+          @filter-history="(p: string) => (historyFilePath = p)"
           @amend="askAmend"
           @undo="askUndoCommit"
           @stash-drop="askStashDrop"
@@ -1627,51 +1966,84 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 历史行右键菜单 -->
-    <div v-if="commitCtx" class="fixed inset-0 z-40" @click="commitCtx = null" @contextmenu.prevent="commitCtx = null">
-      <div
-        class="fixed min-w-[170px] rounded-md border border-border bg-card py-1 shadow-xl"
-        :style="{ left: commitCtx.x + 'px', top: commitCtx.y + 'px' }"
-      >
-        <button
-          v-for="item in [
-            { label: '复制 hash', fn: () => copyHash(commitCtx!.c.hash) },
-            {
-              label: '新建标签…',
-              fn: () => openCreateTag(commitCtx!.c.hash),
-            },
-            {
-              label: 'Checkout 到该提交',
-              fn: () =>
-                openConfirm({
-                  title: 'Checkout 提交',
-                  body: `将进入 detached HEAD 状态（${commitCtx!.c.hash.slice(0, 10)}），后续可切回任意分支。`,
-                  ok: () => api.checkout(repo, commitCtx!.c.hash.slice(0, 10)),
-                }),
-            },
-            {
-              label: 'Revert 该提交',
-              fn: () =>
-                openConfirm({
-                  title: 'Revert 提交',
-                  body: `确认 revert「${commitCtx!.c.subject}」？会生成一个反向提交。`,
-                  ok: () => api.revert(repo, commitCtx!.c.hash),
-                }),
-            },
-          ]"
-          :key="item.label"
-          class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs hover:bg-muted"
-          @click.stop="
-            () => {
-              item.fn();
-              commitCtx = null;
-            }
-          "
-        >
-          {{ item.label }}
-        </button>
-      </div>
-    </div>
+    <!-- 历史行右键菜单（ui/ContextMenu 统一渲染：Esc/键盘/外点关闭） -->
+    <ContextMenu
+      v-if="commitCtx"
+      :x="commitCtx.x"
+      :y="commitCtx.y"
+      :items="[
+        { label: '复制短 hash', fn: () => copyHash(commitCtx!.c.hash.slice(0, 10)) },
+        { label: '复制完整 hash', fn: () => copyHash(commitCtx!.c.hash) },
+        { label: '复制提交信息', fn: () => copyText(commitCtx!.c.subject) },
+        { label: '复制作者', fn: () => copyText(commitCtx!.c.author) },
+        { separator: true, label: '' },
+        { label: '新建标签…', fn: () => openCreateTag(commitCtx!.c.hash) },
+        {
+          label: 'Checkout 到该提交',
+          fn: () =>
+            openConfirm({
+              title: 'Checkout 提交',
+              body: `将进入 detached HEAD 状态（${commitCtx!.c.hash.slice(0, 10)}），后续可切回任意分支。`,
+              ok: () => api.checkout(repo, commitCtx!.c.hash.slice(0, 10)),
+            }),
+        },
+        {
+          label: 'Revert 该提交',
+          fn: () =>
+            openConfirm({
+              title: 'Revert 提交',
+              body: `确认 revert「${commitCtx!.c.subject}」？会生成一个反向提交。`,
+              ok: () => api.revert(repo, commitCtx!.c.hash),
+            }),
+        },
+        {
+          label: 'Cherry-pick 到当前分支',
+          fn: () =>
+            openConfirm({
+              title: 'Cherry-pick 提交',
+              body: `把「${commitCtx!.c.subject}」拣选到当前分支 ${status?.branch ?? ''}？若该改动已在当前分支（空拣选）或产生冲突会失败停留。`,
+              ok: () => api.cherryPick(repo, commitCtx!.c.hash),
+            }),
+        },
+      ]"
+      @close="commitCtx = null"
+    />
+
+    <!-- 分支右键菜单：管理操作（切换在行单击） -->
+    <ContextMenu
+      v-if="branchMenu"
+      :x="branchMenu.x"
+      :y="branchMenu.y"
+      :items="branchMenuItems(branchMenu.b)"
+      @close="branchMenu = null"
+    />
+    <!-- 标签行右键菜单 -->
+    <ContextMenu
+      v-if="tagMenu"
+      :x="tagMenu.x"
+      :y="tagMenu.y"
+      :items="tagMenuItems(tagMenu.name)"
+      @close="tagMenu = null"
+    />
+    <!-- 标签组头右键菜单 -->
+    <ContextMenu
+      v-if="tagHeaderMenu"
+      :x="tagHeaderMenu.x"
+      :y="tagHeaderMenu.y"
+      :items="[
+        { label: '新建标签（打在当前 HEAD）', fn: () => openCreateTag() },
+        { label: 'AI 生成 Release Notes', fn: openReleaseNotes },
+      ]"
+      @close="tagHeaderMenu = null"
+    />
+    <!-- ↑N 徽标下拉：Review / 放弃未推送 -->
+    <ContextMenu
+      v-if="aheadMenu"
+      :x="aheadMenu.x"
+      :y="aheadMenu.y"
+      :items="aheadMenuItems()"
+      @close="aheadMenu = null"
+    />
 
     <!-- 设置弹窗 -->
     <!-- 文件变更历史弹窗（左提交列表 / 右文件diff） -->
@@ -1707,6 +2079,37 @@ onMounted(async () => {
             重新生成
           </Button>
           <Button variant="secondary" size="sm" @click="reviewOpen = false">关闭</Button>
+        </footer>
+      </div>
+    </div>
+
+    <!-- AI Release Notes 弹窗（复用 Review 骨架） -->
+    <div
+      v-if="notesOpen"
+      class="fixed inset-0 z-30 flex items-center justify-center bg-black/50"
+      @click.self="notesOpen = false"
+    >
+      <div class="flex max-h-[80vh] w-[640px] flex-col rounded-lg border border-border bg-card shadow-xl">
+        <header class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
+          <Sparkles class="size-4 text-primary" />
+          <span class="font-medium">AI Release Notes</span>
+          <Select v-model="notesFrom" class="w-56" :options="notesOptions" />
+          <span class="flex-1" />
+          <Button variant="ghost" size="icon" @click="notesOpen = false"><X class="size-4" /></Button>
+        </header>
+        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-[13px] leading-relaxed">
+          <Spinner v-if="notesBusy" label="AI 正在汇总提交生成 Release Notes…" />
+          <div v-else-if="notesErr" class="text-destructive">{{ notesErr }}</div>
+          <Md v-else-if="notesText" :source="notesText" />
+          <div v-else class="text-muted-foreground">选择范围后点「生成」。</div>
+        </div>
+        <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-2.5">
+          <span v-if="notesSaved" class="mr-auto text-[11px] text-primary">已保存 ✓</span>
+          <Button variant="secondary" size="sm" :disabled="notesBusy || !notesText" @click="saveNotesToFile">
+            保存到本地
+          </Button>
+          <Button variant="secondary" size="sm" :disabled="notesBusy" @click="genReleaseNotes">生成</Button>
+          <Button variant="secondary" size="sm" @click="notesOpen = false">关闭</Button>
         </footer>
       </div>
     </div>
@@ -1755,46 +2158,17 @@ onMounted(async () => {
     />
 
     <!-- 选项卡右键菜单（重命名 / 关闭；分组操作在右侧管理按钮里） -->
-    <div v-if="tabCtx" class="fixed inset-0 z-40" @click="tabCtx = null" @contextmenu.prevent="tabCtx = null">
-      <div
-        class="fixed min-w-[140px] rounded-md border border-border bg-card py-1 shadow-xl"
-        :style="{ left: tabCtx.x + 'px', top: tabCtx.y + 'px' }"
-      >
-        <button
-          class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs hover:bg-muted"
-          @click.stop="
-            () => {
-              openRenameModal();
-              tabCtx = null;
-            }
-          "
-        >
-          重命名…
-        </button>
-        <button
-          class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs text-destructive hover:bg-muted"
-          @click.stop="
-            () => {
-              closeTab(tabCtx!.path);
-              tabCtx = null;
-            }
-          "
-        >
-          关闭
-        </button>
-        <button
-          class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs hover:bg-muted"
-          @click.stop="
-            () => {
-              closeOthers(tabCtx!.path);
-              tabCtx = null;
-            }
-          "
-        >
-          关闭其他
-        </button>
-      </div>
-    </div>
+    <ContextMenu
+      v-if="tabCtx"
+      :x="tabCtx.x"
+      :y="tabCtx.y"
+      :items="[
+        { label: '重命名…', fn: openRenameModal },
+        { label: '关闭', danger: true, fn: () => closeTab(tabCtx!.path) },
+        { label: '关闭其他', fn: () => closeOthers(tabCtx!.path) },
+      ]"
+      @close="tabCtx = null"
+    />
 
     <!-- 分组文件夹下拉：成员仓库列表，点击激活 -->
     <div v-if="folderDd" class="fixed inset-0 z-40" @click="folderDd = null" @contextmenu.prevent="folderDd = null">
@@ -2014,6 +2388,86 @@ onMounted(async () => {
       </div>
     </div>
 
+    <!-- 分支重命名弹窗（右键菜单触发） -->
+    <div
+      v-if="branchRename"
+      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      @click.self="branchRename = null"
+    >
+      <div class="pop-in w-[360px] rounded-lg border border-border bg-card p-4 shadow-xl">
+        <div class="mb-2 font-medium">重命名分支</div>
+        <Input
+          v-model="branchRename.draft"
+          v-focus
+          @keyup.enter="confirmBranchRename"
+          @keyup.esc="branchRename = null"
+        />
+        <p class="mt-1.5 truncate text-[11px] text-muted-foreground">{{ branchRename.b.name }}</p>
+        <div class="mt-3 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" @click="branchRename = null">取消</Button>
+          <Button variant="default" size="sm" :disabled="!branchRename.draft.trim()" @click="confirmBranchRename">
+            确定
+          </Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 分支快速切换器（Ctrl+B） -->
+    <div
+      v-if="showBranchSwitcher"
+      class="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-[15vh]"
+      @click.self="showBranchSwitcher = false"
+    >
+      <div class="pop-in w-[480px] overflow-hidden rounded-lg border border-border bg-card shadow-xl">
+        <div class="relative p-2">
+          <GitBranch
+            class="pointer-events-none absolute top-1/2 left-5 size-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            v-model="bsQuery"
+            v-focus
+            class="h-9 pl-8"
+            placeholder="搜索分支… ↑↓ 选择 · 回车切换 · Esc 关闭"
+            @keydown="onBranchSwitcherKeydown"
+          />
+        </div>
+        <ul class="max-h-[50vh] overflow-y-auto p-1 pb-2">
+          <li
+            v-for="(b, idx) in bsResults"
+            :id="`bs-item-${idx}`"
+            :key="b.name + (b.remote ? '@' : '')"
+            :class="[
+              'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-[13px]',
+              idx === bsIndex && 'bg-primary/10',
+              b.current && 'font-medium text-primary',
+            ]"
+            @click="pickBranch(b)"
+            @mousemove="bsIndex = idx"
+          >
+            <Cloud v-if="b.remote" class="size-3.5 shrink-0 text-muted-foreground" />
+            <GitBranch v-else class="size-3.5 shrink-0 text-muted-foreground" />
+            <span class="truncate">{{ b.name }}</span>
+            <span v-if="b.ahead" class="shrink-0 text-[10px] text-[var(--c-mod)]">↑{{ b.ahead }}</span>
+            <span v-if="b.behind" class="shrink-0 text-[10px] text-[var(--c-conf)]">↓{{ b.behind }}</span>
+            <span class="flex-1" />
+            <Badge v-if="b.current" variant="default">当前</Badge>
+            <Badge v-if="b.remote" variant="muted">远程</Badge>
+          </li>
+          <li v-if="!bsResults.length" class="px-3 py-6 text-center text-xs text-muted-foreground">
+            没有匹配的分支
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- 拖拽仓库进窗口的提示遮罩 -->
+    <div
+      v-if="dragOver"
+      class="pointer-events-none fixed inset-0 z-[70] grid place-items-center border-2 border-dashed border-primary/60 bg-primary/5 text-sm text-primary"
+    >
+      松开打开这个仓库
+    </div>
+
     <!-- 错误确认框：居中展示，点确认才关 -->
     <div
       v-if="error"
@@ -2047,7 +2501,7 @@ onMounted(async () => {
           {{ confirmState.checkbox }}
         </label>
         <div class="mt-3 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" @click="confirmState = null">取消</Button>
+          <Button ref="confirmCancelBtn" variant="ghost" size="sm" @click="confirmState = null">取消</Button>
           <Button
             variant="destructive"
             size="sm"
