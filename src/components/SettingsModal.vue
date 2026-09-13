@@ -82,10 +82,7 @@ async function save() {
   emit("close");
 }
 
-function onKey(e: KeyboardEvent) {
-  if (e.key === "Escape") emit("close");
-}
-window.addEventListener("keydown", onKey);
+// Esc 关闭统一走 App 的 closeTopOverlay 分层链（此前这里的监听从未清理，一并移除）
 
 // 目前为固定快捷键，仅展示；后续可做成可配置
 const SHORTCUTS: [string, string][] = [

@@ -36,10 +36,17 @@ function tip(c: LogEntry): string {
     c.subject,
     `${c.hash.slice(0, 10)} · ${c.author} · ${c.date}`,
     c.refs.length ? c.refs.join(" ") : "",
-    "点击查看变更，右键更多操作",
+    "单击选中 · 双击查看变更 · 右键更多操作",
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+// 单击选中（轻反馈零代价），双击同一行才打开 diff——防扫视误触弹大窗
+const selected = ref("");
+function onRowClick(c: LogEntry) {
+  if (selected.value === c.hash) emit("openCommit", c);
+  else selected.value = c.hash;
 }
 
 // 全量布局保证泳道稳定；过滤只决定哪些行可见，连线跨过隐藏提交连到最近可见祖先
@@ -190,13 +197,14 @@ const hitSegments = computed(() => {
         v-for="(c, vi) in visible"
         :key="c.hash"
         class="absolute flex cursor-pointer items-center gap-1.5 overflow-hidden pr-3 whitespace-nowrap hover:bg-muted/60"
+        :class="selected === c.hash && 'bg-primary/10'"
         :style="{
           top: (winStart + vi) * ROW_H + 'px',
           height: ROW_H + 'px',
           left: lay.cols * COL_W + 'px',
           right: 0,
         }"
-        @click="emit('openCommit', c)"
+        @click="onRowClick(c)"
         @contextmenu.prevent="emit('commitMenu', { x: $event.clientX, y: $event.clientY, c })"
       >
         <Tooltip :text="tip(c)">

@@ -65,8 +65,8 @@ export const LANE_COLORS = [
   "#8b7ff5",
   "#4a9ec2",
   "#c2884a",
-  "#b04ac2",
-  "#c24a5b",
+  "#9d64b0",
+  "#c05a66",
   "#8a9aa8",
-  "#d6c14a",
+  "#c2b25e",
 ];

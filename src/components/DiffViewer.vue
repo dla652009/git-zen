@@ -118,11 +118,7 @@ async function explain() {
   await loadExplain();
 }
 
-function onKey(e: KeyboardEvent) {
-  if (e.key === "Escape") emit("close");
-}
-onMounted(() => window.addEventListener("keydown", onKey));
-onUnmounted(() => window.removeEventListener("keydown", onKey));
+// Esc 关闭统一走 App 的 closeTopOverlay 分层链，本组件不再自挂 window 监听
 
 // ---- 阅读细节：折行开关 / 导出 patch ----
 const wrap = ref(localStorage.getItem("gz.diffWrap") !== "0");

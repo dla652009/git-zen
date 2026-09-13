@@ -17,7 +17,7 @@ export interface PatchSection {
 const ADD = "bg-[var(--diff-add-bg)] text-[var(--diff-add-text)]";
 const DEL = "bg-[var(--diff-del-bg)] text-[var(--diff-del-text)]";
 // 冲突标记行（<<<<<<< / ======= / >>>>>>>）：琥珀色，与状态图标/Badge warning 同色系
-const CONFLICT = "bg-amber-400/15 text-amber-400";
+const CONFLICT = "bg-[var(--c-conf)]/15 text-[var(--c-conf)]";
 const MUTED = "text-muted-foreground";
 
 // combined diff：2 个状态列；标记行只在结果侧新增（++），两侧增删任一存在即着色

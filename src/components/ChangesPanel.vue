@@ -130,6 +130,13 @@ function copyPath(p: string) {
   toast("已复制路径");
 }
 
+// 文件行单击选中、双击同一行才打开 diff——防扫视误触弹大窗（与 HistoryGraph 同策略）
+const selKey = ref("");
+function onRowClick(key: string, open: () => void) {
+  if (selKey.value === key) open();
+  else selKey.value = key;
+}
+
 // 未暂存文件右键菜单
 const fileCtx = ref<{ x: number; y: number; f: StatusFile; cached: boolean } | null>(null);
 
@@ -165,12 +172,12 @@ function isUnmerged(f: StatusFile): boolean {
 
 // 状态 → 图标 + 颜色 + 中文说明（替代字母徽标）
 const STATUS_META: Record<string, { icon: Component; cls: string; desc: string }> = {
-  A: { icon: FilePlus, cls: "text-emerald-400", desc: "新增" },
-  M: { icon: FilePen, cls: "text-sky-400", desc: "修改" },
-  D: { icon: FileMinus, cls: "text-rose-400", desc: "删除" },
-  R: { icon: FileSymlink, cls: "text-violet-400", desc: "重命名" },
-  "?": { icon: FileQuestion, cls: "text-amber-400", desc: "未跟踪" },
-  U: { icon: GitMerge, cls: "text-amber-400", desc: "合并冲突" },
+  A: { icon: FilePlus, cls: "text-[var(--c-add)]", desc: "新增" },
+  M: { icon: FilePen, cls: "text-[var(--c-mod)]", desc: "修改" },
+  D: { icon: FileMinus, cls: "text-[var(--c-del)]", desc: "删除" },
+  R: { icon: FileSymlink, cls: "text-[var(--c-ren)]", desc: "重命名" },
+  "?": { icon: FileQuestion, cls: "text-[var(--c-conf)]", desc: "未跟踪" },
+  U: { icon: GitMerge, cls: "text-[var(--c-conf)]", desc: "合并冲突" },
 };
 function statusMeta(f: StatusFile) {
   return (
@@ -205,8 +212,19 @@ const recentMsgMenu = ref<{ x: number; y: number } | null>(null);
 function recentMsgItems(): MenuItem[] {
   return (props.recentMessages ?? []).map((m) => ({
     label: m,
-    fn: () => (message.value = m),
+    fn: () => applyGenerated(m),
   }));
+}
+
+// ---- B6：生成/复用的信息不静默覆盖已输入草稿——挂起待确认（覆盖 / 保留原内容）----
+const pendingMsg = ref("");
+function applyGenerated(text: string) {
+  if (message.value.trim()) pendingMsg.value = text;
+  else message.value = text;
+}
+function applyPending() {
+  message.value = pendingMsg.value;
+  pendingMsg.value = "";
 }
 
 // ---- AI 生成提交信息：暂存区 diff → 提交框，人工可改后再提交（不自动提交）----
@@ -236,9 +254,8 @@ async function genCommitMsg() {
       .map((c) => c.subject)
       .join("\n");
     const user = `【仓库近期提交风格】\n${recentLog || "（无历史提交）"}\n\n【暂存区 diff】\n${clipForAI(d)}`;
-    message.value = await aiComplete(
-      AI_PROMPTS.commitMessage.system(settings.aiCommitLang),
-      user,
+    applyGenerated(
+      await aiComplete(AI_PROMPTS.commitMessage.system(settings.aiCommitLang), user),
     );
   } catch (e) {
     aiErr.value = String(e).replace(/^Error: /, "");
@@ -275,11 +292,12 @@ async function genCommitMsg() {
         v-for="f in staged"
         :key="'s' + f.path"
         class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 whitespace-nowrap hover:bg-muted"
-        @click="emit('openDiff', { path: f.path.split(' -> ').pop()!, cached: !isUnmerged(f), untracked: false, conflict: isUnmerged(f) })"
+        :class="selKey === 's' + f.path && 'bg-primary/10'"
+        @click="onRowClick('s' + f.path, () => emit('openDiff', { path: f.path.split(' -> ').pop()!, cached: !isUnmerged(f), untracked: false, conflict: isUnmerged(f) }))"
         @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: true }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
-        <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（点击查看变更）`">
+        <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（单击选中 · 双击查看变更）`">
           <span class="truncate text-[12.5px]">
             <template v-if="renameParts(f.path)">
               <span class="text-muted-foreground line-through">{{ renameParts(f.path)![0] }}</span>
@@ -334,11 +352,12 @@ async function genCommitMsg() {
         v-for="f in unstaged"
         :key="'u' + f.path"
         class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 whitespace-nowrap hover:bg-muted"
-        @click="emit('openDiff', { path: f.path, cached: false, untracked: f.x === '?', conflict: isUnmerged(f) })"
+        :class="selKey === 'u' + f.path && 'bg-primary/10'"
+        @click="onRowClick('u' + f.path, () => emit('openDiff', { path: f.path, cached: false, untracked: f.x === '?', conflict: isUnmerged(f) }))"
         @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: false }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
-        <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（点击查看变更）`">
+        <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（单击选中 · 双击查看变更）`">
           <span class="truncate text-[12.5px]">{{ f.path }}</span>
         </Tooltip>
         <Tooltip text="暂存">
@@ -420,6 +439,15 @@ async function genCommitMsg() {
         </Tooltip>
       </div>
       <div v-if="aiErr" class="text-[11px] leading-relaxed text-destructive">{{ aiErr }}</div>
+      <!-- 已有草稿时不静默覆盖：覆盖 / 保留，二选一 -->
+      <div
+        v-if="pendingMsg"
+        class="flex items-center gap-2 rounded border border-[var(--c-conf)]/40 bg-[var(--c-conf)]/10 px-2 py-1 text-[11px]"
+      >
+        <span class="flex-1">已生成新的提交信息，覆盖已输入的内容？</span>
+        <Button variant="secondary" size="sm" class="h-5 px-1.5 text-[11px]" @click="applyPending">覆盖</Button>
+        <Button variant="ghost" size="sm" class="h-5 px-1.5 text-[11px]" @click="pendingMsg = ''">保留原内容</Button>
+      </div>
       <!-- 勾选框与 amend/撤销 icons 同行，省纵向空间；两者改写历史，确认框在 App 侧 -->
       <div class="flex items-center gap-1.5">
         <label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
@@ -496,13 +524,18 @@ async function genCommitMsg() {
           <div
             v-for="e in stashEntries"
             :key="e.index"
-            class="group/st flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted"
-            :title="`${e.subject} · ${e.date}\n点击恢复（保留记录）`"
-            @click.stop="stashRestore(e.index, false)"
+            class="group/st flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted"
+            :title="`${e.subject} · ${e.date}\n右侧图标：恢复（保留记录）/ 恢复并删除（pop）/ 删除记录`"
           >
             <Archive class="size-3 shrink-0 text-muted-foreground" />
             <span class="min-w-0 flex-1 truncate">{{ e.subject }}</span>
             <span class="hidden shrink-0 items-center gap-1 group-hover/st:flex">
+              <Tooltip text="恢复（保留记录，可再次恢复）">
+                <RotateCcw
+                  class="size-3.5 hover:text-primary"
+                  @click.stop="stashRestore(e.index, false)"
+                />
+              </Tooltip>
               <Tooltip text="恢复并删除记录（pop）">
                 <ArchiveRestore
                   class="size-3.5 hover:text-primary"

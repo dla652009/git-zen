@@ -700,10 +700,12 @@ async function activate(path: string) {
 function closeTab(path: string) {
   const i = repos.value.findIndex((r) => r.path === path);
   if (i === -1) return;
+  const name = repos.value[i].name;
   const wasActive = repos.value[i].path === repo.value;
   repoCache.delete(path); // 关闭的选项卡不占 LRU 名额
   mruPaths.value = mruPaths.value.filter((p) => p !== path);
   repos.value.splice(i, 1); // syncBar 自动修剪 barOrder 条目
+  toast(`已关闭「${name}」（可用「打开」重新加入）`);
   if (wasActive) {
     // 关闭的是当前仓库：优先切到标签栏第一个可见仓库；都收进分组了就落到任一剩余仓库
     const firstBar = barOrder.value.find((e) => e.kind === "repo");
@@ -1208,20 +1210,34 @@ function confirmCreateBranch() {
   run(() => api.branchCreate(repo.value, full));
 }
 
-// ---- 切换分支：乐观更新选中态 + 历史区 loading，失败由 refresh 回滚真实状态 ----
+// ---- 切换分支：单击触发（对齐主流客户端），但工作区有未提交改动时先确认——
+// 兼容时 git 会把改动带到目标分支，用户常意识不到自己带着脏改动在写代码
 const historyLoading = ref(false);
 async function switchBranch(b: Branch) {
   if (b.current || busy.value) return;
-  if (status.value && !b.remote) status.value.branch = b.name;
-  branchList.value.forEach((x) => (x.current = x.name === b.name));
-  historyLoading.value = true;
-  try {
-    // 远程叶子 name 已是剥掉远程前缀的 DWIM 名（release/dev），checkout 自动建同名本地跟踪分支；
-    // 本地叶子 name 即分支名。不能用完整引用名（origin/xxx）checkout，那会进 detached HEAD
-    await run(() => api.checkout(repo.value, b.name));
-  } finally {
-    historyLoading.value = false;
+  // doSwitch 只做乐观更新 + checkout，刷新交给外层 run（确认路径 run(ok) 已包裹，避免嵌套 run）
+  const doSwitch = async () => {
+    if (status.value && !b.remote) status.value.branch = b.name;
+    branchList.value.forEach((x) => (x.current = x.name === b.name));
+    historyLoading.value = true;
+    try {
+      // 远程叶子 name 已是剥掉远程前缀的 DWIM 名（release/dev），checkout 自动建同名本地跟踪分支；
+      // 本地叶子 name 即分支名。不能用完整引用名（origin/xxx）checkout，那会进 detached HEAD
+      await api.checkout(repo.value, b.name);
+    } finally {
+      historyLoading.value = false;
+    }
+  };
+  const dirty = status.value?.files.length ?? 0;
+  if (dirty) {
+    openConfirm({
+      title: "切换分支",
+      body: `工作区有 ${dirty} 个未提交的文件改动，切换到 ${b.name} 会尝试把它们带过去（与目标分支冲突时 checkout 会被 git 拒绝）。继续切换？`,
+      ok: doSwitch,
+    });
+    return;
   }
+  await run(doSwitch);
 }
 
 // ---- 危险操作确认框（删分支/合并），支持强制删除勾选项 ----
@@ -1365,16 +1381,24 @@ function closeTopOverlay() {
   if (showBranchSwitcher.value) return (showBranchSwitcher.value = false);
   if (showCreateBranch.value) return (showCreateBranch.value = false);
   if (showCreateTag.value) return (showCreateTag.value = false);
-  if (openModal.value) return (openModal.value = null);
+  if (openModal.value) {
+    // 克隆进行中不关表单：后台克隆完成后会自动切换仓库，弹窗还承担进度与取消入口
+    if (!cloneBusy.value) openModal.value = null;
+    return;
+  }
   if (notesOpen.value) return (notesOpen.value = false);
   if (reviewOpen.value) return (reviewOpen.value = false);
   if (showGroupMgr.value) return (showGroupMgr.value = false);
   if (groupModal.value) return (groupModal.value = null);
   if (renameTarget.value) return (renameTarget.value = "");
   if (branchRename.value) return (branchRename.value = null);
+  if (showSettings.value) return (showSettings.value = false);
+  if (fileHistoryModal.value) return (fileHistoryModal.value = null);
+  if (diffState.value) return (diffState.value = null);
 }
 
 function onGlobalKeydown(e: KeyboardEvent) {
+  if (e.isComposing) return; // 中文输入法组合中：Esc/Enter 是候选词操作，不碰任何快捷键/浮层
   if (e.ctrlKey && e.key === "Tab") {
     e.preventDefault();
     // 在标签栏可见仓库间循环（文件夹不参与）
@@ -1693,6 +1717,7 @@ onMounted(async () => {
           class="size-3 text-muted-foreground"
           aria-label="展开左侧栏"
           @click.stop="toggleFold('l')"
+          @dblclick.stop
         />
       </div>
 
@@ -1788,6 +1813,7 @@ onMounted(async () => {
           class="size-3 text-muted-foreground"
           aria-label="展开右侧栏"
           @click.stop="toggleFold('r')"
+          @dblclick.stop
         />
       </div>
 

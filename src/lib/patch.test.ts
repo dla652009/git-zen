@@ -57,11 +57,11 @@ assert.equal(lines[0].cls, "text-muted-foreground"); // diff --cc 头
 assert.equal(lines[1].cls, "text-muted-foreground"); // index 元信息
 assert.equal(lines[4].cls, "text-muted-foreground"); // @@@ 头不高亮成新增
 assert.equal(lines[5].cls, ""); // 上下文
-assert.equal(lines[6].cls, "bg-amber-400/15 text-amber-400"); // <<<<<<< 标记
+assert.equal(lines[6].cls, "bg-[var(--c-conf)]/15 text-[var(--c-conf)]"); // <<<<<<< 标记
 assert.ok(lines[7].cls.includes("diff-add-text")); // + 单列 = 一侧内容
-assert.equal(lines[8].cls, "bg-amber-400/15 text-amber-400"); // ======= 标记
+assert.equal(lines[8].cls, "bg-[var(--c-conf)]/15 text-[var(--c-conf)]"); // ======= 标记
 assert.ok(lines[9].cls.includes("diff-add-text"));
-assert.equal(lines[10].cls, "bg-amber-400/15 text-amber-400"); // >>>>>>> 标记
+assert.equal(lines[10].cls, "bg-[var(--c-conf)]/15 text-[var(--c-conf)]"); // >>>>>>> 标记
 assert.equal(lines[11].cls, "");
 
 secs = patchSections(combined);

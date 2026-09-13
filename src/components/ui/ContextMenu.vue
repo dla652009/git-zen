@@ -49,7 +49,26 @@ function run(it: MenuItem) {
     emit("close");
   }
 }
+
+// 遮罩上的右键：关掉本菜单后把事件按原坐标透传给底层元素——
+// 连续右键浏览（A 行换 B 行）一步到位，不用先点一下空白关菜单
+function onOverlayContextmenu(e: MouseEvent) {
+  emit("close");
+  nextTick(() => {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    el?.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: e.clientX,
+        clientY: e.clientY,
+        button: 2,
+      }),
+    );
+  });
+}
 function onKey(e: KeyboardEvent) {
+  if (e.isComposing) return; // 输入法组合中：Enter/Esc 属于候选词操作，绝不能当成菜单确认/关闭
   if (e.key === "Escape") {
     e.stopPropagation();
     emit("close");
@@ -69,10 +88,10 @@ function onKey(e: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50" @click="emit('close')" @contextmenu.prevent="emit('close')">
+  <div class="fixed inset-0 z-50" @click="emit('close')" @contextmenu.prevent="onOverlayContextmenu">
     <div
       ref="root"
-      class="pop-in fixed min-w-[150px] overflow-hidden rounded-md border border-border bg-card py-1 shadow-xl"
+      class="pop-in fixed min-w-[150px] max-w-[440px] overflow-hidden rounded-md border border-border bg-card py-1 shadow-xl"
       :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
       @click.stop
     >
@@ -80,7 +99,7 @@ function onKey(e: KeyboardEvent) {
         <div v-if="it.separator" class="my-1 border-t border-border/60" />
         <button
           v-else
-          class="flex w-full cursor-pointer px-3 py-1.5 text-left text-xs"
+          class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs"
           :class="[
             it.danger ? 'text-destructive' : '',
             active === i ? 'bg-muted' : '',
@@ -89,7 +108,7 @@ function onKey(e: KeyboardEvent) {
           @mousemove="active = i"
           @click.stop="run(it)"
         >
-          {{ it.label }}
+          <span class="min-w-0 flex-1 truncate">{{ it.label }}</span>
         </button>
       </template>
     </div>

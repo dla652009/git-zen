@@ -315,6 +315,29 @@
       打开仓库（本地目录 / 从远程克隆）→「打开仓库」；
       分组「x」· N 个仓库 · 点击展开，拖仓库到此处可收进分组 →「x · N 个仓库（拖仓库进来可归组）」
 
+
+### 11.5 交互复查修复（已完成）
+
+> M11 落地后自查一轮，修掉误触与事件层隐患；清单与用户逐条确认过。
+
+- [x] **IME 组合输入误触**：全局快捷键与 ContextMenu 键盘处理补 `isComposing` 守卫——
+      中文输入按 Esc 取候选词不再关弹窗丢输入，按 Enter 确认候选词不再误执行菜单项
+- [x] **Esc 通道收敛**：删掉 DiffViewer/SettingsModal 自挂的 window Esc 监听（后者从未清理过），
+      diffState/showSettings/fileHistoryModal 收进 closeTopOverlay 分层链——一次 Esc 只关一层，
+      FileHistoryModal 此前完全没有 Esc 处理也一并修上
+- [x] **分支单击切换加护栏**：工作区有未提交改动时先确认（明示改动数与"git 拒绝时留在原分支"），
+      干净时直接切；确认路径不嵌套 run（doSwitch 只做乐观更新+checkout，刷新交给外层 run）
+- [x] **文件/历史行回退"单击选中、双击打开"**：单击高亮零代价（bg-primary/10），双击同一行才开
+      diff 弹窗；HistoryGraph 与 ChangesPanel 同策略
+- [x] **Stash 行单击不再直接 apply**：恢复动作收敛到 hover 图标——RotateCcw=恢复保留记录、
+      ArchiveRestore=pop、Trash2=删除记录；行改为非点击态
+- [x] **AI 生成/最近信息填入不再静默覆盖草稿**：草稿非空时结果挂起，行内条「覆盖 / 保留原内容」
+- [x] **关闭选项卡 toast 提示**（根治方案"关闭保留最近列表"成本高，后议）
+- [x] **克隆进行中 Esc 不关表单**（后台完成会自动切仓库，弹窗承担进度与取消入口）
+- [x] **右键菜单一步换目标**：遮罩 contextmenu 关闭后按原坐标 elementFromPoint 重派发，
+      不再需要先点空白关菜单
+- [x] **菜单宽度收敛**（长 subject max-w-[440px] + truncate）；折叠展开箭头补 dblclick.stop
+
 ### 观察后推迟
 
 - diff 语法高亮（需选型 + 大 diff 性能风险，单独立项评估）、图片 diff 预览、
