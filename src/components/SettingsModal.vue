@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, reactive, ref, onMounted } from "vue";
-import { X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe } from "@lucide/vue";
+import { X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe, Workflow as WorkflowIcon, ChevronDown, ChevronUp } from "@lucide/vue";
 import { THEMES, settings, type Settings } from "../settings";
 import * as api from "../gitApi";
 import { aiVerify } from "../ai";
+import { workflows } from "../workflowStore";
+import { newFlowId, type BranchRef, type Workflow, type WorkflowStep } from "../workflow";
 import { Button, Input, Spinner, Select, Switch } from "@/components/ui";
 import CommitHeatmap from "./CommitHeatmap.vue";
 
@@ -12,8 +14,8 @@ const emit = defineEmits<{ close: [] }>();
 
 // 草稿编辑，保存才写回（写回后 watcher 自动持久化+生效）
 const draft = reactive<Settings>({ ...settings });
-const tab = ref<"user" | "ai" | "appearance" | "personal" | "remote" | "shortcuts">(
-  (props.initialTab as "user" | "ai" | "appearance" | "personal" | "shortcuts") || "user"
+const tab = ref<"user" | "ai" | "appearance" | "personal" | "workflow" | "remote" | "shortcuts">(
+  (props.initialTab as "user" | "ai" | "appearance" | "personal" | "workflow" | "shortcuts") || "user"
 );
 
 // AI 配置验通
@@ -84,6 +86,99 @@ async function save() {
 
 // Esc 关闭统一走 App 的 closeTopOverlay 分层链（此前这里的监听从未清理，一并移除）
 
+// ---- 工作流管理（M12：配置面在设置页，执行面在工具栏）----
+const wfExpanded = ref("");
+const deleteArm = ref(""); // 两段式删除：第一次点「删除」进入确认态，再点才真删
+function addFlow() {
+  const wf: Workflow = { id: newFlowId(), name: `工作流 ${workflows.length + 1}`, steps: [] };
+  workflows.push(wf);
+  wfExpanded.value = wf.id;
+}
+function renameFlow(w: Workflow) {
+  wfRename.value = { id: w.id, draft: w.name };
+}
+const wfRename = ref<{ id: string; draft: string } | null>(null);
+function confirmFlowRename() {
+  const r = wfRename.value;
+  const name = r?.draft.trim();
+  wfRename.value = null;
+  if (!r || !name) return;
+  const wf = workflows.find((x) => x.id === r.id);
+  if (wf) wf.name = name;
+}
+function deleteFlow(w: Workflow) {
+  if (deleteArm.value === w.id) {
+    workflows.splice(workflows.indexOf(w), 1);
+    if (wfExpanded.value === w.id) wfExpanded.value = "";
+    deleteArm.value = "";
+    return;
+  }
+  deleteArm.value = w.id;
+  setTimeout(() => {
+    if (deleteArm.value === w.id) deleteArm.value = "";
+  }, 2500);
+}
+function moveStep(w: Workflow, i: number, d: -1 | 1) {
+  const j = i + d;
+  if (j < 0 || j >= w.steps.length) return;
+  const [s] = w.steps.splice(i, 1);
+  w.steps.splice(j, 0, s!);
+}
+const newStepKind = ref<WorkflowStep["kind"]>("checkout");
+const newStepMode = ref<BranchRef["mode"]>("fixed");
+const newStepName = ref("");
+const newStepMsgSource = ref<"ai" | "fixed">("ai");
+const newStepMessage = ref("");
+const newStepPrefix = ref("");
+function addStep(w: Workflow) {
+  const s = buildDraftStep();
+  if (!s) return;
+  w.steps.push(s);
+}
+function buildDraftStep(): WorkflowStep | null {
+  switch (newStepKind.value) {
+    case "checkout":
+    case "merge":
+      if (newStepMode.value === "fixed" && !newStepName.value.trim()) return null;
+      return { kind: newStepKind.value, ref: { mode: newStepMode.value, name: newStepName.value.trim() } };
+    case "pull":
+      return { kind: "pull" };
+    case "push":
+      return { kind: "push" };
+    case "switchBack":
+      return { kind: "switchBack" };
+    case "createBranch":
+      return { kind: "createBranch", prefix: newStepPrefix.value.trim() || undefined };
+    case "commitPush": {
+      const message = newStepMessage.value.trim();
+      if (newStepMsgSource.value === "fixed" && !message) return null;
+      return { kind: "commitPush", msgSource: newStepMsgSource.value, message: message || undefined };
+    }
+  }
+}
+const KIND_LABELS: Record<WorkflowStep["kind"], string> = {
+  checkout: "切换分支",
+  pull: "拉取",
+  commitPush: "提交推送",
+  push: "推送",
+  merge: "合并",
+  createBranch: "新建分支",
+  switchBack: "切回起始分支",
+};
+const STEP_KIND_OPTIONS = Object.entries(KIND_LABELS).map(([value, label]) => ({ value, label }));
+const REF_MODE_OPTIONS = [
+  { value: "fixed", label: "固定名" },
+  { value: "start", label: "起始分支" },
+  { value: "ask", label: "运行时输入" },
+];
+const MSG_SOURCE_OPTIONS = [
+  { value: "ai", label: "AI 生成" },
+  { value: "fixed", label: "固定文本" },
+];
+function refOf(s: WorkflowStep): BranchRef | null {
+  return s.kind === "checkout" || s.kind === "merge" ? s.ref : null;
+}
+
 // 目前为固定快捷键，仅展示；后续可做成可配置
 const SHORTCUTS: [string, string][] = [
   ["Ctrl + P", "仓库快速切换器（模糊搜索 + 最近使用排序）"],
@@ -143,6 +238,7 @@ const NAV = [
   { id: "ai", label: "AI", icon: Bot },
   { id: "appearance", label: "外观", icon: Palette },
   { id: "personal", label: "个性化", icon: UserCog },
+  { id: "workflow", label: "工作流", icon: WorkflowIcon },
   { id: "remote", label: "远程", icon: Globe },
   { id: "shortcuts", label: "快捷键", icon: Keyboard },
 ] as const;
@@ -329,6 +425,169 @@ const NAV = [
               </p>
             </section>
 
+          </template>
+
+          <!-- 工作流 -->
+          <template v-else-if="tab === 'workflow'">
+            <section>
+              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">什么是工作流</h3>
+              <p class="mb-4 text-[11px] leading-relaxed text-muted-foreground">
+                把「切分支 → 拉取 → 合并 → 推送」这类固定套路串起来，工具栏
+                <WorkflowIcon class="inline size-3.5 align-[-2px] text-primary" /> 按钮下拉一键执行。
+                步骤自上而下顺序执行，任一步失败立即中止；「提交推送」在有改动时自动全部暂存，无改动时跳过。
+              </p>
+              <Button variant="secondary" size="sm" class="mb-3" @click="addFlow">
+                <Plus class="size-3.5" /> 新建工作流
+              </Button>
+              <div v-if="!workflows.length" class="py-10 text-center text-xs text-muted-foreground">
+                还没有工作流。新建一个试试——先从「切 master → 拉取 → 新建分支」开始。
+              </div>
+              <div v-for="w in workflows" :key="w.id" class="mb-3 rounded-md border border-border">
+                <div class="flex items-center gap-2 px-3 py-2">
+                  <button
+                    class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left text-[13px]"
+                    @click="wfExpanded = wfExpanded === w.id ? '' : w.id"
+                  >
+                    <ChevronDown
+                      class="size-3 shrink-0 text-muted-foreground transition-transform"
+                      :class="wfExpanded !== w.id && '-rotate-90'"
+                    />
+                    <WorkflowIcon class="size-3.5 shrink-0 text-primary" />
+                    <span class="truncate font-medium">{{ w.name }}</span>
+                    <span class="shrink-0 text-[11px] text-muted-foreground">{{ w.steps.length }} 步</span>
+                  </button>
+                  <Button variant="ghost" size="sm" class="h-6 px-2 text-[11px]" @click="renameFlow(w)">重命名</Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    class="h-6 px-2 text-[11px]"
+                    :class="deleteArm === w.id && 'text-destructive'"
+                    @click="deleteFlow(w)"
+                  >
+                    {{ deleteArm === w.id ? "确认删除？" : "删除" }}
+                  </Button>
+                </div>
+                <div v-if="wfExpanded === w.id" class="border-t border-border/60 px-3 py-2.5">
+                  <!-- 步骤卡：编号 + 类型 + 参数行内编辑 + 上移/下移/删除 -->
+                  <div
+                    v-for="(s, si) in w.steps"
+                    :key="si"
+                    class="mb-1.5 rounded-md border border-border/70 bg-muted/20 px-2.5 py-2"
+                  >
+                    <div class="flex items-center gap-2">
+                      <span
+                        class="grid size-5 shrink-0 place-items-center rounded bg-primary/15 text-[10px] font-medium text-primary"
+                      >{{ si + 1 }}</span>
+                      <span class="w-16 shrink-0 text-xs font-medium">{{ KIND_LABELS[s.kind] }}</span>
+                      <div class="flex min-w-0 flex-1 items-center gap-1.5">
+                        <template v-if="refOf(s)">
+                          <Select
+                            :model-value="refOf(s)!.mode"
+                            class="h-7 w-28 shrink-0 text-xs"
+                            :options="REF_MODE_OPTIONS"
+                            @update:model-value="(m: string | number) => { const r = refOf(s); if (r) r.mode = m as BranchRef['mode']; }"
+                          />
+                          <Input
+                            v-if="refOf(s)!.mode === 'fixed'"
+                            :model-value="refOf(s)!.name ?? ''"
+                            class="h-7 min-w-0 flex-1 text-xs"
+                            placeholder="分支名"
+                            @update:model-value="(v: string | number) => { const r = refOf(s); if (r) r.name = String(v); }"
+                          />
+                          <span v-else class="min-w-0 flex-1 text-[11px] text-muted-foreground">
+                            {{ refOf(s)!.mode === "start" ? "使用执行开始时的当前分支" : "执行时填写分支名" }}
+                          </span>
+                        </template>
+                        <template v-else-if="s.kind === 'commitPush'">
+                          <Select
+                            :model-value="s.msgSource"
+                            class="h-7 w-28 shrink-0 text-xs"
+                            :options="MSG_SOURCE_OPTIONS"
+                            @update:model-value="(m: string | number) => (s.msgSource = m as 'ai' | 'fixed')"
+                          />
+                          <Input
+                            v-if="s.msgSource === 'fixed'"
+                            :model-value="s.message ?? ''"
+                            class="h-7 min-w-0 flex-1 text-xs"
+                            placeholder="固定提交信息"
+                            @update:model-value="(v: string | number) => (s.message = String(v))"
+                          />
+                          <span v-else class="min-w-0 flex-1 text-[11px] text-muted-foreground">执行时由 AI 读取暂存区 diff 生成</span>
+                        </template>
+                        <Input
+                          v-else-if="s.kind === 'createBranch'"
+                          :model-value="s.prefix ?? ''"
+                          class="h-7 min-w-0 flex-1 text-xs"
+                          placeholder="前缀（可选，如 feat/）；分支名执行时填写"
+                          @update:model-value="(v: string | number) => (s.prefix = String(v) || undefined)"
+                        />
+                        <span
+                          v-else
+                          class="min-w-0 flex-1 text-[11px] text-muted-foreground"
+                        >{{ s.kind === "pull" ? "拉取并合并远程更新" : s.kind === "push" ? "推送当前分支（无上游自动 -u）" : "回到执行开始时所在的分支" }}</span>
+                      </div>
+                      <div class="ml-auto flex shrink-0 items-center gap-0.5">
+                        <Button variant="ghost" size="icon" class="h-7 w-7" :disabled="si === 0" aria-label="上移" @click="moveStep(w, si, -1)">
+                          <ChevronUp class="size-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" class="h-7 w-7" :disabled="si === w.steps.length - 1" aria-label="下移" @click="moveStep(w, si, 1)">
+                          <ChevronDown class="size-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          class="h-7 w-7 text-muted-foreground hover:text-destructive"
+                          aria-label="删除步骤"
+                          @click="w.steps.splice(si, 1)"
+                        >
+                          <X class="size-3.5" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                  <div
+                    v-if="!w.steps.length"
+                    class="mb-2 rounded-md border border-dashed border-border px-3 py-3 text-center text-xs text-muted-foreground"
+                  >
+                    还没有步骤，从下面添加第一步。
+                  </div>
+                  <!-- 添加步骤 -->
+                  <div class="rounded-md border border-dashed border-border px-2.5 py-2.5">
+                    <div class="mb-2 text-[11px] text-muted-foreground">添加步骤</div>
+                    <div class="flex flex-wrap items-center gap-1.5">
+                      <Select v-model="newStepKind" class="h-8 w-36 shrink-0 text-xs" :options="STEP_KIND_OPTIONS" />
+                      <template v-if="newStepKind === 'checkout' || newStepKind === 'merge'">
+                        <Select v-model="newStepMode" class="h-8 w-28 shrink-0 text-xs" :options="REF_MODE_OPTIONS" />
+                        <Input
+                          v-if="newStepMode === 'fixed'"
+                          v-model="newStepName"
+                          class="h-8 min-w-0 flex-1 text-xs"
+                          placeholder="分支名"
+                        />
+                      </template>
+                      <template v-else-if="newStepKind === 'commitPush'">
+                        <Select v-model="newStepMsgSource" class="h-8 w-28 shrink-0 text-xs" :options="MSG_SOURCE_OPTIONS" />
+                        <Input
+                          v-if="newStepMsgSource === 'fixed'"
+                          v-model="newStepMessage"
+                          class="h-8 min-w-0 flex-1 text-xs"
+                          placeholder="固定提交信息"
+                        />
+                      </template>
+                      <Input
+                        v-else-if="newStepKind === 'createBranch'"
+                        v-model="newStepPrefix"
+                        class="h-8 min-w-0 flex-1 text-xs"
+                        placeholder="前缀（可选，如 feat/）"
+                      />
+                      <Button variant="default" size="sm" class="ml-auto h-8 shrink-0" @click="addStep(w)">
+                        <Plus class="size-3.5" /> 添加
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </section>
           </template>
 
           <!-- 远程 -->

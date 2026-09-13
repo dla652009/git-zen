@@ -17,11 +17,12 @@ pnpm tauri dev                                # 开发（首次 Rust 编译 3-5 
 npx vue-tsc --noEmit                          # 类型检查（pnpm build 内置）
 node --experimental-strip-types src/graph.test.ts        # 泳道布局自检（需 Node ≥22.6）
 node --experimental-strip-types src/lib/patch.test.ts    # diff 解析自检
+node --experimental-strip-types src/workflow.test.ts     # 工作流数据层自检
 cd src-tauri && cargo check                   # Rust 检查
 pnpm tauri build                              # release（产物 src-tauri/target/release/）
 ```
 
-注意：两个 *.test.ts 自检脚本被 tsconfig exclude，不参与 vue-tsc；改布局/diff 解析后手动跑。
+注意：三个 *.test.ts 自检脚本被 tsconfig exclude，不参与 vue-tsc；改布局/diff 解析后手动跑。
 
 ## 硬性架构规则（违反会炸或埋雷）
 

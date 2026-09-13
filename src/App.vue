@@ -23,6 +23,9 @@ import {
   Download,
   Tag,
   Sparkles,
+  Workflow as WorkflowIcon,
+  Check,
+  Minus,
   X,
   Bot,
   ExternalLink,
@@ -31,6 +34,9 @@ import * as api from "./gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, aiCacheDelete } from "./ai";
 import type { Status, LogEntry, Branch, TagEntry } from "./gitApi";
 import { settings } from "./settings";
+import { describeStep, flowNeedsInput } from "./workflow";
+import { workflows } from "./workflowStore";
+import type { BranchRef, Workflow, WorkflowStep } from "./workflow";
 import {
   Button,
   Input,
@@ -1184,6 +1190,139 @@ onMounted(async () => {
 });
 onUnmounted(() => unDrag?.());
 
+// ---- M12 工作流：多步 git 操作一键执行（配置存 workflowStore，管理在设置页）----
+
+// 工具栏入口：下拉列出全部工作流一键执行
+const flowMenu = ref<{ x: number; y: number } | null>(null);
+function flowMenuItems(): MenuItem[] {
+  return [
+    ...workflows.map((w) => ({ label: w.name, fn: () => runFlow(w) })),
+    { separator: true, label: "" },
+    { label: "管理工作流…", fn: () => { showSettingsTab.value = "workflow"; showSettings.value = true; } },
+  ];
+}
+
+// 执行确认：解析步骤预览 + 运行时输入当场填；起始分支在执行开始时记录
+const wfConfirm = ref<{ wf: Workflow; needInput: boolean } | null>(null);
+const wfInput = ref("");
+function runFlow(wf: Workflow) {
+  if (!repo.value || busy.value) return;
+  wfInput.value = "";
+  wfConfirm.value = { wf, needInput: flowNeedsInput(wf) };
+}
+function confirmFlow() {
+  const c = wfConfirm.value;
+  if (!c) return;
+  if (c.needInput && !wfInput.value.trim()) return;
+  wfConfirm.value = null;
+  void executeFlow(c.wf, wfInput.value.trim());
+}
+
+// 进度：pending/running/done/skip/fail；失败标红停住保留弹窗，成功自动关
+const wfRun = ref<{
+  wf: Workflow;
+  start: string;
+  states: { state: "pending" | "running" | "done" | "skip" | "fail"; note: string }[];
+  error: string;
+} | null>(null);
+
+async function executeFlow(wf: Workflow, inputBranch: string) {
+  if (busy.value || !repo.value) return;
+  const startBranch = status.value?.branch ?? "";
+  busy.value = true;
+  runningAction.value = "workflow";
+  wfRun.value = {
+    wf,
+    start: startBranch,
+    states: wf.steps.map(() => ({ state: "pending", note: "" })),
+    error: "",
+  };
+  let ok = true;
+  try {
+    for (let i = 0; i < wf.steps.length; i++) {
+      const st = wfRun.value.states[i]!;
+      st.state = "running";
+      try {
+        const note = await execStep(wf.steps[i]!, inputBranch, startBranch);
+        st.note = note ?? "";
+        st.state = note ? "skip" : "done";
+      } catch (e) {
+        st.state = "fail";
+        const h = humanize(String(e));
+        wfRun.value.error = h.msg + (h.detail ? `\n${h.detail}` : "");
+        ok = false;
+        break; // 出错即停：后续保持 pending；merge 冲突正好停在目标分支待处理
+      }
+    }
+    await refresh();
+  } finally {
+    busy.value = false;
+    runningAction.value = "";
+  }
+  if (ok) {
+    wfRun.value = null;
+    toast("工作流已完成");
+  }
+}
+
+async function execStep(
+  step: WorkflowStep,
+  inputBranch: string,
+  startBranch: string,
+): Promise<string | undefined> {
+  const refName = (r: BranchRef) =>
+    r.mode === "fixed" ? (r.name ?? "") : r.mode === "start" ? startBranch : inputBranch;
+  switch (step.kind) {
+    case "checkout":
+      // 目标不存在 → git 报错中止（要建分支就在流程里放"新建分支"原语）
+      await api.checkout(repo.value, refName(step.ref));
+      return;
+    case "pull":
+      await api.pull(repo.value);
+      return;
+    case "push":
+      await api.push(repo.value, status.value?.branch ?? "");
+      return;
+    case "merge":
+      await api.merge(repo.value, refName(step.ref)); // 冲突 → 报错停留，后续步骤不执行
+      return;
+    case "createBranch": {
+      let name = inputBranch;
+      const p = step.prefix?.trim() ?? "";
+      if (p && !name.startsWith(p)) name = p + name;
+      await api.branchCreate(repo.value, name);
+      return;
+    }
+    case "switchBack":
+      await api.checkout(repo.value, startBranch);
+      return;
+    case "commitPush": {
+      const st = await api.status(repo.value);
+      if (!st.files.length) return "无改动，跳过";
+      // 自动全部暂存（git add . 连删除/重命名一起收，免解析 porcelain 路径）
+      await api.stage(repo.value, ["."]);
+      let msg = step.msgSource === "fixed" ? (step.message ?? "").trim() : "";
+      if (step.msgSource === "ai") {
+        const diff = await api.diff(repo.value, ["."], true);
+        const recent = (await api.log(repo.value))
+          .slice(0, 10)
+          .map((c) => c.subject)
+          .join("\n");
+        // 生成失败 = 步骤中止（可重跑），不用固定文本兜底
+        msg = await aiComplete(
+          AI_PROMPTS.commitMessage.system(settings.aiCommitLang),
+          `【仓库近期提交风格】\n${recent || "（无历史提交）"}\n\n【暂存区 diff】\n${clipForAI(diff)}`,
+        );
+      }
+      if (!msg) throw new Error("提交信息为空");
+      await api.commit(repo.value, msg);
+      await api.push(repo.value, st.branch); // 无上游自动 -u
+      return;
+    }
+  }
+}
+
+
 // ---- 创建分支：工具栏按钮 → 弹窗（可选前缀，基于当前分支，创建即切换）----
 const prefixes = computed(() =>
   settings.branchPrefix
@@ -1392,6 +1531,8 @@ function closeTopOverlay() {
   if (groupModal.value) return (groupModal.value = null);
   if (renameTarget.value) return (renameTarget.value = "");
   if (branchRename.value) return (branchRename.value = null);
+  if (wfConfirm.value) return (wfConfirm.value = null);
+  if (wfRun.value) return (wfRun.value = null);
   if (showSettings.value) return (showSettings.value = false);
   if (fileHistoryModal.value) return (fileHistoryModal.value = null);
   if (diffState.value) return (diffState.value = null);
@@ -1527,6 +1668,17 @@ onMounted(async () => {
         </Button>
       </Tooltip>
       <span class="mx-1 h-4 w-px bg-border" />
+      <Tooltip text="工作流：多步 git 操作一键执行">
+        <Button
+          variant="ghost"
+          size="icon"
+          :disabled="!repo || busy"
+          aria-label="工作流"
+          @click.stop="flowMenu = { x: $event.clientX, y: $event.clientY }"
+        >
+          <WorkflowIcon class="size-4" />
+        </Button>
+      </Tooltip>
       <Tooltip text="刷新（含 fetch，离线仅本地）">
         <Button
           variant="ghost"
@@ -2070,6 +2222,14 @@ onMounted(async () => {
       :items="aheadMenuItems()"
       @close="aheadMenu = null"
     />
+    <!-- 工作流入口下拉 -->
+    <ContextMenu
+      v-if="flowMenu"
+      :x="flowMenu.x"
+      :y="flowMenu.y"
+      :items="flowMenuItems()"
+      @close="flowMenu = null"
+    />
 
     <!-- 设置弹窗 -->
     <!-- 文件变更历史弹窗（左提交列表 / 右文件diff） -->
@@ -2483,6 +2643,85 @@ onMounted(async () => {
             没有匹配的分支
           </li>
         </ul>
+      </div>
+    </div>
+
+    <!-- 工作流执行确认：步骤预览 + 运行时输入 -->
+    <div
+      v-if="wfConfirm"
+      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      @click.self="wfConfirm = null"
+    >
+      <div class="pop-in w-[440px] rounded-lg border border-border bg-card p-4 shadow-xl">
+        <div class="mb-2 font-medium">执行工作流：{{ wfConfirm.wf.name }}</div>
+        <Input
+          v-if="wfConfirm.needInput"
+          v-model="wfInput"
+          v-focus
+          class="mb-2"
+          placeholder="运行时输入的分支名（新建分支 / 运行时输入的切换与合并用）"
+          @keyup.enter="confirmFlow"
+        />
+        <ol class="space-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
+          <li v-for="(s, i) in wfConfirm.wf.steps" :key="i">
+            {{ i + 1 }}. {{ describeStep(s, status?.branch) }}
+          </li>
+          <li v-if="!wfConfirm.wf.steps.length">（空工作流，先到管理里添加步骤）</li>
+        </ol>
+        <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+          顺序执行、任一步失败立即中止。「提交推送」在有改动时自动全部暂存，无改动时跳过；
+          工作区有未提交改动时拉取/合并可能失败或被带入提交。
+        </p>
+        <div class="mt-3 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" @click="wfConfirm = null">取消</Button>
+          <Button
+            variant="default"
+            size="sm"
+            :disabled="!!wfConfirm.needInput && !wfInput.trim()"
+            @click="confirmFlow"
+          >
+            执行
+          </Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 工作流执行进度：逐步打勾，失败标红停住 -->
+    <div
+      v-if="wfRun"
+      class="fixed inset-0 z-30 grid place-items-center bg-black/50"
+      @click.self="wfRun = null"
+    >
+      <div class="pop-in w-[440px] rounded-lg border border-border bg-card p-4 shadow-xl">
+        <div class="mb-3 flex items-center gap-2 font-medium">
+          <WorkflowIcon class="size-4 text-primary" />
+          {{ wfRun.wf.name }}
+          <span v-if="wfRun.start" class="text-[11px] font-normal text-muted-foreground">
+            起始分支 {{ wfRun.start }}
+          </span>
+        </div>
+        <ul class="space-y-2 text-[13px]">
+          <li v-for="(s, i) in wfRun.states" :key="i" class="flex items-start gap-2">
+            <span class="flex w-4 shrink-0 justify-center pt-0.5">
+              <Spinner v-if="s.state === 'running'" :size="13" />
+              <Check v-else-if="s.state === 'done'" class="size-3.5 text-[var(--c-add)]" />
+              <Minus v-else-if="s.state === 'skip'" class="size-3.5 text-muted-foreground" />
+              <X v-else-if="s.state === 'fail'" class="size-3.5 text-destructive" />
+              <span v-else class="size-2 rounded-full border border-border" />
+            </span>
+            <span class="min-w-0 flex-1" :class="s.state === 'fail' && 'text-destructive'">
+              {{ describeStep(wfRun.wf.steps[i]!, wfRun.start) }}
+              <span v-if="s.note" class="text-[11px] text-muted-foreground">· {{ s.note }}</span>
+            </span>
+          </li>
+        </ul>
+        <div
+          v-if="wfRun.error"
+          class="mt-3 whitespace-pre-wrap rounded border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive"
+        >{{ wfRun.error }}</div>
+        <div class="mt-3 flex justify-end">
+          <Button variant="secondary" size="sm" @click="wfRun = null">关闭</Button>
+        </div>
       </div>
     </div>
 
