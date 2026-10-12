@@ -1,4 +1,9 @@
-# git-zen 项目分析（2026-09-03）
+# git-zen 项目分析（2026-09-03 快照）
+
+> **本文是历史快照，不要当作现状。** 它是 0.1.0 早期（M1–M7）的一次走查记录，
+> 其中的「缺少的功能」与「存在的问题」两节**大半已在本轮修复中解决**。
+> 需要现状请看 `docs/review/SUMMARY.md`（全面审查 + 修复状态）、`docs/TASKS.md`（里程碑）、
+> `docs/BUGS.md`（缺陷与根因）。
 
 > 当前版本 0.1.0 · 分支 feature/0.1（与 main 同步）· 全量代码走查 + 健康度实测
 
@@ -15,9 +20,17 @@ DiffViewer 双栏、文件历史、AI 三件套（生成提交信息/解释变�
 - git.rs 的 26 个命令在 lib.rs 全部注册（历史上栽过 3 次的坑现已对齐）✓
 - 文档纪律好：BUGS.md 每个缺陷有根因分析，NOTES.md 沉淀 20+ 条踩坑约定
 
+> 后续（2026 本轮审查）：里程碑已推进到 **M12**，命令数 **45 → 48**，
+> 新增 5 个前端自检脚本（graph / patch / overlays / safeJson / workflow）与 10 个 Rust 单测
+> （路径越界、超时、大输出），并补了 `scripts/check-contract.mjs` 守 AGENTS.md 硬规则 1/3。
+
 ## 二、缺少的功能
 
 ### Git 核心能力缺口（需求池已自知，按影响排序）
+
+> **以下 6 项已全部实现**（M9–M12）：tag 列表/创建/删除/推送、stash 管理、amend / 撤销上次提交、
+> 逐行 blame、多 remote 中的「远程分支管理」（`git push --delete`）；
+> 剩余：只写死 `origin`（多 remote 仍未支持）、hunk 级暂存、range diff。
 
 1. **Tag 完全没有支持**——列表/创建/删除/推送都没有，最明显的缺口
 2. **Stash 管理**——开发者高频操作，目前只能去终端
@@ -27,6 +40,10 @@ DiffViewer 双栏、文件历史、AI 三件套（生成提交信息/解释变�
 6. 其余：cherry-pick、hunk 级暂存、右键加入 .gitignore、range diff
 
 ### 工程化缺口（文档未列，发布前必须补）
+
+> **本轮已补**：Rust 层有 10 个单测（`cd src-tauri && cargo test --lib`）；前端 5 个纯函数自检脚本；
+> `scripts/check-contract.mjs` 检查「命令注册 + serde/TS 结构体镜像」。
+> **仍未补**：CI（无 `.github`）、组件层与 e2e 测试、NSIS 安装包、i18n。
 
 - **零自动化测试**——只有 graph.ts 纯函数自检；组件层、Rust 层、e2e 全空白。
   App.vue 是 1162 行状态中枢，重构没有安全网

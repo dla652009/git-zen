@@ -253,3 +253,149 @@
 - [x] **单文件暂存按钮 hover-only** → 根因：`opacity-0 group-hover:opacity-100` 的裸 `<svg>`，
       键盘与触屏用户**做不了单文件暂存**（核心操作不可达）。修复：改常显 `Button` + `aria-label`。
 - [x] 图表行缺 `title`（历史图/热力图）→ 补原生 `title`，不包 Tooltip 组件（数百行会卡）
+
+## 全面审查修复（第三批：把「已确认但没修」的清完）
+
+> 前三节是审查当轮改的；这一节是随后逐条清掉审查报告里**已确认但当时未修**的欠账。
+> 审查报告（`docs/review/*.md`）保持原样不改写，只在这里记录修复。
+
+### 并发与状态（假 Bug 与真 Bug）
+
+- [x] **切分支失败后界面停在假分支名**（`docs/ANALYSIS.md` 真 Bug #1，一直没修）→
+      根因：`switchBranch` 先乐观改 `status.branch` 与分支树 `current`，而 `run()` **只在成功时**
+      `await refresh()`，失败只弹错误框。修复：`doSwitch` 先快照 `prevBranch` / `prevCurrent`，
+      catch 里回滚后 `throw`（交回 `run()` 弹框）。
+- [x] **历史范围切换与仓库切换竞态**（真 Bug #2）→ 根因：`historyMode`/`historyFilePath` 的 watcher
+      全程没有 seq token 也没有 `repo.value` 比对，切走之后旧仓库结果会覆盖新仓库历史、还会提前关遮罩。
+      修复：进入时快照 `path`，赋值前比对；`finally` 里只在 `repo.value === path` 时才碰遮罩。
+- [x] **`refresh()` 无互斥**（`docs/ANALYSIS.md` 三-4）→ 根因：窗口聚焦与 F5 直接调 `refresh()`，
+      不看 `busy`；先发起的旧请求晚回来会把提交后的新状态覆盖回旧值。
+      修复：加 `refreshSeq` 序号，只有最新一次刷新允许写入状态与 LRU 缓存。
+- [x] **`fetchLog()` 隐式读 `repo.value`** → 这是上面两个跨仓库串台的**共同根因**：
+      调用方无法把「这次请求属于哪个仓库」和结果对应起来。修复：`fetchLog(skip, path = repo.value)`
+      显式收 path，4 个调用点全部显式传。
+- [x] **工作流 `push` 步骤用过期分支名**（本轮新发现）→ 根因：`execStep` 的 `case "push"` 传
+      `status.value?.branch`，但 `status` 在流程跑完前不刷新；若流程前面有 `checkout` 步骤，
+      这里拿到的是**切换前**的分支名。后果不只是「推错分支」——`git_push` 在「无上游」时会
+      `push -u origin <branch>`，于是给一个不相干的分支建立了远程跟踪。
+      修复：`push` 步骤现读 `api.status(path)` 拿真实当前分支。
+
+### 健壮性：坏数据与无出口的请求
+
+- [x] **localStorage 坏数据导致白屏** → 根因：9 处裸 `JSON.parse(localStorage.getItem(...))` 无保护，
+      其中 `gz.repos` / `gz.groups` / `gz.barOrder` 三处在 setup 期间**同步执行**，
+      坏数据直接白屏且用户点不到设置入口自救。
+      修复：新增 `src/lib/safeJson.ts`（`parseJson` / `parseJsonArray` / `parseJsonObject` +
+      `read*` 薄包装，`Storage` 取不到时返回 fallback，覆盖隐私模式），9 处全部接线。
+      自检 `src/lib/safeJson.test.ts` 覆盖 `"undefined"`（`JSON.parse` 会抛）、`"{"`、形状不对等。
+- [x] **`settings.ts` 用 `as Settings` 撒谎** → 根因：`{ ...DEFAULTS, ...saved } as Settings` 只是让编译器
+      闭嘴，存坏的 `fontSize: "big"` 照样进 reactive 并生效；还靠 `diffAddBg: undefined` 之类的字段
+      「保留」已废弃的历史键。修复：逐字段 `pickStr` / `pickNum` 取值 + 类型校验 + 缺省回退，
+      历史字段不再读取。
+- [x] **全仓没有崩溃兜底** → 根因：grep `errorHandler` / `unhandledrejection` 零命中，
+      任何未捕获异常/未处理 rejection 都无声无息。修复：`src/main.ts` 挂 `app.config.errorHandler`
+      （组件名取 `name ?? __name`）+ `unhandledrejection` + `error` 监听，**只记录不弹 toast**
+      （业务错误路径已有 `showError`，再弹一次只是重复打扰）。
+- [x] **AI 请求无法取消，超时只是标志位** → 根因：`TIMEOUT_MS` 只用来判「算不算超时」，
+      底下的 fetch 会一直挂着；关掉 AI 弹窗后请求仍跑满 30s。
+      修复：`src/ai.ts` 用 `AbortController` 真取消 + 真超时，导出 `abortAi()` / `AbortError` /
+      `isAbortError()`；`abortable()` 让 abort **立刻 reject**，不等宿主 promise settle
+      （tauri-plugin-http 的 fetch 被 abort 后不保证 settle）。
+      **根因延伸**：取消会把响应体读取掐断，若不额外判定，取消会冒成「HTTP 500」或
+      「AI 返回了无法解析的内容」——故两处响应体读取点都加了 `seq !== abortSeq` 判定。
+      UI 侧在 App.vue 用一个 watch 收口：`reviewOpen` / `notesOpen` / `showSettings` / diff 弹层
+      任一关闭即 `abortAi()`（比在 6 个关闭点上各调一次更不容易漏）。
+
+### 交互：把危险操作和可达性补齐
+
+- [x] **关闭仓库选项卡 / 关闭其他 没有确认，但菜单却标了 `danger: true`** → 根因：危险等级与防护强度
+      反着来。修复：两者都走 `openConfirm`。判据是「关闭会把仓库从持久化的 `gz.repos` 里摘掉，
+      重开必须再走一次系统目录选择框」，与「删除分支 / 删除工作流」同类。
+      「关闭其他」还会先统计数量，为 0 时改为 toast 提示而不是弹一个空确认框。
+- [x] **删除工作流只是两段式按钮**（点一次变「确认删除？」，2.5s 自动复位）→ 既容易误点，
+      也没说清删的是哪个工作流。修复：`SettingsModal.vue` 内改用真确认浮层
+      （`v-trap` + `role="dialog"` + `aria-modal` + `aria-labelledby`，危险按钮 `variant="destructive"`，
+      初始焦点给「取消」）。
+      **Esc 的处理**：这张表（`overlayOrder`）是 App.vue 顶层浮层的，组件内层浮层进不去，
+      故按 `ContextMenu` 的既有先例自己 `@keydown.esc.stop` 捕获——否则 App 层的 `settings`
+      会吃掉 Esc 直接关掉整个设置页。
+- [x] **侧栏拖宽上限不看窗口宽度** → 根因：固定 `Math.min(420,…)` / `Math.min(520,…)`，
+      而最小窗口 860px 下左右侧栏已占 61%。修复：`maxLeftW()` / `maxRightW()` 按
+      `window.innerWidth - 另一侧 - MIN_CENTER(460)` 动态收敛，并加 `resize` 时 `clampSidebars()`。
+      **`clampSidebars` 只改 ref 不写回 localStorage**——用户在大窗口下的偏好宽度应当保留，
+      缩窗只是临时压制。
+- [x] **窗口 `focus` / `keydown` 监听从不清理** → 根因：`onMounted` 里匿名注册，
+      `onUnmounted` 里没得可删；拖动侧栏中途卸载还会留下 `col-resize` 光标。
+      修复：抽出具名 `onWindowFocus`，`onUnmounted` 里移除三个监听 + `endResize()`。
+- [ ] **「移除分组成员」刻意不加确认**（决策，非缺陷）→ 同面板下方「添加仓库」列表一次点击即可加回，
+      属完全可逆操作。注释写明：**危险操作到处确认会让确认失去意义**。
+      改进方向是可逆性的**可见度**而不是再加一层确认：按钮 `title` 改成
+      「移出分组（回到标签栏，可在下方列表点回来）」。
+- [x] **模板里直接调用 `remoteNodes()`** → 每次重渲染都把每个展开的远程组全量重建一遍树。
+      修复：改 `remoteNodeMap` computed（按 prefix 缓存），模板读 map。
+- [x] **`syncBar()` 每次深变做两次全量 `JSON.stringify`** → 它挂在 deep watcher 上，拖拽/重命名会
+      反复触发；叠加另外 3 个 deep watcher。修复：改 `sameBar()` 逐项比较，只在真正变化时赋值。
+
+### 视觉：WCAG 2.1 AA 对比度
+
+- [x] **`catppuccin-latte` 与浅色主题下大量文字对不达标** → 实测 latte 有 **12 项**低于 4.5:1
+      （R3 报告记的是 10 项，差异在报告把 `muted-foreground/--muted` 只算了一项）。
+      修复：调 `--muted-foreground` / `--primary` / `--destructive` / `--diff-add-text`
+      （light、github-light、catppuccin-latte、one-dark、catppuccin-mocha 五套主题）。
+      关键项改前→改后：次要文字/卡片 light 4.49→5.19、latte 3.25→5.77、one-dark 4.10→6.60；
+      次要文字/浅层 light 3.95→4.57、latte 2.56→4.55、one-dark 2.81→4.52。
+- [x] **Badge 用半透明底导致所有主题都不达标** → 根因：`bg-xxx/15` 是**合成色**，
+      合成结果取决于底下的实际颜色，无法静态判定达标。修复：改实心 token 对
+      （`--badge-{default,info,warning,danger}-{bg,fg}`，7 套主题 × 4 对 = 28 个 token），
+      改后 24 项全部 ≥4.52。**取舍**：深色主题的 info 系从 4.83~5.05 统一到 4.52，
+      用「消除半透明合成的不确定性」换「深色那几项略微变差」，都达标。
+- [x] **危险按钮（`Button` 的 `destructive` 变体）在 3 套主题不达标、hover 六套全不达标** →
+      根因：`bg-destructive/15 text-destructive` 同样是合成色。试过的两条错路：
+      ①调暗 `--destructive` —— 不行，它同时被当**文字色**用在 25 处，语义不同不能动；
+      ②改实心 `bg-destructive text-white` —— 也不行，白字对 `#f26d78` 只有 2.90。
+      修复：新增**按钮专用**的 `--btn-danger-bg / -fg / -bg-hover`（7 套），与 `--destructive` 解耦；
+      深色主题用深字压红底（6.48），浅色主题用白字压深红（4.72 / 5.53）。
+      normal 3.82/3.65/4.27 → 4.72/5.53/6.48，hover 3.13~4.14 → 5.39~7.02。
+      **根因延伸**：同一个 token 兼任「文字色」和「按钮底色」时，两边的对比度要求会互相拉扯——
+      解耦比调色更根本。
+- [x] **`Switch` 关闭态轨道在浅色主题下几乎看不见** → 根因：`bg-muted-foreground/40` 合成后
+      对卡片底 light 只有 1.74、latte 只有 2.19，白滑块与轨道的边界消失。
+      修复：改不透明 `--switch-off-bg`（light 5.19、latte 4.89）。
+      **顺带更正一个误判**：滑块 `bg-white` 本身不是缺陷——它压在**有色彩的轨道**上，
+      不压页面浅色底，所以「对背景 1.04」是个伪命题。
+- [x] **泳道连线色硬编码，浅色主题下 4 个低于 3:1** → 根因：`HistoryGraph.vue` 的
+      `stroke="#3a4450"` 不吃主题 token；`src/graph.ts` 的 `LANE_COLORS` 同理，
+      且 7 个色有 4 个在浅色主题下低到 1.89。
+      修复：连线改 `--graph-line` token（对 7 套 `--background` 全部 ≥3）；
+      圆点色改用**亮度带**——把 7 个色的相对亮度 L 都调进 `[0.1750, 0.2595]`，
+      可证明对全部主题背景同时满足 3:1，最差从 1.89 提到 3.07，7 个色相一个没丢。
+      不变量已断言在 `src/graph.test.ts` 里。
+- [x] **SVG 表现属性里用 `var()` 在三端不可靠** → 上面把 `stroke` 改成 `var(--graph-line)` 之后
+      引入的新风险：表现属性对 `var()` 的支持在 WebKitGTK 上不稳，而**失效方式是整个属性被忽略**
+      （`stroke` 回到初始值 `none`）→ 连线**直接消失**，不是退化成灰色。
+      修复：改用内联样式绑定 `:style="{ stroke: 'var(--graph-line)' }"`（标准 CSS 解析路径，三端都稳）。
+- [x] **实心主按钮文字在浅色主题不达标**（由新加的检查脚本暴露，属 task-10 的漏项）→
+      light / github-light 的 `--primary-foreground` `#12101c` → `#ffffff`，4.04 → 4.76。
+- [x] **新增 `scripts/check-contrast.mjs`**（纯 Node 内置，解析 `src/style.css` 含 `var()` 间接引用）：
+      7 套主题 168 项 —— 文字对 63（≥4.5）、徽标 28（≥4.5）、危险按钮 14（含 hover，≥4.5）、
+      图形 63（≥3）。**负向验证**：把 latte 的 `--muted-foreground` 改成 `#cccccc` →
+      exit 1 并逐行报出 1.42 / 1.32 / 1.04；还原后文件 sha256 逐字节相同。
+
+### 工程化：让「忘了」变成会失败的检查
+
+- [x] **`gitApi.ts` ↔ `git.rs` 人工镜像零防护**（AGENTS.md 硬规则 3 只有文字约定）→
+      新增 `scripts/check-contract.mjs`（纯 Node 内置模块，无新依赖）：
+      ①`#[tauri::command]` ↔ `lib.rs` 的 `invoke_handler` **双向**注册检查（硬规则 1，历史栽过三次）
+      ②`#[derive(Serialize)]` struct ↔ `gitApi.ts` interface 字段名双向比对（硬规则 3，
+      兼容有/无 `pub` 前缀与 `serde(rename/skip)`）③`#[tauri::command]` 后面不是 `pub async fn`（硬规则 2）。
+      **负向验证 6 组全过**（注销一行注册 / 双向改字段名 / 改 struct 名 / 把 `ahead: u32` 改成 `String` /
+      去掉 `async`）——改坏的 5 组全部 exit 1 并指出行号，还原后 `git diff` 为空。
+      挂进 `package.json` 的 `check:contract`，并与类型检查 + 5 个自检串成 `pnpm verify`。
+- [x] **`vite.config.js` 完全没有 `build` 段** → 单 chunk、无 target、无 sourcemap 说明。
+      修复：`manualChunks` 按包拆 `vendor-vue` / `vendor-markdown` / `vendor-icons`；
+      `target: isWindows ? "chrome105" : "safari13"`（Tauri CLI 注入 `TAURI_ENV_PLATFORM`）；
+      `sourcemap: false` + 开启方法注释。顺带补 `server.watch.ignored: ["**/src-tauri/**"]`
+      （Tauri 官方模板做法，避免 chokidar 白盯上千个 cargo 产物）。
+      **实测（同源 clean build 四组对照）**：拆包本身**不增加**体积（仅拆包 499.96 kB vs 改前 499.99 kB），
+      标记扫描确认四个 chunk 无模块重复；非 Windows 兜底 `safari13` 会让总量 +1.53 kB（全是 target
+      下调带来的转译），而 Windows 真实发版路径（`chrome105`）是 **496.00 kB，比改前小 3.99 kB**。

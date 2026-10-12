@@ -435,11 +435,65 @@
 - [ ] `App.vue` 其余部分（仓库选项卡与分组、仓库/分支切换器、AI Review、Release Notes、
       工作流执行）仍是单文件，继续拆需单独排期
 
+### 13.6 清完「已确认但没修」的欠账（第三批）
+
+审查报告里除了第一批（安全/正确性）与第二批（断头路），还留了一批「当时判定该修、但没排上」的项。
+这一节把它们逐条清掉。**审查报告本身（`docs/review/*.md`）保持原样不改写**，只在这里记录修复。
+
+#### 并发与状态
+
+- [x] 切分支失败后界面停在假分支名（`docs/ANALYSIS.md` 真 Bug #1）：`doSwitch` 快照 + catch 回滚 + `throw`
+- [x] 历史范围切换与仓库切换竞态（真 Bug #2）：watcher 内快照 `path`，赋值前比对；
+      `finally` 里只在 `repo.value === path` 时碰遮罩
+- [x] `refresh()` 无互斥：加 `refreshSeq`，只有最新一次刷新允许写状态与 LRU 缓存
+- [x] `fetchLog()` 隐式读 `repo.value`（上面两条的共同根因）：改 `fetchLog(skip, path = repo.value)`，调用点全部显式传
+- [x] 工作流 `push` 步骤用流程开始时的分支名（本轮新发现）：改现读 `api.status(path)`
+
+#### 健壮性
+
+- [x] 9 处裸 `JSON.parse(localStorage…)` → 新增 `src/lib/safeJson.ts`（+ 自检）；
+      `gz.repos` / `gz.groups` / `gz.barOrder` 三处在 setup 期间同步执行，坏数据原本直接白屏
+- [x] `settings.ts` 用 `as Settings` 让编译器闭嘴 → 改逐字段类型校验 + 缺省回退，不再读取已废弃历史字段
+- [x] 全仓无崩溃兜底 → `src/main.ts` 挂 `errorHandler` + `unhandledrejection` + `error`（只记录，不重复弹 toast）
+- [x] AI 请求无法取消、超时只是标志位 → `AbortController` 真取消 + 真超时，
+      导出 `abortAi()` / `isAbortError()`；UI 侧用一个 watch 收口（任一 AI 弹层关闭即取消）
+
+#### 交互与可及性
+
+- [x] 关闭仓库选项卡 / 关闭其他：补确认框（判据是「会丢一条持久化记录、重开要再选一次目录」）
+- [x] 删除工作流：两段式按钮 → 真确认浮层（初始焦点给「取消」，Esc 自捕获）
+- [x] stash pop：补确认浮层
+- [x] 侧栏拖宽上限不看窗口宽度 → `maxLeftW()` / `maxRightW()` 按 `innerWidth` 动态收敛；
+      `clampSidebars()` 只改 ref 不写回 localStorage（保留用户在大窗口下的偏好）
+- [x] 窗口 `focus` / `keydown` 监听从不清理 → `onUnmounted` 里移除并 `endResize()`
+- [x] 模板里直接调 `remoteNodes()` → 改 `remoteNodeMap` computed
+- [x] `syncBar()` 两次全量 `JSON.stringify` → 改 `sameBar()` 逐项比较
+- [x] 对中文无意义的 `uppercase tracking-wider` 全部清掉（对中文不产生任何视觉差异）
+- [x] WCAG 2.1 AA 对比度：修 `--muted-foreground` / `--primary` / `--destructive` / `--diff-add-text`
+      （light / github-light / catppuccin-latte / one-dark / catppuccin-mocha），
+      Badge 半透明底改实心 token 对，泳道连线 `--graph-line` token 化，
+      新增 `--btn-danger-*` 让危险按钮与 `--destructive` 文字色解耦，泳道色改用亮度带
+- [x] 新增 `scripts/check-contrast.mjs`：改主题时可回归（负向验证过）
+- [ ] 「移除分组成员」**刻意不加确认**（决策，非缺陷）：同面板下方一次点击即可加回，
+      属完全可逆操作；「危险操作到处确认会让确认失去意义」。只改了 `title` 让可逆性可见
+
+#### 工程化
+
+- [x] `gitApi.ts` ↔ `git.rs` 人工镜像零防护 → 新增 `scripts/check-contract.mjs`
+      （双向注册检查 / 同步 command 检查 / struct ↔ interface 字段比对，负向验证 6 组）
+- [x] `vite.config.js` 没有 `build` 段 → 补 `manualChunks` 拆包 + `build.target`（按 Tauri 平台注入的
+      `TAURI_ENV_PLATFORM` 选 `chrome105` / `safari13`）+ `sourcemap` 说明；
+      顺带 `server.watch.ignored: ["**/src-tauri/**"]`
+- [x] `package.json` 加 `check:contract` 与 `verify`（契约检查 + 类型检查 + 5 个自检串起来）
+- [x] 前端自检脚本从 1 个涨到 5 个，Rust 单测 10 个（`cargo test --lib`）
+
 ### 明确不做（本轮）
 
 - 拆 `App.vue` 的其余部分（同上）：纯重构、零功能收益，需单独排期并配套回归；
   本轮只先拆了风险最集中的浮层优先级（见 13.5）
 - git 调用超时、弹层 `role="dialog"` + focus trap：已完成（见 13.1 / 13.4）
+- 弹窗宽度 10 档、字号 8 档的统一尺度：属设计系统重构，改动面覆盖全部弹层
+- `bg-black/50` 遮罩（19 处）不随主题：当前观感可接受，改要动全部弹层
 
 ## 需求池（无需关注，后面排期）
 
