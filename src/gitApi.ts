@@ -87,6 +87,10 @@ export const commit = (repo: string, message: string) =>
   invoke<void>("git_commit", { repo, message });
 export const push = (repo: string, branch: string) =>
   invoke<void>("git_push", { repo, branch });
+// 强制推送：后端用 --force-with-lease（远程被别人更新过会拒绝），不是裸 --force。
+// branch 为空 = 推当前分支到它的上游
+export const pushForce = (repo: string, branch: string) =>
+  invoke<void>("git_push_force", { repo, branch });
 export const pull = (repo: string) => invoke<void>("git_pull", { repo });
 export const checkout = (repo: string, name: string) =>
   invoke<void>("git_checkout", { repo, name });
@@ -98,6 +102,9 @@ export const branchRename = (repo: string, oldName: string, newName: string) =>
   invoke<void>("git_branch_rename", { repo, old: oldName, new: newName });
 export const merge = (repo: string, name: string) =>
   invoke<void>("git_merge", { repo, name });
+// 放弃进行中的合并（冲突卡住时的退路，等价 git merge --abort）
+export const mergeAbort = (repo: string) =>
+  invoke<void>("git_merge_abort", { repo });
 export const pushDelete = (repo: string, remote: string, name: string) =>
   invoke<void>("git_push_delete", { repo, remote, name });
 export const getUser = (repo: string) =>
@@ -194,5 +201,7 @@ export const latestTag = (repo: string) =>
 // 判断路径是否是 git 仓库（拖拽文件夹进窗口打开时校验）
 export const checkRepo = (path: string) =>
   invoke<boolean>("git_check_repo", { path });
+// 在指定目录 git init（目录还不是仓库，所以只吃 path 不吃 repo）
+export const initRepo = (path: string) => invoke<void>("git_init", { path });
 export const writeTextFile = (path: string, content: string) =>
   invoke<void>("git_write_file", { path, content });

@@ -1,5 +1,124 @@
 use serde::Serialize;
-use std::process::Command;
+use std::io::Read;
+use std::process::{Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+
+/// 本地命令超时。git 在认证挂起、网络黑洞、或等一个不存在的锁时会**永远不退出**，
+/// 而调用方是 spawn_blocking 线程——被占住就再也回不来，前端的加载遮罩永远不消失。
+/// 120 秒足够任何正常本地操作（大仓库的 status/blame 也就几秒）。
+const TIMEOUT_LOCAL: Duration = Duration::from_secs(120);
+/// 网络命令（clone/fetch/pull/push/ls-remote）给足传输时间，只用来兜住「永久挂起」。
+/// 取 10 分钟：克隆大仓库可能真的要几分钟，但卡死时用户最多等 10 分钟而不是无限。
+const TIMEOUT_NETWORK: Duration = Duration::from_secs(600);
+
+/// 判断是否网络类命令（决定用哪个超时）。只看 args 里有没有网络子命令——
+/// 万一某个分支正好叫 `push` 而命令其实是 `checkout push`，也只会让超时从 120s 变成
+/// 600s，无害；所以不必精确解析 `-c alias.x=x` 这类前置参数。
+fn is_network(args: &[&str]) -> bool {
+    args.iter()
+        .any(|a| matches!(*a, "clone" | "fetch" | "pull" | "push" | "ls-remote"))
+}
+
+/// 读线程发回的消息：`Some(bytes)` 是数据块，`None` 是「这个管道读到 EOF 了」。
+/// 用 EOF 标记而不是靠消息个数推断，是因为孙进程可能让管道永不 EOF。
+type PipeMsg = (bool, Option<Vec<u8>>);
+
+/// 把管道**边读边发**，而不是读完了再发一次。
+/// 读完了再发要求 read_to_end 返回，而它只在 EOF 时返回——若孙进程持着管道写端，
+/// 这批输出就永远送不回来（成功后静默丢失 diff）。边读边发则总能拿到已产生的部分。
+/// 泛型是因为 `ChildStdout` 与 `ChildStderr` 是不同类型，但都实现 `Read`。
+fn spawn_reader<R: Read + Send + 'static>(
+    mut p: R,
+    is_err: bool,
+    tx: mpsc::Sender<PipeMsg>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 8192];
+        loop {
+            match p.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if tx.send((is_err, Some(buf[..n].to_vec()))).is_err() {
+                        return; // 接收端已放弃等待
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = tx.send((is_err, None));
+    })
+}
+
+/// 带超时的 `Command::output()`。
+///
+/// 为什么不用 std 的 `output()`：它没有超时，会一直阻塞到进程退出。
+/// 为什么不用 wait-timeout crate：它只解决 `wait` 的超时，管道还是得自己并发读，
+/// 省不了几行，却要多一个依赖（这个项目刻意保持轻）。
+///
+/// 关键点：**两个管道必须并发读**。等进程退出再读，输出一旦超过管道缓冲区（约 64KB）
+/// 子进程就会阻塞在写、我们阻塞在读 → 死锁。std 的 `output()` 内部也是这么做的，
+/// 这里只是补上超时。
+fn output_with_timeout(mut cmd: Command, limit: Duration) -> Result<Output, String> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| format!("无法启动 git: {e}"))?;
+
+    // 读线程把结果送回主线程，而不是靠 join() 等待。
+    // 原因：kill 只杀得掉直接子进程。git 常派生孙进程（git-remote-https / ssh /
+    // 凭据助手），孙进程继承了管道写端，join() 会一直阻塞到它自己退出——超时形同虚设。
+    // 用 recv_timeout 限时收集，超时就放弃这些字节。
+    // 消息带 is_err 标记，不能靠到达顺序区分（两个读线程是竞速的）。
+    let (tx, rx) = mpsc::channel();
+    let _h_out = child.stdout.take().map(|p| spawn_reader(p, false, tx.clone()));
+    let _h_err = child.stderr.take().map(|p| spawn_reader(p, true, tx.clone()));
+    // 没接管到的管道视作已 EOF，否则会白等到超时
+    let (mut out_eof, mut err_eof) = (_h_out.is_none(), _h_err.is_none());
+    drop(tx);
+
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break Some(s),
+            Ok(None) => {
+                if start.elapsed() >= limit {
+                    // 先杀再 wait 回收，避免留下僵尸进程
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => return Err(format!("等待 git 退出失败: {e}")),
+        }
+    };
+
+    // 进程已退出，正常情况下管道立刻 EOF；给 2 秒总预算收尾，之后不再等
+    // （孙进程可能仍持有管道写端，见上）。超时被 kill 的分支本来就要报错，丢字节无妨。
+    // 两个 EOF 标记都收到才提前结束；只收到一个也要把另一个的数据收完。
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    while !(out_eof && err_eof) {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
+        }
+        match rx.recv_timeout(left) {
+            Ok((true, Some(buf))) => stderr.extend_from_slice(&buf),
+            Ok((false, Some(buf))) => stdout.extend_from_slice(&buf),
+            Ok((true, None)) => err_eof = true,
+            Ok((false, None)) => out_eof = true,
+            Err(_) => break,
+        }
+    }
+
+    let Some(status) = status else {
+        return Err(format!(
+            "git 操作超时（{} 秒未完成），已终止。可能是网络不通、凭据卡住或仓库被锁。",
+            limit.as_secs()
+        ));
+    };
+    Ok(Output { status, stdout, stderr })
+}
 
 fn run(repo: &str, args: &[&str]) -> Result<String, String> {
     let mut cmd = Command::new("git");
@@ -19,14 +138,95 @@ fn run(repo: &str, args: &[&str]) -> Result<String, String> {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let out = cmd
-        .output()
-        .map_err(|e| format!("无法启动 git: {e}"))?;
+    let limit = if is_network(args) { TIMEOUT_NETWORK } else { TIMEOUT_LOCAL };
+    let out = output_with_timeout(cmd, limit)?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        // commit 无内容、merge 冲突这类诊断只写在 stdout，只取 stderr 会让前端弹空白错误框
+        let err = String::from_utf8_lossy(&out.stderr);
+        let err = err.trim();
+        if !err.is_empty() {
+            return Err(err.to_string());
+        }
+        let sout = String::from_utf8_lossy(&out.stdout);
+        let sout = sout.trim();
+        if !sout.is_empty() {
+            return Err(sout.to_string());
+        }
+        Err(format!("git 退出码 {}", out.status.code().unwrap_or(-1)))
     }
+}
+
+/// 位置参数隔离：用户可控字符串要作为位置参数进 argv 时先过这里。挡掉空串、以 - 开头
+/// （会被 git 当成选项）、含 ".."（会被当成范围）、含控制字符/换行。支持 --end-of-options
+/// 的命令再叠一层 git 自己的隔离。what = 报错里的字段名（如 "分支名"）
+fn check_positional(what: &str, s: &str) -> Result<(), String> {
+    if s.is_empty() {
+        return Err(format!("{what}不能为空"));
+    }
+    if s.starts_with('-') {
+        return Err(format!("非法的{what}：不能以 - 开头"));
+    }
+    if s.contains("..") {
+        return Err(format!("非法的{what}：不能包含 .."));
+    }
+    if s.chars().any(char::is_control) {
+        return Err(format!("非法的{what}：不能包含控制字符"));
+    }
+    Ok(())
+}
+
+/// 仓库内相对路径校验：挡掉空串、控制字符、绝对路径与 `..` 越级。
+///
+/// 为什么不复用 check_positional：它按**子串**拒绝 `..`，那对分支名正确（git ref 本就
+/// 禁止 `..`），但文件路径里 `a..b.txt` 是合法名字，按子串判会误杀。这里改成按
+/// **路径组件**判断。
+///
+/// 危害实证：`Path::new(repo).join(path)` 在 path 是绝对路径时会**直接丢掉 base**，
+/// 而 `../x` 会逃出仓库——`git_discard(untracked=true)` 会 remove_dir_all 掉仓库外的
+/// 任意目录，`git_diff_untracked` 会读出仓库外文件内容。日常 `git status` 不会输出
+/// 这种路径，所以这是纵深防御而非当前可利用漏洞，但成本极低。
+fn check_repo_path(p: &str) -> Result<(), String> {
+    if p.trim().is_empty() {
+        return Err("路径不能为空".into());
+    }
+    if p.chars().any(char::is_control) {
+        return Err("非法路径：不能包含控制字符".into());
+    }
+    let path = std::path::Path::new(p);
+    // 注意：Windows 下 `/x` 与 `\x` 的 is_absolute() 是 **false**（有 RootDir 但没有盘符），
+    // 而 join 会替换掉除盘符外的全部路径 → 照样逃出仓库。所以不能只看 is_absolute()。
+    // 逐个组件判：Prefix（盘符/UNC）或 RootDir 出现即非相对路径，ParentDir 出现即越级。
+    // 别写成「先 next() 取首组件、再扫其余」——首组件本身就是 `..` 时会漏过去（实测踩过）。
+    for c in path.components() {
+        match c {
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => {
+                return Err("非法路径：必须是仓库内的相对路径".into())
+            }
+            std::path::Component::ParentDir => return Err("非法路径：不能包含 ..".into()),
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+/// commit hash 校验。`"".chars().all(..)` 恒为 true —— 原来的写法会放行空串。
+///
+/// 定级说明（别夸大）：实测把空串作为**真实 argv 元素**传给 show / revert / cherry-pick /
+/// log / rev-parse，git **全部 exit=128**（`fatal: ambiguous argument ''` / `bad revision ''`），
+/// 并不会静默作用到 HEAD。所以这是健壮性问题（提前给出明确的中文报错，而不是把 git 的
+/// ambiguous argument 抛给用户），不是静默改错目标的缺陷。
+///
+/// 踩坑提醒：用 PowerShell 验证这条会得出**错误结论**——PS 会把空串参数整个吞掉，
+/// 于是实际执行的是「不带该参数」，而 `git show` 不带参数默认就是 HEAD（exit=0）。
+/// 要测空 argv 必须用 Rust/Node 这类如实传递参数的宿主。
+fn check_hex(hash: &str) -> Result<(), String> {
+    let h = hash.trim();
+    if h.is_empty() || !h.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("非法的 commit hash".into());
+    }
+    Ok(())
 }
 
 // 同步 command 会阻塞 Tauri 主线程，git CLI 一慢整个窗口就无响应。
@@ -72,22 +272,25 @@ pub async fn git_status(repo: String) -> Result<Status, String> {
         };
         for line in out.lines() {
             if let Some(rest) = line.strip_prefix("## ") {
-                let rest = rest.split("...").next().unwrap_or("").trim();
-                st.branch = rest.to_string();
-                for tok in line.split_whitespace() {
-                    match tok.parse::<u32>() {
-                        Ok(n)
-                            if Some(tok)
-                                == line
-                                    .split("ahead")
-                                    .nth(1)
-                                    .and_then(|s| s.split_whitespace().next()) =>
-                        {
-                            st.ahead = n
-                        }
-                        _ => {}
-                    }
-                }
+                // porcelain 首行实测有四种形态：
+                //   `master...origin/master [ahead 1]`  正常有上游
+                //   `master`                            有分支但无上游
+                //   `No commits yet on master`          空仓库（还没提交）
+                //   `HEAD (no branch)`                  游离 HEAD
+                // 只按 "..." 切会在后两种形态下把整句描述当成分支名，而 branch 不只是显示——
+                // 它会作为 push 的参数（→ `push -u origin "No commits yet on master"`，
+                // 实测 exit=128 invalid refspec）和 AI 缓存键，必须剥干净。
+                let head = rest.split("...").next().unwrap_or("").trim();
+                st.branch = if let Some(b) = head.strip_prefix("No commits yet on ") {
+                    b.trim().to_string()
+                } else if let Some(b) = head.strip_prefix("Initial commit on ") {
+                    b.trim().to_string()
+                } else if head == "HEAD (no branch)" {
+                    // 游离 HEAD 没有分支名，留空交给前端显示占位符
+                    String::new()
+                } else {
+                    head.to_string()
+                };
                 if let Some(a) = line.split("ahead ").nth(1) {
                     st.ahead = a
                         .chars()
@@ -279,9 +482,7 @@ pub async fn git_fetch(repo: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn git_show(repo: String, hash: String) -> Result<String, String> {
     offload(move || {
-        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err("非法的 commit hash".into());
-        }
+        check_hex(&hash)?;
         run(
             &repo,
             &[
@@ -290,6 +491,7 @@ pub async fn git_show(repo: String, hash: String) -> Result<String, String> {
                 "--format=",
                 "-m",
                 "--first-parent",
+                "--end-of-options",
                 &hash,
             ],
         )
@@ -301,6 +503,7 @@ pub async fn git_show(repo: String, hash: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn git_diff_untracked(repo: String, path: String) -> Result<String, String> {
     offload(move || {
+        check_repo_path(&path)?;
         use std::path::Path;
         let p = Path::new(&repo).join(&path);
         let bytes = std::fs::read(&p).map_err(|e| format!("读取文件失败: {e}"))?;
@@ -335,11 +538,12 @@ pub async fn git_get_user(repo: String) -> Result<(String, String), String> {
 #[tauri::command]
 pub async fn git_config_user(repo: String, name: String, email: String) -> Result<(), String> {
     offload(move || {
+        // --end-of-options 让值即使写成 --global 也只当普通字符串（实测 2.47）
         if !name.trim().is_empty() {
-            run(&repo, &["config", "user.name", name.trim()])?;
+            run(&repo, &["config", "--end-of-options", "user.name", name.trim()])?;
         }
         if !email.trim().is_empty() {
-            run(&repo, &["config", "user.email", email.trim()])?;
+            run(&repo, &["config", "--end-of-options", "user.email", email.trim()])?;
         }
         Ok(())
     })
@@ -350,6 +554,7 @@ pub async fn git_config_user(repo: String, name: String, email: String) -> Resul
 #[tauri::command]
 pub async fn git_discard(repo: String, path: String, untracked: bool) -> Result<(), String> {
     offload(move || {
+        check_repo_path(&path)?;
         if untracked {
             use std::path::Path;
             let p = Path::new(&repo).join(&path);
@@ -370,12 +575,17 @@ pub async fn git_discard(repo: String, path: String, untracked: bool) -> Result<
 #[tauri::command]
 pub async fn git_revert(repo: String, hash: String) -> Result<(), String> {
     offload(move || {
-        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err("非法的 commit hash".into());
-        }
+        check_hex(&hash)?;
         run(
             &repo,
-            &["-c", "alias.revert=revert", "revert", "--no-edit", &hash],
+            &[
+                "-c",
+                "alias.revert=revert",
+                "revert",
+                "--no-edit",
+                "--end-of-options",
+                &hash,
+            ],
         )
         .map(|_| ())
     })
@@ -512,10 +722,12 @@ pub async fn git_push(repo: String, branch: String) -> Result<(), String> {
         match run(&repo, &["push"]) {
             Ok(_) => Ok(()),
             Err(e) if e.contains("no upstream") || e.contains("no tracking information") => {
-                if branch.trim().is_empty() {
+                let b = branch.trim();
+                if b.is_empty() {
                     return Err(e);
                 }
-                run(&repo, &["push", "-u", "origin", &branch]).map(|_| ())
+                check_positional("分支名", b)?;
+                run(&repo, &["push", "-u", "origin", "--end-of-options", b]).map(|_| ())
             }
             Err(e) => Err(e),
         }
@@ -523,23 +735,50 @@ pub async fn git_push(repo: String, branch: String) -> Result<(), String> {
     .await
 }
 
+/// 强制推送：必须带 --force-with-lease（远程被别人更新过就拒绝），严禁裸 --force。
+/// branch 为空 = 推当前分支到它的上游
+#[tauri::command]
+pub async fn git_push_force(repo: String, branch: String) -> Result<(), String> {
+    offload(move || {
+        let b = branch.trim();
+        if b.is_empty() {
+            return run(&repo, &["push", "--force-with-lease"]).map(|_| ());
+        }
+        check_positional("分支名", b)?;
+        // push 的第一个位置参数是远程名，必须显式给 origin，否则 git 拿分支名当远程（实测 2.47）
+        run(
+            &repo,
+            &["push", "--force-with-lease", "origin", "--end-of-options", b],
+        )
+        .map(|_| ())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn git_pull(repo: String) -> Result<(), String> {
-    offload(move || run(&repo, &["pull"]).map(|_| ())).await
+    // --no-edit：合并由 pull 自己发起时，别弹出编辑器卡住无终端的 GUI 进程
+    offload(move || run(&repo, &["pull", "--no-edit"]).map(|_| ())).await
 }
 
 #[tauri::command]
 pub async fn git_checkout(repo: String, name: String) -> Result<(), String> {
-    offload(move || run(&repo, &["checkout", &name]).map(|_| ())).await
+    offload(move || {
+        // checkout 支持 --end-of-options：-f 之类会被当成分支名而不是选项（实测 2.47）
+        let name = name.trim();
+        check_positional("分支名", name)?;
+        run(&repo, &["checkout", "--end-of-options", name]).map(|_| ())
+    })
+    .await
 }
 
 #[tauri::command]
 pub async fn git_branch_create(repo: String, name: String) -> Result<(), String> {
     offload(move || {
-        if name.trim().is_empty() {
-            return Err("分支名不能为空".into());
-        }
-        run(&repo, &["checkout", "-b", name.trim()]).map(|_| ())
+        // name 在 -b 的参数位，不会被当成选项，校验只为挡空串/控制字符
+        let name = name.trim();
+        check_positional("分支名", name)?;
+        run(&repo, &["checkout", "-b", name]).map(|_| ())
     })
     .await
 }
@@ -548,8 +787,10 @@ pub async fn git_branch_create(repo: String, name: String) -> Result<(), String>
 pub async fn git_branch_delete(repo: String, name: String, force: bool) -> Result<(), String> {
     offload(move || {
         // 默认 -d 安全删（未合并会拒绝）；force 用 -D 强删
+        let name = name.trim();
+        check_positional("分支名", name)?;
         let flag = if force { "-D" } else { "-d" };
-        run(&repo, &["branch", flag, &name]).map(|_| ())
+        run(&repo, &["branch", flag, "--end-of-options", name]).map(|_| ())
     })
     .await
 }
@@ -557,27 +798,44 @@ pub async fn git_branch_delete(repo: String, name: String, force: bool) -> Resul
 #[tauri::command]
 pub async fn git_branch_rename(repo: String, old: String, new: String) -> Result<(), String> {
     offload(move || {
-        if new.trim().is_empty() {
-            return Err("分支名不能为空".into());
-        }
-        run(&repo, &["branch", "-m", &old, new.trim()]).map(|_| ())
+        let old = old.trim();
+        let new = new.trim();
+        check_positional("分支名", old)?;
+        check_positional("新分支名", new)?;
+        // -m 不带参数，两个名字都是位置参数，--end-of-options 放在它们之前（实测 2.47）
+        run(&repo, &["branch", "-m", "--end-of-options", old, new]).map(|_| ())
     })
     .await
 }
 
 #[tauri::command]
 pub async fn git_merge(repo: String, name: String) -> Result<(), String> {
-    offload(move || run(&repo, &["merge", "--no-edit", &name]).map(|_| ())).await
+    offload(move || {
+        // merge 支持 --end-of-options：-s/-X 之类会被当成分支名（实测 2.47）
+        let name = name.trim();
+        check_positional("分支名", name)?;
+        run(&repo, &["merge", "--no-edit", "--end-of-options", name]).map(|_| ())
+    })
+    .await
+}
+
+/// 中断冲突中的合并，工作区回到 merge 之前（git merge --abort）
+#[tauri::command]
+pub async fn git_merge_abort(repo: String) -> Result<(), String> {
+    offload(move || run(&repo, &["merge", "--abort"]).map(|_| ())).await
 }
 
 /// 删除远程分支：git push <remote> --delete <name>
 #[tauri::command]
 pub async fn git_push_delete(repo: String, remote: String, name: String) -> Result<(), String> {
     offload(move || {
-        if remote.trim().is_empty() || name.trim().is_empty() {
-            return Err("远程名和分支名不能为空".into());
-        }
-        run(&repo, &["push", &remote, "--delete", &name]).map(|_| ())
+        let remote = remote.trim();
+        let name = name.trim();
+        // remote 在 --end-of-options 之前、处于位置参数位，得自己校验；--end-of-options
+        // 只能放在 --delete 之后（放它前面实测会把 --delete 当成 refspec）
+        check_positional("远程名", remote)?;
+        check_positional("分支名", name)?;
+        run(&repo, &["push", remote, "--delete", "--end-of-options", name]).map(|_| ())
     })
     .await
 }
@@ -586,10 +844,11 @@ pub async fn git_push_delete(repo: String, remote: String, name: String) -> Resu
 #[tauri::command]
 pub async fn git_show_file(repo: String, hash: String, path: String) -> Result<String, String> {
     offload(move || {
-        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err("非法的 commit hash".into());
-        }
-        run(&repo, &["show", "--no-color", "--format=", &hash, "--", &path])
+        check_hex(&hash)?;
+        run(
+            &repo,
+            &["show", "--no-color", "--format=", "--end-of-options", &hash, "--", &path],
+        )
     })
     .await
 }
@@ -608,7 +867,10 @@ pub struct BlameLine {
 pub async fn git_blame(repo: String, rev: Option<String>, path: String) -> Result<Vec<BlameLine>, String> {
     offload(move || {
         let mut args = vec!["blame", "--porcelain"];
-        if let Some(r) = rev.as_deref() {
+        // blame 不支持 --end-of-options 与 -- 同时出现（实测报 fatal: bad revision '<path>'），
+        // 所以 rev 走严格校验，path 继续靠 -- 兜底
+        if let Some(r) = rev.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            check_positional("提交版本", r)?;
             args.push(r);
         }
         args.push("--");
@@ -856,12 +1118,10 @@ pub async fn git_tag_create(
 ) -> Result<(), String> {
     offload(move || {
         let name = name.trim();
-        if name.is_empty() {
-            return Err("标签名不能为空".into());
-        }
-        // 空格 / 以 - 开头会被当成 git 选项，提前拦下；其余合法性（重名等）交给 git 校验
-        if name.starts_with('-') || name.contains(char::is_whitespace) {
-            return Err("标签名不能以 - 开头或包含空格".into());
+        // 以 - 开头会被当成 git 选项，提前拦下；其余合法性（重名等）交给 git 校验
+        check_positional("标签名", name)?;
+        if name.contains(char::is_whitespace) {
+            return Err("标签名不能包含空格".into());
         }
         let mut args: Vec<String> = vec!["-c".into(), "alias.tag=tag".into(), "tag".into()];
         let msg = message.as_deref().map(str::trim).unwrap_or("");
@@ -890,10 +1150,9 @@ pub async fn git_tag_create(
 #[tauri::command]
 pub async fn git_tag_delete(repo: String, name: String) -> Result<(), String> {
     offload(move || {
-        if name.trim().is_empty() {
-            return Err("标签名不能为空".into());
-        }
-        run(&repo, &["-c", "alias.tag=tag", "tag", "-d", name.trim()]).map(|_| ())
+        let name = name.trim();
+        check_positional("标签名", name)?;
+        run(&repo, &["-c", "alias.tag=tag", "tag", "-d", "--end-of-options", name]).map(|_| ())
     })
     .await
 }
@@ -902,10 +1161,10 @@ pub async fn git_tag_delete(repo: String, name: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn git_tag_push(repo: String, name: String) -> Result<(), String> {
     offload(move || {
-        if name.trim().is_empty() {
-            return Err("标签名不能为空".into());
-        }
-        run(&repo, &["push", "origin", name.trim()]).map(|_| ())
+        let name = name.trim();
+        check_positional("标签名", name)?;
+        // remote 之后接 --end-of-options，refspec 只在它之后解析（实测 2.47）
+        run(&repo, &["push", "origin", "--end-of-options", name]).map(|_| ())
     })
     .await
 }
@@ -944,7 +1203,19 @@ pub async fn git_ignore_add(repo: String, path: String) -> Result<(), String> {
             return Err("路径不能为空".into());
         }
         let f = std::path::Path::new(&repo).join(".gitignore");
-        let mut content = std::fs::read_to_string(&f).unwrap_or_default();
+        // 读不到就当成空文件来追加；但**读取失败≠文件不存在**：非 UTF-8（中文 Windows 上
+        // GBK 编码很常见）会让 read_to_string 报错，之前用 unwrap_or_default 把它吞成空串，
+        // 紧接着写回就把整份 .gitignore 清空了。这里只对 NotFound 放行，其余一律中止。
+        let mut content = match std::fs::read_to_string(&f) {
+            Ok(c) => c,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(_) => {
+                return Err(
+                    "现有 .gitignore 不是 UTF-8 编码，为避免覆盖其内容已中止（请先转为 UTF-8）"
+                        .into(),
+                )
+            }
+        };
         if content.lines().any(|l| l.trim() == p) {
             return Ok(());
         }
@@ -962,9 +1233,7 @@ pub async fn git_ignore_add(repo: String, path: String) -> Result<(), String> {
 #[tauri::command]
 pub async fn git_cherry_pick(repo: String, hash: String) -> Result<(), String> {
     offload(move || {
-        if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err("非法的 commit hash".into());
-        }
+        check_hex(&hash)?;
         run(
             &repo,
             &[
@@ -1049,3 +1318,239 @@ pub async fn git_check_repo(path: String) -> Result<bool, String> {
     })
     .await
 }
+
+/// 在 path 下执行 git init。path 本身还不是仓库，所以只能靠 current_dir 定位，
+/// run() 的 repo 参数正好就是 cwd。已存在仓库时 git init 是幂等的（会重新初始化）。
+#[tauri::command]
+pub async fn git_init(path: String) -> Result<(), String> {
+    offload(move || {
+        let path = path.trim();
+        if path.is_empty() {
+            return Err("目录不能为空".into());
+        }
+        if !std::path::Path::new(path).is_dir() {
+            return Err(format!("目录不存在: {path}"));
+        }
+        run(path, &["init"]).map(|_| ())
+    })
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    /// 临时仓库，Drop 时自清理。
+    struct TempRepo(std::path::PathBuf);
+
+    impl TempRepo {
+        fn new(tag: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("gz-test-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let p = dir.to_str().unwrap().to_string();
+            run(&p, &["init", "-q"]).unwrap();
+            run(&p, &["config", "user.email", "t@t"]).unwrap();
+            run(&p, &["config", "user.name", "t"]).unwrap();
+            TempRepo(dir)
+        }
+
+        fn path(&self) -> &str {
+            self.0.to_str().unwrap()
+        }
+    }
+
+    impl Drop for TempRepo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    // ---------- 纯函数 ----------
+
+    #[test]
+    fn check_repo_path_rejects_escapes() {
+        for bad in [
+            "", "   ", "../x", "..\\x", "/abs/path", "a/../../x", "a\\..\\..\\x", "..",
+        ] {
+            assert!(
+                check_repo_path(bad).is_err(),
+                "应当拒绝越界路径: {bad:?}"
+            );
+        }
+        // 控制字符
+        assert!(check_repo_path("a\u{0}b").is_err());
+        assert!(check_repo_path("a\nb").is_err());
+    }
+
+    #[test]
+    fn check_repo_path_allows_normal_paths() {
+        // `a..b.txt` 是合法文件名：按路径组件判断才不会误杀（这正是它不复用
+        // check_positional 的原因，后者按子串拒绝 ".."）
+        for ok in [
+            "src/App.vue",
+            "a..b.txt",
+            "dir/file with space.txt",
+            "中文目录/文件.txt",
+            "src-tauri/src/git.rs",
+        ] {
+            assert!(check_repo_path(ok).is_ok(), "不应拒绝正常路径: {ok:?}");
+        }
+    }
+
+    #[test]
+    fn check_positional_rejects_option_like_names() {
+        for bad in ["", "-f", "--mirror", "a..b", "a\nb"] {
+            assert!(check_positional("分支名", bad).is_err(), "应当拒绝: {bad:?}");
+        }
+        for ok in ["feature/x", "中文分支", "release-1.0"] {
+            assert!(check_positional("分支名", ok).is_ok(), "不应拒绝: {ok:?}");
+        }
+    }
+
+    #[test]
+    fn check_hex_rejects_empty_but_allows_abbrev() {
+        // 空串是原本的漏洞：`"".chars().all(is_ascii_hexdigit)` 恒为 true
+        assert!(check_hex("").is_err());
+        assert!(check_hex("zzz").is_err());
+        // git 允许缩写 hash，别把短 hash 误杀
+        assert!(check_hex("abc123").is_ok());
+        assert!(check_hex("ABC123").is_ok());
+    }
+
+    #[test]
+    fn is_network_classifies_transfer_commands() {
+        assert!(is_network(&["push"]));
+        assert!(is_network(&["push", "-u", "origin", "main"]));
+        assert!(is_network(&["clone", "--", "u", "d"]));
+        assert!(is_network(&["fetch", "--all"]));
+        assert!(is_network(&["pull", "--no-edit"]));
+        // 前置参数不影响判断
+        assert!(is_network(&["-c", "core.quotepath=false", "fetch"]));
+
+        assert!(!is_network(&["status", "--porcelain=v1", "-b"]));
+        assert!(!is_network(&["log", "-1"]));
+        assert!(!is_network(&["checkout", "main"]));
+    }
+
+    // ---------- 超时与管道 ----------
+
+    /// 回归测试：输出远超管道缓冲区（约 64KB）时必须完整读回、不能死锁。
+    /// 如果实现是「先 wait 再读管道」，子进程写满缓冲区后会阻塞在写、我们阻塞在读，
+    /// 这个测试会挂住——所以放进线程用 recv_timeout 兜底，让它**失败**而不是**卡死**。
+    #[test]
+    fn run_reads_large_output_without_deadlock() {
+        let repo = TempRepo::new("bigout");
+        // 300KB 的文本，确保超过管道缓冲区
+        let big = "x".repeat(300 * 1024);
+        std::fs::write(repo.0.join("big.txt"), &big).unwrap();
+        run(repo.path(), &["add", "big.txt"]).unwrap();
+        run(repo.path(), &["commit", "-q", "-m", "big"]).unwrap();
+
+        let (tx, rx) = mpsc::channel();
+        let p = repo.path().to_string();
+        std::thread::spawn(move || {
+            let _ = tx.send(run(&p, &["show", "HEAD:big.txt"]));
+        });
+        let out = rx
+            .recv_timeout(Duration::from_secs(60))
+            .expect("读取大输出时死锁了（管道未并发读）")
+            .expect("git show 应当成功");
+        assert_eq!(out.trim().len(), big.len(), "大输出被截断了");
+    }
+
+    /// 超时必须真的杀掉子进程，而不是只是「不再等」。
+    #[test]
+    fn output_with_timeout_kills_hung_process() {
+        #[cfg(windows)]
+        let cmd = {
+            let mut c = Command::new("cmd");
+            // ping 用来稳定地睡 ~30 秒（timeout 命令在有管道时会被拒）
+            c.args(["/C", "ping", "-n", "30", "127.0.0.1"]);
+            c
+        };
+        #[cfg(not(windows))]
+        let cmd = {
+            let mut c = Command::new("sleep");
+            c.arg("30");
+            c
+        };
+
+        let start = Instant::now();
+        let err = output_with_timeout(cmd, Duration::from_secs(1)).unwrap_err();
+        let elapsed = start.elapsed();
+
+        assert!(err.contains("超时"), "错误信息应说明超时，实际: {err}");
+        // 若只是「不再等待」而没杀进程，这里仍会很快返回，所以要额外确认进程真的没了
+        assert!(
+            elapsed < Duration::from_secs(15),
+            "超时未生效，等了 {elapsed:?}"
+        );
+    }
+
+    /// 超时后不留僵尸进程：能立刻再跑一次正常命令。
+    #[test]
+    fn git_still_usable_after_timeout() {
+        let repo = TempRepo::new("afterkill");        #[cfg(windows)]
+        let cmd = {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "ping", "-n", "30", "127.0.0.1"]);
+            c
+        };
+        #[cfg(not(windows))]
+        let cmd = {
+            let mut c = Command::new("sleep");
+            c.arg("30");
+            c
+        };
+        let _ = output_with_timeout(cmd, Duration::from_secs(1));
+        assert!(run(repo.path(), &["status", "--porcelain"]).is_ok());
+    }
+
+    /// 失败时 stdout 要能回落：commit 无内容、merge 冲突的诊断都只写在 stdout。
+    #[test]
+    fn run_falls_back_to_stdout_on_failure() {
+        let repo = TempRepo::new("stdoutfb");
+        // 没有任何改动就 commit → exit=1，信息在 stdout（stderr 为空）
+        let err = run(repo.path(), &["commit", "-m", "x"]).unwrap_err();
+        assert!(
+            !err.trim().is_empty(),
+            "失败时不应返回空错误（否则前端弹空白框）"
+        );
+        assert!(
+            err.contains("nothing to commit") || err.contains("nothing added"),
+            "应回落取到 stdout 的诊断，实际: {err}"
+        );
+    }
+
+    /// 子进程退出后，即使管道因孙进程而**永不 EOF**，已产生的输出也必须能拿到。
+    /// 若实现是「read_to_end 读完再发一次」，这里会一个字都收不到。
+    #[test]
+    fn partial_output_survives_when_pipe_never_eofs() {
+        #[cfg(windows)]
+        let cmd = {
+            let mut c = Command::new("cmd");
+            // 先 echo，再用 start /B 起一个继承句柄的长命孙进程，然后父进程立刻退出
+            c.args([
+                "/C",
+                "echo hello-partial & start /B cmd /C ping -n 30 127.0.0.1 >nul",
+            ]);
+            c
+        };
+        #[cfg(not(windows))]
+        let cmd = {
+            let mut c = Command::new("sh");
+            c.args(["-c", "echo hello-partial; sleep 30 &"]);
+            c
+        };
+
+        let out = output_with_timeout(cmd, Duration::from_secs(30)).expect("父进程正常退出");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            text.contains("hello-partial"),
+            "孙进程持有管道时丢了已产生的输出，实际: {text:?}"
+        );
+    }
+}
+

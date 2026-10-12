@@ -18,12 +18,14 @@ pub fn run() {
             git::git_unstage,
             git::git_commit,
             git::git_push,
+            git::git_push_force,
             git::git_pull,
             git::git_checkout,
             git::git_branch_create,
             git::git_branch_delete,
             git::git_branch_rename,
             git::git_merge,
+            git::git_merge_abort,
             git::git_push_delete,
             git::git_get_user,
             git::git_config_user,
@@ -51,7 +53,8 @@ pub fn run() {
             git::git_cherry_pick,
             git::git_commits_range,
             git::git_latest_tag,
-            git::git_check_repo
+            git::git_check_repo,
+            git::git_init
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
