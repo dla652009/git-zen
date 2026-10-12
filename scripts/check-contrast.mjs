@@ -98,8 +98,10 @@ function parseLaneColors(src) {
 const TEXT_PAIRS = [
   ["--foreground", "--background"],
   ["--foreground", "--card"],
+  ["--foreground", "--elevated"],
   ["--muted-foreground", "--background"],
   ["--muted-foreground", "--card"],
+  ["--muted-foreground", "--elevated"],
   ["--muted-foreground", "--muted"],
   ["--secondary-foreground", "--secondary"],
   ["--primary-foreground", "--primary"],

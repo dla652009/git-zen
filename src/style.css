@@ -1,20 +1,43 @@
 @import "tailwindcss";
 
-/* shadcn token；默认暗色（深空灰底 + 紫罗兰主色），其余主题用 [data-theme] 覆盖 */
+/* ============================================================================
+   设计令牌
+   ----------------------------------------------------------------------------
+   分层原则（从下到上，越靠上越亮）：
+     --background  应用画布
+     --card        面板 / 卡片（侧栏、内容区）
+     --elevated    浮层（弹窗、菜单、下拉）——必须比卡片高一层，否则「浮」不起来
+     --muted       内嵌区（输入框、代码块、chip、次级按钮底）
+     --hover       交互叠加层（不占层次，叠在任何表面之上）
+
+   两条约定：
+   1. 交互底色一律用 --hover / --active（半透明叠加），不要写死某个表面色 ——
+      这样同一段样式在画布、卡片、浮层上都成立。
+   2. 圆角 / 字号 / 阴影 / 动效都不写魔法数，走下面的尺度与 @theme 注册。
+   ============================================================================ */
+
 :root {
-  --background: #101014;
-  --foreground: #e8e8ee;
-  --card: #17171d;
-  --muted: #1f1f27;
-  --muted-foreground: #9494a1;
-  --border: #2a2a34;
+  /* ── 表面层次 ───────────────────────────────────────────────── */
+  --background: #0d0d12;
+  --card: #14141a;
+  --elevated: #1b1b22;
+  --muted: #1a1a21;
+
+  /* ── 文字 ───────────────────────────────────────────────────── */
+  --foreground: #e9e9f0;
+  --muted-foreground: #9a9aab;
+
+  /* ── 描边 ───────────────────────────────────────────────────── */
+  --border: #262630;
+
+  /* ── 品牌与语义 ─────────────────────────────────────────────── */
   --primary: #8b7ff5;
   --primary-foreground: #12101c;
-  --secondary: #1f1f27;
-  --secondary-foreground: #e8e8ee;
+  --secondary: #1a1a21;
+  --secondary-foreground: #e9e9f0;
   --destructive: #f26d78;
+
   --scrollbar-thumb: #33333f;
-  --radius: 0.375rem;
   --diff-add-bg: #223326;
   --diff-add-text: #74c987;
   --diff-del-bg: #3a2226;
@@ -47,19 +70,57 @@
 
   /* 开关关闭态轨道：白滑块压在 --muted-foreground/40 的合成色上，取不透明等价色（浅色主题下必须压暗） */
   --switch-off-bg: #494952;
+
+  /* ── 派生令牌：只写一次，随各主题的 --foreground / --border 自动变 ── */
+  --hover: color-mix(in srgb, var(--foreground) 7%, transparent);
+  --active: color-mix(in srgb, var(--foreground) 12%, transparent);
+  --border-soft: color-mix(in srgb, var(--border) 55%, transparent);
+  --primary-soft: color-mix(in srgb, var(--primary) 16%, transparent);
+
+  /* ── 遮罩 ───────────────────────────────────────────────────── */
+  /* 深色主题用纯黑压暗；浅色主题在各自块里换成「不那么黑」的版本，否则像关机 */
+  --scrim: color-mix(in srgb, #05050a 62%, transparent);
+
+  /* ── 动效时长 ───────────────────────────────────────────────── */
+  --dur-fast: 110ms; /* 悬停、按下、颜色变化 */
+  --dur-base: 170ms; /* 弹层进出、面板展开 */
+  --dur-slow: 260ms; /* 大块内容切换 */
+
+  /* ── 阴影 ───────────────────────────────────────────────────── */
+  /* 深色主题看得见的是「更黑的环境光」，浅色主题看得见的是「更大更淡的投影」，
+     所以分成 key（贴身硬阴影，定轮廓）+ ambient（大范围软阴影，定高度）两层。 */
+  --shadow-key: rgb(0 0 0 / 0.45);
+  --shadow-ambient: rgb(0 0 0 / 0.55);
+
+  /* 顶部内高光：给浮层和实心按钮一条 1px 的上边缘，是「有厚度」的关键 */
+  --highlight: inset 0 1px 0 rgb(255 255 255 / 0.045);
+
+  /* 四档高度，按「离画布多远」排：
+       1 = 常驻面板、要贴在底上的小件（开关滑块）
+       2 = 悬停抬起（整块可点的卡片）
+       3 = 菜单 / 气泡 / 下拉 / 浮条
+       4 = 弹窗
+     中间那档不是凑数：只有「平的」和「飞起来的」两级时，
+     悬停反馈无处安放，只能靠变色，界面就少了一层空间感。 */
+  --elev-1: 0 1px 2px -1px var(--shadow-key), 0 1px 3px -1px var(--shadow-ambient);
+  --elev-2: 0 2px 4px -1px var(--shadow-key), 0 6px 14px -4px var(--shadow-ambient);
+  --elev-3: 0 4px 10px -2px var(--shadow-key), 0 12px 28px -8px var(--shadow-ambient);
+  --elev-4: 0 8px 20px -4px var(--shadow-key), 0 24px 56px -16px var(--shadow-ambient);
 }
 
 [data-theme="light"],
 [data-theme="github-light"] {
-  --background: #fafafa;
+  /* 画布比卡片暗一档：白色卡片才有「放在桌面上」的感觉（原来 #fafafa vs #fff 差 2%，看不出来） */
+  --background: #f5f5f9;
   --foreground: #1c1c23;
   --card: #ffffff;
-  --muted: #f0f0f4;
+  --elevated: #ffffff;
+  --muted: #efeff5;
   --muted-foreground: #6c6c76;
-  --border: #e4e4ea;
+  --border: #e1e1e9;
   --primary: #6b5cf0;
   --primary-foreground: #ffffff; /* 深字对 #6b5cf0 只有 3.95:1，反白后 4.76:1（实心主按钮的文字对） */
-  --secondary: #f0f0f4;
+  --secondary: #eeeef4;
   --secondary-foreground: #1c1c23;
   --destructive: #d23b42;
   --scrollbar-thumb: #c9c9d2;
@@ -93,12 +154,21 @@
 
   /* 关闭态轨道：原 --muted-foreground/40 合成出 #c4c4c8，白滑块只有 1.8:1，压暗到 5.2:1 */
   --switch-off-bg: #6c6c76;
+
+  /* 浅色主题的遮罩：纯黑 60% 叠在浅色界面上像断电，降到 32% 并带一点蓝 */
+  --scrim: color-mix(in srgb, #1b1b34 34%, transparent);
+
+  /* 浅色主题靠「更大更淡」的投影定高度，硬阴影几乎不可见 */
+  --shadow-key: rgb(24 24 48 / 0.06);
+  --shadow-ambient: rgb(24 24 48 / 0.1);
+  --highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
 }
 
 [data-theme="catppuccin-mocha"] {
-  --background: #1e1e2e;
+  --background: #181825;
   --foreground: #cdd6f4;
-  --card: #181825;
+  --card: #1e1e2e;
+  --elevated: #24243a;
   --muted: #313244;
   --muted-foreground: #959bb3;
   --border: #45475a;
@@ -141,15 +211,18 @@
 }
 
 [data-theme="catppuccin-latte"] {
+  /* 沿用 Catppuccin 官方 base，只把「谁高谁低」理顺：官方是 mantle 比 base 更暗，
+     而浮层必须比画布亮，所以这里让卡片走白、内嵌区走 mantle。 */
   --background: #eff1f5;
   --foreground: #4c4f69;
-  --card: #e6e9ef;
-  --muted: #ccd0da;
+  --card: #ffffff;
+  --elevated: #ffffff;
+  --muted: #e6e9ef;
   --muted-foreground: #565868;
-  --border: #bcc0cc;
+  --border: #d3d7e2;
   --primary: #5e4eef;
   --primary-foreground: #ffffff;
-  --secondary: #ccd0da;
+  --secondary: #e2e5ee;
   --secondary-foreground: #4c4f69;
   --destructive: #c52d35;
   --scrollbar-thumb: #b4bacb;
@@ -183,19 +256,25 @@
 
   /* 关闭态轨道：原 /40 合成出 #acafb9，白滑块只有 2.0:1，压暗到 4.9:1 */
   --switch-off-bg: #6e7080;
+
+  --scrim: color-mix(in srgb, #2a2c44 32%, transparent);
+  --shadow-key: rgb(24 24 48 / 0.06);
+  --shadow-ambient: rgb(24 24 48 / 0.1);
+  --highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
 }
 
 [data-theme="one-dark"] {
-  --background: #282c34;
-  --foreground: #abb2bf;
-  --card: #21252b;
-  --muted: #3a3f4b;
+  --background: #21252b;
+  --foreground: #c3cad6;
+  --card: #282c34;
+  --elevated: #30353f;
+  --muted: #343a45;
   --muted-foreground: #a6aab1;
   --border: #3e4451;
   --primary: #9084f5;
   --primary-foreground: #12101c;
-  --secondary: #3a3f4b;
-  --secondary-foreground: #abb2bf;
+  --secondary: #343a45;
+  --secondary-foreground: #c3cad6;
   --destructive: #f26d78;
   --scrollbar-thumb: #4b5262;
   --diff-add-bg: #223326;
@@ -228,15 +307,19 @@
 
   /* 关闭态轨道（原 /40 合成色 #565a61 的等价不透明色） */
   --switch-off-bg: #565a61;
+
+  --scrim: color-mix(in srgb, #0b0d12 58%, transparent);
 }
 
 [data-theme="github-dark"] {
   --background: #0d1117;
   --foreground: #e6edf3;
   --card: #161b22;
+  --elevated: #1c232c;
   --muted: #21262d;
   --muted-foreground: #8b949e;
   --border: #30363d;
+
   --primary: #8b7ff5;
   --primary-foreground: #12101c;
   --secondary: #21262d;
@@ -275,20 +358,102 @@
   --switch-off-bg: #454b54;
 }
 
+/* ============================================================================
+   Tailwind 主题注册
+   ============================================================================ */
+
+/* 尺度类令牌：值固定的用 @theme，引用 CSS 变量的用 @theme inline */
+@theme {
+  /* ── 字号：6 档，全部 rem，跟随「设置 → 字号」整体缩放 ──────────
+     右侧是按默认根字号 13px 折算的实际像素。
+     原来的 9/10/10.5/11/11.5/12/12.5/13px 八档里，
+     有一半是 px（不跟随字号设置）、一半是 rem（跟随），改字号时只有一半文字会变，
+     所以这里统一成 rem。 */
+  --text-2xs: 0.75rem; /*  9.8px — 角标、计数 */
+  --text-2xs--line-height: 1.25;
+  --text-xs: 0.8125rem; /* 10.6px — 密集标注、次要信息 */
+  --text-xs--line-height: 1.35;
+  --text-sm: 0.90625rem; /* 11.8px — 列表正文、按钮、输入框 */
+  --text-sm--line-height: 1.45;
+  --text-base: 1rem; /* 13.0px — 强调正文、分组标题 */
+  --text-base--line-height: 1.5;
+  --text-lg: 1.1875rem; /* 15.4px — 弹窗标题 */
+  --text-lg--line-height: 1.4;
+  --text-xl: 1.375rem; /* 17.9px — 空态主标题 */
+  --text-xl--line-height: 1.3;
+
+  /* ── 圆角：4 档 + 全圆 ────────────────────────────────────────
+     原来 2/4/6/8px 混用（rounded-sm/rounded/rounded-md/rounded-lg），
+     chip 和弹窗只差 4px，层级读不出来。 */
+  --radius-xs: 3px; /* chip、角标、行内代码 */
+  --radius-sm: 5px; /* 按钮、输入框、菜单项 */
+  --radius-md: 7px; /* 卡片、内嵌块、面板 */
+  --radius-lg: 10px; /* 弹窗、抽屉、大面积浮层 */
+
+  /* ── 动效 ────────────────────────────────────────────────────
+     短、快、不弹跳。UI 里的动效只负责说明「什么变了」，不负责表演。
+     时长不在 Tailwind 的 @theme 命名空间里（v4 的 duration-* 只吃裸数值），
+     所以下面用 @utility 包一层，保证时长只有这一处定义。 */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.3, 0.64, 1);
+
+  /* ── 弹窗宽度：4 档 ──────────────────────────────────────────
+     原来是 360/400/420/440/460/480/520/640 八个写死的 px。
+     这里刻意继续用 px：字号档位是「正文变多大」，弹窗宽度是「一块版面有多宽」，
+     两件事。用 rem 的话默认字号 13px 会把 22rem 算成 286px（而不是注释里以为的 352px），
+     小弹窗会平白缩水两成。档位取值保证每个弹窗都不比原来窄。 */
+  --container-dlg-sm: 384px; /* 单字段确认、简短表单（原 360） */
+  --container-dlg-md: 448px; /* 标准表单（原 400/420/440） */
+  --container-dlg-lg: 520px; /* 列表选择、多字段（原 480/520） */
+  --container-dlg-xl: 640px; /* 内容浏览（Review、Release Notes） */
+
+  /* ── 等宽字体：哈希、diff、数字对齐全靠它 ────────────────────
+     原来只有 font-mono 的 Tailwind 默认值，且 Md.vue 硬编码了 Consolas
+     （Consolas 没有中文字形，中文代码块会掉到别的字体）。 */
+  --font-mono:
+    ui-monospace, "Cascadia Mono", "SF Mono", "JetBrains Mono", Menlo, Consolas, "Microsoft YaHei UI",
+    "Liberation Mono", monospace;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
+  --color-elevated: var(--elevated);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
+  --color-border-soft: var(--border-soft);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-destructive: var(--destructive);
   --color-graph-line: var(--graph-line);
-  --radius-md: var(--radius);
+  --color-hover: var(--hover);
+  --color-active: var(--active);
+  --color-scrim: var(--scrim);
+
+  --shadow-elev-1: var(--elev-1);
+  --shadow-elev-2: var(--elev-2);
+  --shadow-elev-3: var(--elev-3);
+  --shadow-elev-4: var(--elev-4);
+}
+
+/* ============================================================================
+   基础层
+   ============================================================================ */
+
+html {
+  /* 让原生控件（滚动条、日期选择器、自动填充）跟随主题的明暗 */
+  color-scheme: light;
+}
+[data-theme="dark"],
+[data-theme="catppuccin-mocha"],
+[data-theme="one-dark"],
+[data-theme="github-dark"] {
+  color-scheme: dark;
 }
 
 body {
@@ -301,6 +466,10 @@ body,
   height: 100%;
 }
 
+::selection {
+  background: color-mix(in srgb, var(--primary) 32%, transparent);
+}
+
 ::-webkit-scrollbar {
   width: 7px;
   height: 7px;
@@ -309,7 +478,13 @@ body,
   background: var(--scrollbar-thumb);
   border-radius: 4px;
 }
+::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in srgb, var(--scrollbar-thumb) 70%, var(--foreground));
+}
 ::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 
@@ -326,15 +501,63 @@ body,
   outline-offset: 1px;
 }
 
-/* 弹层入场动效（菜单/弹窗卡片加 .pop-in 即用；prefers-reduced-motion 时全局降级） */
-.pop-in {
-  animation: pop-in 0.14s ease;
+/* ============================================================================
+   组件级工具类
+   ============================================================================ */
+
+/* 浮层容器：弹窗 / 菜单 / 下拉共用一个「表面」定义。
+   集中一处，才不会出现「这个弹窗比那个弹窗亮一度」的问题。 */
+@utility surface {
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--elev-4), var(--highlight);
 }
-@keyframes pop-in {
-  from {
+
+@utility surface-menu {
+  background: var(--elevated);
+  border: 1px solid var(--border);
+  box-shadow: var(--elev-3), var(--highlight);
+}
+
+/* 面板：贴着画布的常驻区域（侧栏、列表），用描边区分而不是投影 */
+@utility surface-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  box-shadow: var(--elev-1), var(--highlight);
+}
+
+/* 弹层入场：@starting-style 让「从哪来」可声明，不需要额外 class 切换。
+   老 WebView 不支持时直接显示终态 —— 退化成无动画，不会消失。 */
+@utility pop-in {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+  @starting-style {
     opacity: 0;
-    transform: scale(0.98) translateY(-2px);
+    transform: scale(0.97) translateY(-4px);
   }
+}
+
+/* 侧栏/抽屉类横向入场 */
+@utility slide-in-right {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+  @starting-style {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+}
+
+/* 动效时长（v4 的 duration-* 不吃命名令牌，包一层保证单一定义） */
+@utility duration-fast {
+  transition-duration: var(--dur-fast);
+}
+@utility duration-base {
+  transition-duration: var(--dur-base);
+}
+@utility duration-slow {
+  transition-duration: var(--dur-slow);
 }
 
 @media (prefers-reduced-motion: reduce) {
