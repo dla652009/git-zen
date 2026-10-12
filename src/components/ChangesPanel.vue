@@ -51,6 +51,7 @@ const emit = defineEmits<{
   amend: [p: { message: string; stagedCount: number; onDone: () => void }]; // 追加到上次提交（App 侧确认）
   undo: []; // 撤销上次提交（App 侧确认）
   stashDrop: [index: number, subject: string]; // 删除 stash 记录（App 侧确认）
+  abortMerge: []; // 放弃合并（App 侧确认）
 }>();
 
 // 切仓库时收起 stash 菜单/弹窗，避免上一仓库的列表串到新仓库
@@ -170,6 +171,10 @@ function isUnmerged(f: StatusFile): boolean {
   );
 }
 
+// 有未合并文件 = 合并/rebase 冲突进行中，此时必须给用户一个「放弃合并」的出口，
+// 否则只能自己去终端 merge --abort（这是唯一会把用户踢出应用的高频场景）
+const conflictFiles = computed(() => (props.status?.files ?? []).filter(isUnmerged));
+
 // 状态 → 图标 + 颜色 + 中文说明（替代字母徽标）
 const STATUS_META: Record<string, { icon: Component; cls: string; desc: string }> = {
   A: { icon: FilePlus, cls: "text-[var(--c-add)]", desc: "新增" },
@@ -191,6 +196,11 @@ function renameParts(path: string): [string, string] | null {
   return i === -1 ? null : [path.slice(0, i), path.slice(i + 4)];
 }
 
+// 传给 git 的必须是新路径（rename 整串 git 不认）；显示仍走 renameParts
+function filePath(f: StatusFile): string {
+  return f.path.split(" -> ").pop()!;
+}
+
 const canCommit = computed(
   () => !props.busy && staged.value.length > 0 && message.value.trim().length > 0
 );
@@ -198,6 +208,11 @@ const canCommit = computed(
 // 勾选「提交后推送到远程」时，提交完自动 push（无上游自动 -u）
 const pushAfterCommit = ref(false);
 
+// 输入法组词中的 Ctrl+Enter 不该提交——此时 message 里还没有候选词
+function onCommitKeydown(e: KeyboardEvent) {
+  if (e.isComposing) return;
+  if (canCommit.value) doCommit();
+}
 function doCommit() {
   emit("action", async () => {
     await api.commit(props.repo, message.value);
@@ -245,7 +260,7 @@ async function genCommitMsg() {
   try {
     const d = await api.diff(
       props.repo,
-      staged.value.map((f) => f.path.split(" -> ").pop()!),
+      staged.value.map((f) => filePath(f)),
       true
     );
     // 取最近提交推断本仓库的信息风格（SKILL.md：优先跟随既有惯例）
@@ -267,6 +282,28 @@ async function genCommitMsg() {
 
 <template>
   <div class="flex h-full flex-col">
+    <!-- 冲突态横幅：给出「放弃合并」出口，不必回终端 -->
+    <div
+      v-if="conflictFiles.length"
+      class="mx-3 mt-3 flex items-start gap-2 rounded-md border border-[var(--c-mod)]/40 bg-[var(--c-mod)]/10 px-2.5 py-2"
+    >
+      <GitMerge class="mt-0.5 size-3.5 shrink-0 text-[var(--c-mod)]" />
+      <div class="min-w-0 flex-1 text-[11px] leading-relaxed">
+        <div class="font-medium">合并冲突未解决（{{ conflictFiles.length }} 个文件）</div>
+        <div class="mt-0.5 text-muted-foreground">
+          逐个解决后暂存并提交即完成合并；也可以直接放弃，回到合并前。
+        </div>
+      </div>
+      <Button
+        variant="ghost"
+        size="sm"
+        class="h-6 shrink-0 px-2 text-[11px]"
+        @click="emit('abortMerge')"
+      >
+        放弃合并
+      </Button>
+    </div>
+
     <!-- 已暂存 -->
     <div class="flex items-center gap-2 px-3 pt-3 pb-1.5">
       <span class="text-[11px] uppercase tracking-wider text-muted-foreground">已暂存</span>
@@ -279,7 +316,7 @@ async function genCommitMsg() {
         class="ml-auto h-6 px-2 text-[11px]"
         @click="
           emit('action', async () => {
-            await api.unstage(repo, staged.map((f) => f.path));
+            await api.unstage(repo, staged.map((f) => filePath(f)));
             toast(`已取消暂存 ${staged.length} 个文件`);
           })
         "
@@ -293,7 +330,7 @@ async function genCommitMsg() {
         :key="'s' + f.path"
         class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 whitespace-nowrap hover:bg-muted"
         :class="selKey === 's' + f.path && 'bg-primary/10'"
-        @click="onRowClick('s' + f.path, () => emit('openDiff', { path: f.path.split(' -> ').pop()!, cached: !isUnmerged(f), untracked: false, conflict: isUnmerged(f) }))"
+        @click="onRowClick('s' + f.path, () => emit('openDiff', { path: filePath(f), cached: !isUnmerged(f), untracked: false, conflict: isUnmerged(f) }))"
         @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: true }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
@@ -307,10 +344,15 @@ async function genCommitMsg() {
           </span>
         </Tooltip>
         <Tooltip text="取消暂存">
-          <Undo2
-            class="ml-auto size-3.5 shrink-0 opacity-0 transition-opacity group-hover/li:opacity-80 hover:!opacity-100"
-            @click.stop="emit('action', () => api.unstage(repo, [f.path]))"
-          />
+          <Button
+            variant="ghost"
+            size="icon"
+            class="ml-auto size-6 shrink-0 opacity-60 transition-opacity group-hover/li:opacity-100 hover:!opacity-100 focus-visible:opacity-100"
+            :aria-label="`取消暂存 ${f.path}`"
+            @click.stop="emit('action', () => api.unstage(repo, [filePath(f)]))"
+          >
+            <Undo2 class="size-3.5" />
+          </Button>
         </Tooltip>
       </li>
       <li v-if="!staged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
@@ -327,7 +369,7 @@ async function genCommitMsg() {
         class="ml-auto h-6 px-2 text-[11px]"
         @click="
           emit('action', async () => {
-            await api.stage(repo, unstaged.map((f) => f.path));
+            await api.stage(repo, unstaged.map((f) => filePath(f)));
             toast(`已暂存 ${unstaged.length} 个文件`);
           })
         "
@@ -353,18 +395,29 @@ async function genCommitMsg() {
         :key="'u' + f.path"
         class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 whitespace-nowrap hover:bg-muted"
         :class="selKey === 'u' + f.path && 'bg-primary/10'"
-        @click="onRowClick('u' + f.path, () => emit('openDiff', { path: f.path, cached: false, untracked: f.x === '?', conflict: isUnmerged(f) }))"
+        @click="onRowClick('u' + f.path, () => emit('openDiff', { path: filePath(f), cached: false, untracked: f.x === '?', conflict: isUnmerged(f) }))"
         @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: false }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
         <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（单击选中 · 双击查看变更）`">
-          <span class="truncate text-[12.5px]">{{ f.path }}</span>
+          <span class="truncate text-[12.5px]">
+            <template v-if="renameParts(f.path)">
+              <span class="text-muted-foreground line-through">{{ renameParts(f.path)![0] }}</span>
+              → {{ renameParts(f.path)![1] }}
+            </template>
+            <template v-else>{{ f.path }}</template>
+          </span>
         </Tooltip>
         <Tooltip text="暂存">
-          <Plus
-            class="ml-auto size-3.5 shrink-0 opacity-0 transition-opacity group-hover/li:opacity-80 hover:!opacity-100"
-            @click.stop="emit('action', () => api.stage(repo, [f.path]))"
-          />
+          <Button
+            variant="ghost"
+            size="icon"
+            class="ml-auto size-6 shrink-0 opacity-60 transition-opacity group-hover/li:opacity-100 hover:!opacity-100 focus-visible:opacity-100"
+            :aria-label="`暂存 ${f.path}`"
+            @click.stop="emit('action', () => api.stage(repo, [filePath(f)]))"
+          >
+            <Plus class="size-3.5" />
+          </Button>
         </Tooltip>
       </li>
       <li v-if="!unstaged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
@@ -376,13 +429,13 @@ async function genCommitMsg() {
       :x="fileCtx.x"
       :y="fileCtx.y"
       :items="[
-        { label: '查看文件变更历史', fn: () => emit('fileHistory', fileCtx!.f.path.split(' -> ').pop()!) },
-        { label: '在历史区按此文件过滤', fn: () => emit('filterHistory', fileCtx!.f.path.split(' -> ').pop()!) },
+        { label: '查看文件变更历史', fn: () => emit('fileHistory', filePath(fileCtx!.f)) },
+        { label: '在历史区按此文件过滤', fn: () => emit('filterHistory', filePath(fileCtx!.f)) },
         { label: '复制路径', fn: () => copyPath(fileCtx!.f.path) },
         ...(fileCtx!.f.x === '?'
           ? [{
               label: '加入 .gitignore',
-              fn: () => emit('action', () => api.ignoreAdd(repo, fileCtx!.f.path)),
+              fn: () => emit('action', () => api.ignoreAdd(repo, filePath(fileCtx!.f))),
             } as MenuItem]
           : []),
         ...(fileCtx!.cached
@@ -393,7 +446,7 @@ async function genCommitMsg() {
                 danger: true,
                 fn: () =>
                   emit('discard', {
-                    path: fileCtx!.f.path,
+                    path: filePath(fileCtx!.f),
                     cached: false,
                     untracked: fileCtx!.f.x === '?',
                   }),
@@ -411,7 +464,7 @@ async function genCommitMsg() {
           rows="4"
           class="pl-8 pr-9"
           placeholder="提交信息…  Ctrl+⏎ 提交"
-          @keydown.ctrl.enter="canCommit && doCommit()"
+          @keydown.ctrl.enter="onCommitKeydown"
         />
         <Tooltip text="复用最近提交信息">
           <Button
@@ -529,24 +582,41 @@ async function genCommitMsg() {
           >
             <Archive class="size-3 shrink-0 text-muted-foreground" />
             <span class="min-w-0 flex-1 truncate">{{ e.subject }}</span>
-            <span class="hidden shrink-0 items-center gap-1 group-hover/st:flex">
+            <span
+              class="flex shrink-0 items-center gap-1 opacity-60 transition-opacity group-hover/st:opacity-100 group-focus-within/st:opacity-100"
+            >
               <Tooltip text="恢复（保留记录，可再次恢复）">
-                <RotateCcw
-                  class="size-3.5 hover:text-primary"
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-6 shrink-0 hover:text-primary"
+                  :aria-label="`恢复 stash 记录 ${e.subject}`"
                   @click.stop="stashRestore(e.index, false)"
-                />
+                >
+                  <RotateCcw class="size-3.5" />
+                </Button>
               </Tooltip>
               <Tooltip text="恢复并删除记录（pop）">
-                <ArchiveRestore
-                  class="size-3.5 hover:text-primary"
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-6 shrink-0 hover:text-primary"
+                  :aria-label="`恢复并删除 stash 记录 ${e.subject}`"
                   @click.stop="stashRestore(e.index, true)"
-                />
+                >
+                  <ArchiveRestore class="size-3.5" />
+                </Button>
               </Tooltip>
               <Tooltip text="仅删除记录（不恢复）">
-                <Trash2
-                  class="size-3.5 hover:text-destructive"
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-6 shrink-0 hover:text-destructive"
+                  :aria-label="`删除 stash 记录 ${e.subject}`"
                   @click.stop="emit('stashDrop', e.index, e.subject)"
-                />
+                >
+                  <Trash2 class="size-3.5" />
+                </Button>
               </Tooltip>
             </span>
           </div>
@@ -560,11 +630,15 @@ async function genCommitMsg() {
     <!-- stash 收纳弹窗 -->
     <div
       v-if="stashPushOpen"
+      v-trap
       class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-stash-push-title"
       @click.self="stashPushOpen = false"
     >
       <div class="w-[380px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div class="mb-2 font-medium">收纳改动到 Stash</div>
+        <div id="dlg-stash-push-title" class="mb-2 font-medium">收纳改动到 Stash</div>
         <Input v-model="stashMsg" placeholder="备注（可选）" />
         <label class="mt-2 flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
           <input v-model="stashUntracked" type="checkbox" class="accent-[var(--primary)]" />

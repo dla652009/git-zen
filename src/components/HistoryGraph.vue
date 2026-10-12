@@ -2,7 +2,7 @@
 import { ref, computed } from "vue";
 import { layout, LANE_COLORS } from "../graph";
 import type { LogEntry } from "../gitApi";
-import { Badge, Tooltip } from "@/components/ui";
+import { Badge } from "@/components/ui";
 
 // 泳道历史图：虚拟滚动——几千提交时只渲染可视区 ± BUFFER 行的内容与连线，
 // 全量高度用空占位撑起（行高固定 26px，窗口换算无需测量）。
@@ -207,15 +207,13 @@ const hitSegments = computed(() => {
         @click="onRowClick(c)"
         @contextmenu.prevent="emit('commitMenu', { x: $event.clientX, y: $event.clientY, c })"
       >
-        <Tooltip :text="tip(c)">
-          <span class="flex-1 truncate">
-            <template v-if="hitSegments" v-for="(seg, si) in hitSegments(c.subject)" :key="si"
-              ><mark v-if="seg.hit" class="rounded-sm bg-primary/30 px-0.5 text-foreground">{{ seg.text }}</mark
-              ><template v-else>{{ seg.text }}</template></template
-            >
-            <template v-else>{{ c.subject }}</template>
-          </span>
-        </Tooltip>
+        <span class="flex-1 truncate" :title="tip(c)">
+          <template v-if="hitSegments" v-for="(seg, si) in hitSegments(c.subject)" :key="si"
+            ><mark v-if="seg.hit" class="rounded-sm bg-primary/30 px-0.5 text-foreground">{{ seg.text }}</mark
+            ><template v-else>{{ seg.text }}</template></template
+          >
+          <template v-else>{{ c.subject }}</template>
+        </span>
         <Badge v-for="r in c.refs" :key="r" :variant="refVariant(r)">{{ r.replace(/^tag: /, "") }}</Badge>
         <span class="shrink-0 text-[11.5px] text-muted-foreground">{{ c.author }} · {{ c.date }}</span>
       </div>

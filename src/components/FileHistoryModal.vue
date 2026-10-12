@@ -54,10 +54,17 @@ async function select(hash: string) {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-30 flex items-center justify-center bg-black/50" @click.self="emit('close')">
+  <div
+    v-trap
+    class="fixed inset-0 z-30 flex items-center justify-center bg-black/50"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="dlg-file-history-title"
+    @click.self="emit('close')"
+  >
     <div class="flex h-[80vh] w-[85vw] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-xl">
       <header class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
-        <span class="truncate font-medium">{{ path }}</span>
+        <span id="dlg-file-history-title" class="truncate font-medium">{{ path }}</span>
         <span class="shrink-0 text-xs text-muted-foreground">文件变更历史 · {{ commits.length }} 个提交</span>
         <span class="flex-1" />
         <Button variant="ghost" size="icon" @click="emit('close')"><X class="size-4" /></Button>

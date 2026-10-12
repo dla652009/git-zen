@@ -92,7 +92,7 @@ function humanize(raw: string): { msg: string; detail?: string } {
     [/does not appear to be a git repository|No configured push destination/i, "远程不可用：没有配置 origin（先在终端 git remote add origin <url>）或地址失效"],
     [/not a git repository/i, "所选目录不是 Git 仓库"],
     [/does not have any commits yet/i, "空仓库：还没有任何提交"],
-    [/conflict/i, "产生合并冲突，请在终端解决后再试"],
+    [/conflict/i, "产生合并冲突：在左侧解决冲突文件后暂存并提交，或用「放弃合并」退出"],
     [/failed to connect|connection timed out|could not resolve host/i, "网络不通：无法连接远程仓库"],
     [/not fully merged|used as worktree/i, "该分支尚未合并或有其他占用，为防误删请到终端确认处理"],
   ];
@@ -172,34 +172,43 @@ function fetchLog(skip = 0) {
 // 不 fetch 就永远看不到「远程有新提交可拉」；离线时 fetch 失败不打扰，仍刷新本地状态。
 // 操作后的刷新（run()）不带 fetch：pull/push 已更新过 refs，无需重复网络请求
 async function refresh(opts: { fetch?: boolean } = {}) {
-  if (!repo.value) return;
+  // 仓库身份快照：await 期间用户可能已切走（Ctrl+Tab / Ctrl+数字绕过 busy 检查）
+  const path = repo.value;
+  if (!path) return;
   if (opts.fetch) {
-    await api.fetchAll(repo.value).catch(() => {});
+    await api.fetchAll(path).catch(() => {});
+    if (repo.value !== path) return;
   }
   remoteLink.value =
-    (JSON.parse(localStorage.getItem("gz.remoteLinks") ?? "{}") as Record<string, string>)[repo.value] ?? "";
+    (JSON.parse(localStorage.getItem("gz.remoteLinks") ?? "{}") as Record<string, string>)[path] ?? "";
   try {
     const [s, l, b, tg] = await Promise.all([
-      api.status(repo.value),
+      api.status(path),
       fetchLog(0),
-      api.branches(repo.value),
-      api.tagList(repo.value),
+      api.branches(path),
+      api.tagList(path),
     ]);
+    // 结果属于已切走的仓库：丢弃，别写进新仓库的视图与 LRU 槽（否则切回来还是错数据）
+    if (repo.value !== path) return;
     status.value = s;
     commits.value = l;
     branchList.value = b;
     tags.value = tg;
     canLoadMore.value = l.length >= 300;
-    cachePut(repo.value, { status: s, commits: l, branchList: b, tags: tg });
+    cachePut(path, { status: s, commits: l, branchList: b, tags: tg });
   } catch (e) {
-    showError(String(e));
+    if (repo.value === path) showError(String(e));
   }
 }
 
 // 窗口标题显示未推送数
+// core:window:allow-set-title 已由 src-tauri/capabilities/default.json 授权；
+// setTitle 是跨 IPC 的 promise，异常仍需吞掉——标题属非关键路径，不该刷未捕获 rejection
 function updateTitle() {
   const a = status.value?.ahead ?? 0;
-  getCurrentWindow().setTitle(a > 0 ? `(↑${a}) git-zen` : "git-zen");
+  getCurrentWindow()
+    .setTitle(a > 0 ? `(↑${a}) git-zen` : "git-zen")
+    .catch(() => {});
 }
 watch(status, updateTitle);
 
@@ -208,9 +217,12 @@ const loadingMore = ref(false);
 
 async function loadMorePage() {
   if (!repo.value || !canLoadMore.value || filter.value || loadingMore.value) return;
+  const path = repo.value; // 仓库身份快照：翻页期间可能已切走
   loadingMore.value = true;
   try {
     const next = await fetchLog(commits.value.length);
+    // 仓库已切走：丢弃过期分页，别把上一仓库的提交 push 进新仓库的历史数组
+    if (repo.value !== path) return;
     commits.value.push(...next);
     canLoadMore.value = next.length >= 300;
   } catch (e) {
@@ -308,10 +320,19 @@ function doPush() {
 }
 
 async function openRepo() {
-  const dir = await open({ directory: true });
-  if (!dir) return;
-  addRepo(dir);
-  switchRepo(dir);
+  try {
+    const dir = await open({ directory: true });
+    if (!dir) return;
+    // 与拖拽入口 openDropped 行为对齐：先校验是不是 Git 仓库，避免选错目录后落库成永久坏选项卡
+    if (!(await api.checkRepo(dir))) {
+      showError(`「${dir.split(/[\\/]/).pop() || dir}」不是 Git 仓库`);
+      return;
+    }
+    addRepo(dir);
+    switchRepo(dir);
+  } catch (e) {
+    showError(String(e));
+  }
 }
 
 // ---- 打开仓库：先选 本地目录 / 从远程克隆；克隆完成后自动加入选项卡并打开 ----
@@ -346,6 +367,20 @@ function openRemoteClone() {
 async function pickCloneParent() {
   const dir = await open({ directory: true });
   if (dir) cloneParent.value = dir;
+}
+
+// 初始化新仓库：把选中的空目录 git init 后直接打开（新项目不必先去终端）
+async function initRepo() {
+  try {
+    const dir = await open({ directory: true });
+    if (!dir) return;
+    await api.initRepo(dir);
+    addRepo(dir);
+    switchRepo(dir);
+    toast("已初始化仓库");
+  } catch (e) {
+    showError(String(e));
+  }
 }
 
 async function doClone() {
@@ -612,6 +647,8 @@ function pickSwitcher(path: string) {
   switchRepo(path); // busy 时静默忽略，与点选项卡行为一致
 }
 function onSwitcherKeydown(e: KeyboardEvent) {
+  // 输入法组词中：Enter 是确认候选词，不是「选中这一项」
+  if (e.isComposing) return;
   const n = switcherResults.value.length;
   if (e.key === "ArrowDown") {
     e.preventDefault();
@@ -1090,6 +1127,8 @@ const aheadMenu = ref<{ x: number; y: number } | null>(null);
 function aheadMenuItems(): MenuItem[] {
   return [
     { label: `AI Review ${status.value?.ahead ?? 0} 个未推送提交`, fn: () => startReview() },
+    // amend / 撤销提交后本地与远程分叉，普通 push 必被拒（non-fast-forward）——安全强推出口
+    { label: "强制推送（--force-with-lease）", fn: askForcePush },
     { label: "放弃这些提交（重置回远程）", danger: true, fn: askDiscardUnpushed },
   ];
 }
@@ -1138,6 +1177,8 @@ function pickBranch(b: Branch) {
   switchBranch(b);
 }
 function onBranchSwitcherKeydown(e: KeyboardEvent) {
+  // 输入法组词中：Enter 是确认候选词，不是「选中这一项」
+  if (e.isComposing) return;
   const n = bsResults.value.length;
   if (e.key === "ArrowDown") {
     e.preventDefault();
@@ -1228,6 +1269,8 @@ const wfRun = ref<{
 
 async function executeFlow(wf: Workflow, inputBranch: string) {
   if (busy.value || !repo.value) return;
+  // 锁定仓库：多步执行期间用户可能切走（Ctrl+Tab / 关标签都不看 busy）
+  const path = repo.value;
   const startBranch = status.value?.branch ?? "";
   busy.value = true;
   runningAction.value = "workflow";
@@ -1241,9 +1284,16 @@ async function executeFlow(wf: Workflow, inputBranch: string) {
   try {
     for (let i = 0; i < wf.steps.length; i++) {
       const st = wfRun.value.states[i]!;
+      // 每步开始前校验仓库身份：切走即中止，否则后续步骤会在别的仓库上 commit/push
+      if (repo.value !== path) {
+        st.state = "fail";
+        wfRun.value.error = "执行期间切换了仓库，工作流已中止";
+        ok = false;
+        break;
+      }
       st.state = "running";
       try {
-        const note = await execStep(wf.steps[i]!, inputBranch, startBranch);
+        const note = await execStep(path, wf.steps[i]!, inputBranch, startBranch);
         st.note = note ?? "";
         st.state = note ? "skip" : "done";
       } catch (e) {
@@ -1265,7 +1315,10 @@ async function executeFlow(wf: Workflow, inputBranch: string) {
   }
 }
 
+// path = 流程启动时锁定的仓库：每步都用它，而不是现读 repo.value，
+// 这样中途切了仓库也不会把 git 操作落到别的仓库上
 async function execStep(
+  path: string,
   step: WorkflowStep,
   inputBranch: string,
   startBranch: string,
@@ -1275,36 +1328,36 @@ async function execStep(
   switch (step.kind) {
     case "checkout":
       // 目标不存在 → git 报错中止（要建分支就在流程里放"新建分支"原语）
-      await api.checkout(repo.value, refName(step.ref));
+      await api.checkout(path, refName(step.ref));
       return;
     case "pull":
-      await api.pull(repo.value);
+      await api.pull(path);
       return;
     case "push":
-      await api.push(repo.value, status.value?.branch ?? "");
+      await api.push(path, status.value?.branch ?? "");
       return;
     case "merge":
-      await api.merge(repo.value, refName(step.ref)); // 冲突 → 报错停留，后续步骤不执行
+      await api.merge(path, refName(step.ref)); // 冲突 → 报错停留，后续步骤不执行
       return;
     case "createBranch": {
       let name = inputBranch;
       const p = step.prefix?.trim() ?? "";
       if (p && !name.startsWith(p)) name = p + name;
-      await api.branchCreate(repo.value, name);
+      await api.branchCreate(path, name);
       return;
     }
     case "switchBack":
-      await api.checkout(repo.value, startBranch);
+      await api.checkout(path, startBranch);
       return;
     case "commitPush": {
-      const st = await api.status(repo.value);
+      const st = await api.status(path);
       if (!st.files.length) return "无改动，跳过";
       // 自动全部暂存（git add . 连删除/重命名一起收，免解析 porcelain 路径）
-      await api.stage(repo.value, ["."]);
+      await api.stage(path, ["."]);
       let msg = step.msgSource === "fixed" ? (step.message ?? "").trim() : "";
       if (step.msgSource === "ai") {
-        const diff = await api.diff(repo.value, ["."], true);
-        const recent = (await api.log(repo.value))
+        const diff = await api.diff(path, ["."], true);
+        const recent = (await api.log(path))
           .slice(0, 10)
           .map((c) => c.subject)
           .join("\n");
@@ -1314,9 +1367,13 @@ async function execStep(
           `【仓库近期提交风格】\n${recent || "（无历史提交）"}\n\n【暂存区 diff】\n${clipForAI(diff)}`,
         );
       }
+      // AI 生成最长 30s，是最容易被切仓库的窗口：提交前再校验一次仓库身份
+      if (step.msgSource === "ai" && repo.value !== path) {
+        throw new Error("执行期间切换了仓库，工作流已中止");
+      }
       if (!msg) throw new Error("提交信息为空");
-      await api.commit(repo.value, msg);
-      await api.push(repo.value, st.branch); // 无上游自动 -u
+      await api.commit(path, msg);
+      await api.push(path, st.branch); // 无上游自动 -u
       return;
     }
   }
@@ -1462,6 +1519,34 @@ function askMergeInto(b: Branch) {
   });
 }
 
+// 强制推送：--force-with-lease 只在远程分支仍停在本地已知位置时才覆盖，
+// 比 --force 安全——他人推过新提交时本次会失败，而不是静默覆盖别人的工作
+function askForcePush() {
+  const upstream = branchList.value.find((x) => x.current && !x.remote)?.upstream;
+  if (!upstream) {
+    showError("当前分支没有上游分支，无法强制推送");
+    return;
+  }
+  openConfirm({
+    title: "强制推送 (--force-with-lease)",
+    body:
+      `将用本地 ${status.value?.branch ?? "当前分支"} 覆盖远程 ${upstream}，改写远程提交历史。` +
+      "若期间他人推送过新提交，本次推送会失败而不会覆盖他们的工作。",
+    ok: async () => {
+      await api.pushForce(repo.value, status.value?.branch ?? "");
+    },
+  });
+}
+
+// 放弃合并：冲突态下唯一的退出通道（git 会在没有合并进行中时拒绝）
+function askAbortMerge() {
+  openConfirm({
+    title: "放弃合并 (merge --abort)",
+    body: "将中止本次合并，工作区与 HEAD 回到合并开始前的状态。合并过程中已手动解决的冲突内容会一并丢弃。",
+    ok: () => api.mergeAbort(repo.value),
+  });
+}
+
 // ---- amend / 撤销上次提交（都在改写历史，确认框负责安全提示）----
 // "已推送"判定：分支有上游且 ahead==0，即本地与远程一致，最近一次提交就在远程
 function pushedHead(): boolean {
@@ -1478,7 +1563,7 @@ function askAmend(p: { message: string; stagedCount: number; onDone: () => void 
       (p.message ? "，提交信息更新为输入框内容" : "，保留原提交信息") +
       "。" +
       (pushedHead()
-        ? "注意：上次提交已推送到远程，amend 会改写历史，之后需在终端强制推送（git push --force-with-lease）才能更新远程分支。"
+        ? "注意：上次提交已推送到远程，amend 会改写历史，之后需强制推送（点顶部 ↑N 徽标里的「强制推送」）才能更新远程分支。"
         : ""),
     ok: async () => {
       await api.amend(repo.value, p.message || undefined);
@@ -1492,7 +1577,7 @@ function askUndoCommit() {
     body:
       "将撤销最近一次提交，其全部改动回到暂存区，工作区文件保持不变。" +
       (pushedHead()
-        ? "注意：该提交已推送到远程，撤销后本地会落后于远程，重新推送需在终端强制推送。"
+        ? "注意：该提交已推送到远程，撤销后本地会落后于远程，重新推送需强制推送（点顶部 ↑N 徽标里的「强制推送」）。"
         : ""),
     ok: () => api.undoCommit(repo.value),
   });
@@ -1601,6 +1686,40 @@ function endResize() {
 
 // v-focus：选项卡重命名输入框自动聚焦
 const vFocus = { mounted: (el: HTMLElement) => el.focus() };
+
+// ---- IME 守卫：输入法组词期间 Enter/Esc 属于输入法，不触发弹窗动作 ----
+// 关键：必须监听 keydown。Chromium 里确认候选词那次 keyup 的 e.isComposing 已变回 false，
+// 只在 keyup 上判断等于没判。下面这些是给模板直接引用的处理器常量（不是函数调用），
+// 模板里写 @keydown.enter.prevent="imeConfirmRename" 这样的裸标识符，
+// 避免内联表达式 imeGuard(fn) 把返回的函数当语句丢掉。
+function imeGuard(fn: () => void) {
+  return (e: KeyboardEvent) => {
+    if (e.isComposing) return; // 组词中：Enter/Esc 交给输入法
+    fn();
+  };
+}
+const imeConfirmCreateBranch = imeGuard(confirmCreateBranch);
+const imeConfirmCreateTag = imeGuard(confirmCreateTag);
+const imeConfirmGroupModal = imeGuard(confirmGroupModal);
+const imeConfirmRename = imeGuard(confirmRename);
+const imeConfirmBranchRename = imeGuard(confirmBranchRename);
+const imeConfirmFlow = imeGuard(confirmFlow);
+const imeDoClone = imeGuard(doClone);
+const imeCloseOpenModal = imeGuard(() => {
+  openModal.value = null;
+});
+const imeCloseCreateTag = imeGuard(() => {
+  showCreateTag.value = false;
+});
+const imeCloseGroupModal = imeGuard(() => {
+  groupModal.value = null;
+});
+const imeCloseRename = imeGuard(() => {
+  renameTarget.value = "";
+});
+const imeCloseBranchRename = imeGuard(() => {
+  branchRename.value = null;
+});
 
 onMounted(async () => {
   window.addEventListener("focus", () => refresh());
@@ -1987,6 +2106,7 @@ onMounted(async () => {
           @amend="askAmend"
           @undo="askUndoCommit"
           @stash-drop="askStashDrop"
+          @abort-merge="askAbortMerge"
           @discard="(t: DiffTarget) =>
             openConfirm({
               title: t.untracked ? '删除未跟踪文件' : '丢弃更改',
@@ -2000,11 +2120,15 @@ onMounted(async () => {
     <!-- 创建分支弹窗 -->
     <div
       v-if="showCreateBranch"
+      v-trap
       class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-create-branch-title"
       @click.self="showCreateBranch = false"
     >
       <div class="w-[400px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div class="mb-2 font-medium">新建分支</div>
+        <div id="dlg-create-branch-title" class="mb-2 font-medium">新建分支</div>
         <div class="flex gap-2">
           <Select
             v-model="newBranchPrefix"
@@ -2014,7 +2138,7 @@ onMounted(async () => {
               ...prefixes.map((p: string) => ({ value: p, label: p })),
             ]"
           />
-          <Input v-model="newBranchName" placeholder="分支名" @keyup.enter="confirmCreateBranch" />
+          <Input v-model="newBranchName" placeholder="分支名" @keydown.enter.prevent="imeConfirmCreateBranch" />
         </div>
         <p class="mt-2 text-[11px] text-muted-foreground">
           基于当前分支 {{ status?.branch || "—" }} 创建并自动切换。
@@ -2031,13 +2155,17 @@ onMounted(async () => {
     <!-- 打开仓库：本地 / 从远程克隆 -->
     <div
       v-if="openModal"
+      v-trap
       class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      :aria-labelledby="openModal === 'choose' ? 'dlg-open-repo-title' : 'dlg-clone-title'"
       @click.self="openModal = null"
     >
       <div class="w-[480px] rounded-lg border border-border bg-card p-4 shadow-xl">
         <!-- 选择入口 -->
         <template v-if="openModal === 'choose'">
-          <div class="mb-3 font-medium">打开仓库</div>
+          <div id="dlg-open-repo-title" class="mb-3 font-medium">打开仓库</div>
           <div class="grid grid-cols-2 gap-3">
             <button
               class="cursor-pointer rounded-md border border-border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-primary/5"
@@ -2058,16 +2186,27 @@ onMounted(async () => {
               <div class="text-sm font-medium">从远程克隆</div>
               <div class="mt-0.5 text-[11px] text-muted-foreground">输入 URL 克隆到本地并打开</div>
             </button>
+            <button
+              class="cursor-pointer rounded-md border border-border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-primary/5"
+              @click="
+                openModal = null;
+                initRepo();
+              "
+            >
+              <FolderPlus class="mb-1.5 size-5 text-primary" />
+              <div class="text-sm font-medium">初始化新仓库</div>
+              <div class="mt-0.5 text-[11px] text-muted-foreground">把选中的空目录 git init 后打开</div>
+            </button>
           </div>
         </template>
         <!-- 远程克隆表单 -->
         <template v-else>
-          <div class="mb-3 font-medium">从远程克隆</div>
+          <div id="dlg-clone-title" class="mb-3 font-medium">从远程克隆</div>
           <Input
             v-model="remoteUrlInput"
             v-focus
             placeholder="远程地址：https://host/user/repo.git 或 git@host:user/repo.git"
-            @keyup.esc="openModal = null"
+            @keydown.esc="imeCloseOpenModal"
           />
           <div class="mt-2 flex items-center gap-2">
             <Button variant="secondary" size="sm" class="shrink-0" @click="pickCloneParent">
@@ -2082,8 +2221,8 @@ onMounted(async () => {
             class="mt-2"
             placeholder="目录名（输入地址后自动推断，可修改）"
             @input="cloneNameTouched = true"
-            @keyup.enter="doClone"
-            @keyup.esc="openModal = null"
+            @keydown.enter.prevent="imeDoClone"
+            @keydown.esc="imeCloseOpenModal"
           />
           <div v-if="cloneErr" class="mt-2 text-[11px] text-destructive">
             {{ cloneErr }}
@@ -2114,23 +2253,27 @@ onMounted(async () => {
     <!-- 新建标签弹窗（target 为空 = 打在当前 HEAD） -->
     <div
       v-if="showCreateTag"
+      v-trap
       class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-create-tag-title"
       @click.self="showCreateTag = false"
     >
       <div class="w-[400px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div class="mb-2 font-medium">新建标签</div>
+        <div id="dlg-create-tag-title" class="mb-2 font-medium">新建标签</div>
         <Input
           v-model="newTagName"
           v-focus
           placeholder="标签名，如 v1.0.0"
-          @keyup.enter="confirmCreateTag"
-          @keyup.esc="showCreateTag = false"
+          @keydown.enter.prevent="imeConfirmCreateTag"
+          @keydown.esc="imeCloseCreateTag"
         />
         <Input
           v-model="newTagMsg"
           class="mt-2"
           placeholder="附注信息（可选，填写即创建附注标签）"
-          @keyup.esc="showCreateTag = false"
+          @keydown.esc="imeCloseCreateTag"
         />
         <p class="mt-2 text-[11px] text-muted-foreground">
           基于{{ tagTarget ? `提交 ${tagTarget.slice(0, 10)}` : `当前 HEAD（${status?.branch || "—"}）` }}创建。
@@ -2243,13 +2386,17 @@ onMounted(async () => {
     <!-- AI Review 报告弹窗 -->
     <div
       v-if="reviewOpen"
+      v-trap
       class="fixed inset-0 z-30 flex items-center justify-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-review-title"
       @click.self="reviewOpen = false"
     >
       <div class="flex max-h-[80vh] w-[640px] flex-col rounded-lg border border-border bg-card shadow-xl">
         <header class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
           <Bot class="size-4 text-primary" />
-          <span class="font-medium">AI Review · 未推送的 {{ status?.ahead }} 个提交</span>
+          <span id="dlg-review-title" class="font-medium">AI Review · 未推送的 {{ status?.ahead }} 个提交</span>
           <span class="flex-1" />
           <Button variant="ghost" size="icon" @click="reviewOpen = false"><X class="size-4" /></Button>
         </header>
@@ -2272,13 +2419,17 @@ onMounted(async () => {
     <!-- AI Release Notes 弹窗（复用 Review 骨架） -->
     <div
       v-if="notesOpen"
+      v-trap
       class="fixed inset-0 z-30 flex items-center justify-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-notes-title"
       @click.self="notesOpen = false"
     >
       <div class="flex max-h-[80vh] w-[640px] flex-col rounded-lg border border-border bg-card shadow-xl">
         <header class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
           <Sparkles class="size-4 text-primary" />
-          <span class="font-medium">AI Release Notes</span>
+          <span id="dlg-notes-title" class="font-medium">AI Release Notes</span>
           <Select v-model="notesFrom" class="w-56" :options="notesOptions" />
           <span class="flex-1" />
           <Button variant="ghost" size="icon" @click="notesOpen = false"><X class="size-4" /></Button>
@@ -2396,13 +2547,17 @@ onMounted(async () => {
     <!-- 分组管理弹窗：新建 / 重命名 / 删除 / 分配仓库 -->
     <div
       v-if="showGroupMgr"
+      v-trap
       class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-group-mgr-title"
       @click.self="showGroupMgr = false"
     >
       <div class="flex max-h-[75vh] w-[520px] flex-col rounded-lg border border-border bg-card shadow-xl">
         <header class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
           <FolderPlus class="size-4 text-primary" />
-          <span class="font-medium">分组管理</span>
+          <span id="dlg-group-mgr-title" class="font-medium">分组管理</span>
           <span class="flex-1" />
           <Button variant="ghost" size="icon" @click="showGroupMgr = false"><X class="size-4" /></Button>
         </header>
@@ -2484,17 +2639,21 @@ onMounted(async () => {
     <!-- 分组命名弹窗（新建 / 重命名共用） -->
     <div
       v-if="groupModal"
+      v-trap
       class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-group-name-title"
       @click.self="groupModal = null"
     >
       <div class="w-[360px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div class="mb-2 font-medium">{{ groupModal.mode === "create" ? "新建分组" : "重命名分组" }}</div>
+        <div id="dlg-group-name-title" class="mb-2 font-medium">{{ groupModal.mode === "create" ? "新建分组" : "重命名分组" }}</div>
         <Input
           v-model="groupNameDraft"
           v-focus
           placeholder="分组名，如：前端 / 后端"
-          @keyup.enter="confirmGroupModal"
-          @keyup.esc="groupModal = null"
+          @keydown.enter.prevent="imeConfirmGroupModal"
+          @keydown.esc="imeCloseGroupModal"
         />
         <div v-if="groupModalErr" class="mt-1.5 text-[11px] text-destructive">{{ groupModalErr }}</div>
         <div class="mt-3 flex justify-end gap-2">
@@ -2509,7 +2668,11 @@ onMounted(async () => {
     <!-- 仓库快速切换器（Ctrl+P）：模糊搜索 + 最近使用排序 -->
     <div
       v-if="showSwitcher"
+      v-trap
       class="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-[15vh]"
+      role="dialog"
+      aria-modal="true"
+      aria-label="仓库快速切换器"
       @click.self="showSwitcher = false"
     >
       <div class="w-[520px] overflow-hidden rounded-lg border border-border bg-card shadow-xl">
@@ -2555,16 +2718,20 @@ onMounted(async () => {
     <!-- 选项卡重命名弹窗 -->
     <div
       v-if="renameTarget"
+      v-trap
       class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-rename-tab-title"
       @click.self="renameTarget = ''"
     >
       <div class="w-[360px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div class="mb-2 font-medium">重命名仓库选项卡</div>
+        <div id="dlg-rename-tab-title" class="mb-2 font-medium">重命名仓库选项卡</div>
         <Input
           v-model="renameDraft"
           v-focus
-          @keyup.enter="confirmRename"
-          @keyup.esc="renameTarget = ''"
+          @keydown.enter.prevent="imeConfirmRename"
+          @keydown.esc="imeCloseRename"
         />
         <p class="mt-1.5 truncate text-[11px] text-muted-foreground">{{ renameTarget }}</p>
         <div class="mt-3 flex justify-end gap-2">
@@ -2577,16 +2744,20 @@ onMounted(async () => {
     <!-- 分支重命名弹窗（右键菜单触发） -->
     <div
       v-if="branchRename"
+      v-trap
       class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-rename-branch-title"
       @click.self="branchRename = null"
     >
       <div class="pop-in w-[360px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div class="mb-2 font-medium">重命名分支</div>
+        <div id="dlg-rename-branch-title" class="mb-2 font-medium">重命名分支</div>
         <Input
           v-model="branchRename.draft"
           v-focus
-          @keyup.enter="confirmBranchRename"
-          @keyup.esc="branchRename = null"
+          @keydown.enter.prevent="imeConfirmBranchRename"
+          @keydown.esc="imeCloseBranchRename"
         />
         <p class="mt-1.5 truncate text-[11px] text-muted-foreground">{{ branchRename.b.name }}</p>
         <div class="mt-3 flex justify-end gap-2">
@@ -2601,7 +2772,11 @@ onMounted(async () => {
     <!-- 分支快速切换器（Ctrl+B） -->
     <div
       v-if="showBranchSwitcher"
+      v-trap
       class="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-[15vh]"
+      role="dialog"
+      aria-modal="true"
+      aria-label="分支快速切换器"
       @click.self="showBranchSwitcher = false"
     >
       <div class="pop-in w-[480px] overflow-hidden rounded-lg border border-border bg-card shadow-xl">
@@ -2649,18 +2824,22 @@ onMounted(async () => {
     <!-- 工作流执行确认：步骤预览 + 运行时输入 -->
     <div
       v-if="wfConfirm"
+      v-trap
       class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-wf-confirm-title"
       @click.self="wfConfirm = null"
     >
       <div class="pop-in w-[440px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div class="mb-2 font-medium">执行工作流：{{ wfConfirm.wf.name }}</div>
+        <div id="dlg-wf-confirm-title" class="mb-2 font-medium">执行工作流：{{ wfConfirm.wf.name }}</div>
         <Input
           v-if="wfConfirm.needInput"
           v-model="wfInput"
           v-focus
           class="mb-2"
           placeholder="运行时输入的分支名（新建分支 / 运行时输入的切换与合并用）"
-          @keyup.enter="confirmFlow"
+          @keydown.enter.prevent="imeConfirmFlow"
         />
         <ol class="space-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
           <li v-for="(s, i) in wfConfirm.wf.steps" :key="i">
@@ -2689,11 +2868,15 @@ onMounted(async () => {
     <!-- 工作流执行进度：逐步打勾，失败标红停住 -->
     <div
       v-if="wfRun"
+      v-trap
       class="fixed inset-0 z-30 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-wf-run-title"
       @click.self="wfRun = null"
     >
       <div class="pop-in w-[440px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div class="mb-3 flex items-center gap-2 font-medium">
+        <div id="dlg-wf-run-title" class="mb-3 flex items-center gap-2 font-medium">
           <WorkflowIcon class="size-4 text-primary" />
           {{ wfRun.wf.name }}
           <span v-if="wfRun.start" class="text-[11px] font-normal text-muted-foreground">
@@ -2736,11 +2919,15 @@ onMounted(async () => {
     <!-- 错误确认框：居中展示，点确认才关 -->
     <div
       v-if="error"
+      v-trap
       class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-error-title"
       @click.self="error = ''"
     >
       <div class="w-[460px] rounded-lg border border-destructive/50 bg-card p-4 shadow-xl">
-        <div class="mb-1.5 font-medium text-destructive">操作失败</div>
+        <div id="dlg-error-title" class="mb-1.5 font-medium text-destructive">操作失败</div>
         <div>{{ error }}</div>
         <details v-if="errDetail" class="mt-2">
           <summary class="cursor-pointer text-xs text-muted-foreground">详细信息</summary>
@@ -2755,11 +2942,15 @@ onMounted(async () => {
     <!-- 危险操作确认框（删除分支/合并） -->
     <div
       v-if="confirmState"
+      v-trap
       class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-confirm-title"
       @click.self="confirmState = null"
     >
       <div class="w-[420px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div class="mb-1.5 font-medium">{{ confirmState.title }}</div>
+        <div id="dlg-confirm-title" class="mb-1.5 font-medium">{{ confirmState.title }}</div>
         <div>{{ confirmState.body }}</div>
         <label v-if="confirmState.checkbox" class="mt-2 flex cursor-pointer items-center gap-2 text-xs">
           <input v-model="confirmChecked" type="checkbox" class="accent-[var(--primary)]" />

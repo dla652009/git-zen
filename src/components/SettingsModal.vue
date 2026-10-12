@@ -217,6 +217,12 @@ const prefixList = computed(() =>
     .map((s) => s.trim())
     .filter(Boolean)
 );
+// 输入法组词中的 Enter 是确认候选词，不该顺手把半成品前缀加进去
+function onPrefixEnter(e: KeyboardEvent) {
+  if (e.isComposing) return;
+  e.preventDefault();
+  addPrefix();
+}
 function addPrefix() {
   const v = prefixInput.value.trim().replace(/[,，]/g, "");
   if (!v) return;
@@ -245,7 +251,14 @@ const NAV = [
 </script>
 
 <template>
-  <div class="fixed inset-0 z-30 flex items-center justify-center bg-black/50" @click.self="emit('close')">
+  <div
+    v-trap
+    class="fixed inset-0 z-30 flex items-center justify-center bg-black/50"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="dlg-settings-title"
+    @click.self="emit('close')"
+  >
     <!-- 880x520：热力图满幅 + 各页留白；窗口过小时回退 95vw/95vh（热力图横向滚动，内容区滚动） -->
     <div class="flex h-[520px] max-h-[95vh] w-[880px] max-w-[95vw] overflow-hidden rounded-lg border border-border bg-card shadow-xl">
       <!-- 左侧导航 -->
@@ -267,7 +280,7 @@ const NAV = [
       <!-- 右侧内容 -->
       <div class="flex min-w-0 flex-1 flex-col">
         <header class="flex shrink-0 items-center border-b border-border px-4 py-2.5">
-          <span class="font-medium">设置</span>
+          <span id="dlg-settings-title" class="font-medium">设置</span>
           <span class="flex-1" />
           <Button variant="ghost" size="icon" @click="emit('close')"><X class="size-4" /></Button>
         </header>
@@ -397,7 +410,7 @@ const NAV = [
                   v-model="prefixInput"
                   placeholder="输入前缀后回车，如 feat/"
                   class="min-w-[140px] flex-1 bg-transparent text-xs outline-none placeholder:text-muted-foreground"
-                  @keydown.enter.prevent="addPrefix"
+                  @keydown.enter="onPrefixEnter"
                   @keydown.,.prevent="addPrefix"
                   @blur="addPrefix"
                 />

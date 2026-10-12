@@ -254,10 +254,17 @@ onUnmounted(() => {
 
 <template>
   <!-- 固定高度，避免加载前后高度跳动 -->
-  <div class="fixed inset-0 z-20 flex items-center justify-center bg-black/50" @click.self="emit('close')">
+  <div
+    v-trap
+    class="fixed inset-0 z-20 flex items-center justify-center bg-black/50"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="dlg-diff-title"
+    @click.self="emit('close')"
+  >
     <div class="pop-in flex h-[80vh] w-[80vw] flex-col rounded-lg border border-border bg-card shadow-xl">
       <header class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-        <span class="truncate font-medium">
+        <span id="dlg-diff-title" class="truncate font-medium">
           {{ commit ? commit.subject : file?.path }}
         </span>
         <span class="shrink-0 text-xs text-muted-foreground">
