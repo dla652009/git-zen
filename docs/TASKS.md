@@ -380,6 +380,52 @@
 - 条件分支 / 循环 / 变量赋值。引擎级唯一的"智能"就是出错即停与干净时跳过提交，
   再往前一步就是自动化平台，违背「轻」定位
 
+## M13 全面审查修复（已完成）
+
+> 由 4 个并行审查单元（后端 / 前端架构 / UI 交互 / 功能缺口）产出报告，见 `docs/review/`。
+> 本轮只做「最小改动、收益最大」的第一、二批；结构性改造留待单独排期。
+
+### 13.1 正确性与安全（后端）
+
+- [x] `run()` 失败时回退 stdout —— 修掉高频失败路径弹**空白错误框**的问题
+- [x] 位置参数统一隔离：`check_positional()` + `--end-of-options`，覆盖 checkout / branch / tag / merge / push / config
+      （push 场景 `--` 无效，已单独处理）
+- [x] `git_push_force`：`--force-with-lease`，让 amend / 撤销提交的历史改写能闭环
+- [x] `git_merge_abort`：冲突态的退出通道
+- [x] `git_init`：新项目初始化入口
+- [x] `capabilities/default.json` 补 `core:window:allow-set-title` —— 窗口标题此前因 ACL 未授权静默失效
+
+### 13.2 并发与状态（前端）
+
+- [x] `refresh()` / `loadMorePage()` / `execStep()` 补**仓库身份守卫**（快照 + 赋值前比对）
+- [x] 工作流执行期锁定仓库，中途切走即中止，避免在错误仓库上 commit/push
+
+### 13.3 交互与可及性
+
+- [x] 组件级 Enter/Esc 统一 IME 守卫（`imeGuard()`，加在 `@keydown` 上）
+- [x] 单文件暂存/取消暂存改**常显按钮 + aria-label**（原 hover-only 裸 svg 让键盘与触屏用户无法操作）
+- [x] 重命名文件的 path 收敛（暂存/丢弃/diff 三入口此前集体失效）
+- [x] 打开仓库先校验再落库（不再产生永久坏选项卡）
+- [x] 冲突态横幅 + 「放弃合并」出口；冲突文案不再指向终端
+- [x] 图表行补原生 `title`
+
+### 13.4 弹层可及性（19 个模态弹层）
+
+- [x] 新增 `src/lib/focusTrap.ts` 的 `v-trap` 指令（`src/main.ts` 全局注册）：
+      打开时移入焦点、Tab/Shift+Tab 在弹层内循环、关闭时焦点归位；**刻意不管 Esc**
+      （全局 `closeTopOverlay()` 已有分层关闭链，重复处理会打架）
+- [x] 19 个模态弹层补 `v-trap` + `role="dialog"` + `aria-modal="true"` + 可访问名
+      （17 个用 `aria-labelledby` 引可见标题、2 个切换器无标题元素故用 `aria-label`）
+- [x] 4 个非模态层（`folderDd` / `dragOver` / `stashMenuOpen` / `ContextMenu` 覆盖层）**刻意排除**：
+      它们是透明点击层，加陷阱会抢焦点、破坏「点外部关闭」
+- [x] `FOCUSABLE_SELECTOR` 补 `summary` —— `<summary>` 默认可聚焦但没有 `tabindex` 属性，
+      漏了它会让错误框的「详细信息」键盘不可达（陷阱内只剩「确认」一个元素时 Tab 被永远拦在它身上）
+
+### 明确不做（本轮）
+
+- 拆 `App.vue`（1617 行 script）：纯重构、零功能收益，需单独排期并配套回归
+- git 调用超时、弹层 `role="dialog"` + focus trap：已完成（见 13.1 / 13.4）
+
 ## 需求池（无需关注，后面排期）
 
 ### Git 核心补全

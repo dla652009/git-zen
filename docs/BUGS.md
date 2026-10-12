@@ -151,3 +151,105 @@
       垂直贴底同理上翻。不再只压缩宽度
 - [x] 默认字体现代化 → 默认栈换成 Segoe UI Variable Text（Win11 原生，平滑清晰），回退 Segoe UI/雅黑
 - [x] 字体输入框改下拉 → ui/Select 组件，8 个热门选项（默认/Segoe UI Variable/雅黑/Inter/MiSans/HarmonyOS Sans/思源黑体/等宽），未安装的字体自动回退不会白屏
+
+## 全面审查修复（M13）
+
+> 来源：四个审查视角的独立报告 + Lead 逐条实证复现，见 `docs/review/`。以下每条都记根因，
+> 避免只贴症状。
+
+### 错误信息
+
+- [x] **失败时弹空白错误框** → 根因：`run()` 只取 `stderr` 当错误文本，但大量 git 失败信息走 **stdout**。
+      实证：`git commit -m x`（无暂存）exit=1、stdout 54 字符 `nothing to commit, working tree clean`、**stderr 长度 0**；
+      `git merge --edit side`（冲突）同样 stderr 为空。修复：stderr 为空时回落 stdout。
+      连带修复：`humanize()` 里 `nothing to commit` 与 `conflict` 两条规则此前**永不命中**（死规则），现已生效，
+      且冲突文案不再把用户赶去终端。
+
+### 选项注入（位置参数未隔离）
+
+- [x] **分支/标签/路径名以 `-` 开头会被 git 当选项** → 根因：用户输入直接放在位置参数位。
+      实证危害：`git checkout -f` **exit=0 并静默丢弃未提交改动**（数据丢失级）；`git checkout --detach` exit=0 进入游离 HEAD；
+      `git branch -m feature -f` exit=0 **静默不生效**（用户看到「成功」但分支没改名）。
+      修复：新增 `check_positional()`（拒绝 `-` 开头 / 含 `..` / 空 / 含换行），并在命令末尾加 `--end-of-options`。
+      **坑**：push 场景 `--` 无效（实测 `git push ... -- --mirror` 仍报 `src refspec ... does not match any`），
+      必须用 `--end-of-options`。
+- [x] **push 回退分支可注入 → 全量分支外泄** → 根因：`git_push` 在无上游时回退 `push -u origin <branch>`，
+      分支名叫 `--mirror` 时实测把**所有**分支推到远程（含用户从未打算公开的分支）。修复同上。
+- [x] `git_config_user` 无 `--` → 实测 `git config user.name --global` exit=0 且把 `--global` 写成用户名。
+
+### 并发与状态
+
+- [x] **刷新结果串仓库** → 根因：`refresh()` / `loadMorePage()` / `execStep()` 在 `await` 前没锁仓库身份，
+      而 Ctrl+Tab、Ctrl+1..9 直接调 `activate()` **绕过 busy 检查**。后果不只是视图脏：`cachePut()` 会把 A 仓库的
+      status/log 写进 B 的 LRU 槽位（切回来还是错数据），工作流甚至可能在**错误的仓库上 commit/push**。
+      修复：入口快照 `const path = repo.value`，赋值前 `if (repo.value !== path) return`。
+
+### 路径与文件
+
+- [x] **重命名文件在暂存/丢弃/diff 三入口集体失效** → 根因：porcelain 的 `R  a.txt -> b.txt` 被整串当作 path
+      （`line[3..]`），`git add -- "a.txt -> b.txt"` exit=128 `pathspec ... did not match any files`。
+      修复：`ChangesPanel.filePath()` 取 `.split(" -> ").pop()`（5 处调用点统一收敛）。
+- [x] **打开仓库不校验目录** → 根因：`openRepo()` 直接 `addRepo()` 落库，选错目录得到**永久坏选项卡**（每次点击都报错），
+      而拖拽入口 `openDropped()` 反而有校验——两条路径行为不一致。修复：先 `checkRepo()` 再落库。
+- [x] **没有 `git init` 入口** → 新项目无路可走，只能先去终端。修复：新增 `git_init` command + 打开仓库弹窗第三个入口。
+- [x] **仓库外路径可被读/删/写（越界）** → 根因：`git_discard`（untracked 分支）、`git_diff_untracked`、`git_write_file`、
+      `git_ignore_add` 都直接 `Path::new(&repo).join(&path)`，而 `join` 遇到 `..` 与绝对路径会**逃出仓库**。
+      端到端实证（Rust 真机复现）：`repo.join("../IMPORTANT-OUTSIDE")` → `is_dir()==true` →
+      **`remove_dir_all` 真的把仓库外那个目录连同 `important.txt` 一起删掉了**（数据丢失级）。
+      修复：新增 `check_repo_path()`（拒绝绝对路径/盘符/`..`/空/控制字符）。
+      **坑**：最初实现只检查**第一个** component，于是 `a/../../x` 这种「以正常目录开头」的逃逸被漏掉——
+      单测抓到了，改成遍历全部 component。正常路径（`src/App.vue`）零回归。
+
+### 健壮性与超时（第二轮遗留清理）
+
+- [x] **所有 git 子进程无超时** → 根因：`run()` 用 `cmd.output()` 阻塞等到底，Cargo.toml 也没有 `wait-timeout`。
+      fetch/pull/clone 在认证挂起或网络黑洞时会**永久卡住**，占满 `spawn_blocking` 线程池，
+      前端的加载遮罩再也消失不了。修复：`git.rs` 手写 `output_with_timeout()`，
+      **本地命令 120s / 网络命令（clone/fetch/pull/push/ls-remote）600s**，超时后 kill 子进程并返回中文提示。
+      **三个实现要点**（每一个都写成了单测）：
+      1. **两个管道必须并发读**：等进程退出再读，输出超过管道缓冲区（约 64KB）即死锁。
+      2. **不能靠 `join()` 收结果**：kill 只杀得掉直接子进程，git 派生的孙进程（`git-remote-https` /
+         `ssh` / 凭据助手）继承着管道写端，`join()` 会一直阻塞到它自己退出——超时形同虚设。
+         实测：`cmd /C ping -n 30` 被 kill 后读线程仍阻塞了 29.4 秒。
+         改用 `mpsc` + `recv_timeout` 限时收集（且消息带 is_err 标记，不能靠到达顺序区分，两个读线程是竞速的）。
+         修完测试耗时从 29.78s 降到 3.56s。
+      3. **读线程要边读边发**：`read_to_end` 只在 EOF 时返回，孙进程可能让管道**永不 EOF**，
+         那样输出永远送不回来（成功后静默丢掉整个 diff）。改为每读一块就 send，
+         外加一个 `None` 消息标记「该管道 EOF」，主线程集齐两个标记才提前结束。
+      4. **不引 `wait-timeout` crate**：它只解决 wait 超时，管道仍需自己并发读，
+         省不了几行却多一个依赖（项目刻意保持轻）。
+- [x] **`git_pull` 缺 `--no-edit`** → 根因：pull 内层会 merge，需要写合并信息时**弹出编辑器**，
+      而 GUI 下没有可用终端 → 挂死。`git_merge` 早就传了 `--no-edit`，pull 漏了。已补齐。
+- [x] **`git_ignore_add` 会把非 UTF-8 的 .gitignore 静默清空** → 根因：
+      `read_to_string(&f).unwrap_or_default()` 把 `Err(stream did not contain valid UTF-8)` 吞成空串，
+      随后写回 → **原内容全丢**（GBK 编码在中文 Windows 上很常见）。修复：读失败时报错而不是当空文件。
+- [x] **空仓库 / 游离 HEAD 下分支名被解析成提示语句** → 根因：`rest.split("...").next()` 在没有 `...` 时
+      原样返回整行，于是 `## No commits yet on master` → 分支名 `"No commits yet on master"`，
+      `## HEAD (no branch)` → `"HEAD (no branch)"`。后果：状态栏显示错乱，
+      且该值会被当作 `push` 的目标分支（首次推送时报 `invalid refspec`）。修复：专门处理这两种首行。
+- [x] **hex 校验放行空串** → `"".chars().all(is_ascii_hexdigit)` 恒为 true，四处校验都放行空 hash。
+      **定级更正（别夸大）**：实测把空串作为**真实 argv 元素**传给 show / revert / cherry-pick / log / rev-parse，
+      git **全部 exit=128**（`ambiguous argument ''` / `bad revision ''`），**并不会静默作用到 HEAD**。
+      所以这是健壮性问题（提前给中文报错，而不是把 git 的 ambiguous argument 抛给用户），不是静默改错目标。
+      **踩坑**：用 PowerShell 验证这条会得到**相反的错误结论** —— PS 会把空串参数整个吞掉，
+      实际执行的是「不带该参数」，而 `git show` 不带参数默认就是 HEAD（exit=0）。
+      要测空 argv 必须用 Rust/Node 这类如实传递参数的宿主。
+
+### 平台与 ACL
+
+- [x] **窗口标题静默失效** → 根因：`core:default` 只展开 `core:window:default`（读取权限），
+      **不含 `allow-set-title`**（写入权限），`setTitle` 被 ACL 拒绝且产生未捕获 promise rejection。
+      修复：`capabilities/default.json` 显式补 `core:window:allow-set-title`（1 行）+ 调用处 `.catch(() => {})`。
+- [x] **lib.rs 漏注册 command（AGENTS.md 硬规则 1 第四次踩中）** → 本轮新增 `git_push_force` / `git_merge_abort` 时
+      漏加 `invoke_handler` 条目；`cargo check` 完全不报错。同时 `git.rs` 残留一个游离 `}` 导致编译失败。
+      提醒：**改完 Rust 一定要 `cargo check`，新增 command 一定要顺手注册**。
+
+### 交互与可及性
+
+- [x] **组件级 Enter/Esc 没有 IME 守卫** → 中文组词时 Enter 是「确认候选词」，会误触发建分支/建标签/提交/切仓库/关弹窗。
+      全局 `keydown` 早有 `isComposing` 守卫，但组件级 13+ 处没有。
+      **关键坑：IME 组合期间 `keyup` 的 `isComposing` 已经回到 false**，所以守卫加在 `@keyup` 上无效，必须逐个改到 `@keydown`。
+      修复：新增统一的 `imeGuard()` 包装 + 三处漏网（仓库切换器、分支切换器、设置页前缀输入）。
+- [x] **单文件暂存按钮 hover-only** → 根因：`opacity-0 group-hover:opacity-100` 的裸 `<svg>`，
+      键盘与触屏用户**做不了单文件暂存**（核心操作不可达）。修复：改常显 `Button` + `aria-label`。
+- [x] 图表行缺 `title`（历史图/热力图）→ 补原生 `title`，不包 Tooltip 组件（数百行会卡）

@@ -206,3 +206,89 @@ amend 和撤销上次提交都要判断最近一次提交是否已在远程：**
 即本地与远程一致（上次提交就在远程），确认框给出改写历史/需强制推送的警告；
 ahead>0 或无上游则操作安全。撤销根提交（仓库唯一提交）时 HEAD~1 不存在会报错，
 前端按已加载提交数 ≤1 禁用按钮兜底。
+
+### 隔离位置参数要用 --end-of-options，`--` 不是万能的
+
+用户可控的名字（分支/标签/路径）落在位置参数位时，以 `-` 开头会被 git 当成选项——
+`git checkout -f` 会静默丢弃未提交改动，`git branch -m feature -f` 会 exit=0 但静默不生效。
+`--end-of-options` 能终止选项解析并保留位置参数语义，已验证对 checkout / branch -D/-m /
+tag -d / config / push -u / push --force-with-lease / push --delete / merge / show 全部有效，
+且带斜杠分支名、中文分支名、中文用户名**零回归**。
+
+**注意 push 是例外**：`git push ... -- <ref>` 里的 `<ref>` 仍被当作 refspec 解析，
+实测 `git push origin -- --mirror` 依然报 `src refspec --mirror does not match any`。
+push 的位置参数（远程名、refspec）必须靠 `check_positional()` 自己拦。
+
+### 强制推送用 --force-with-lease，不用 --force
+
+amend / 撤销提交会改写历史，之后普通 push 必被拒（non-fast-forward）。此时给的是
+`--force-with-lease`：只在远程分支仍停在本地已知位置时才覆盖，他人推过新提交就失败，
+而不是像 `--force` 那样静默覆盖别人的工作。UI 出口放在顶部 ↑N 徽标的下拉菜单里，
+amend/撤销的确认框文案也改成指向它（原先写的是「去终端执行」——应用内能做的事不该推给终端）。
+
+### keyup 的 isComposing 已经回 false，IME 守卫必须加在 keydown
+
+中文输入法组词时按 Enter 是「确认候选词」，不该触发提交/建分支/切仓库。全局 `keydown`
+监听有 `isComposing` 守卫，但组件级用了 `@keyup.enter` 的地方**守卫加在 keyup 上无效**：
+组合期间 keyup 触发时 `isComposing` 已回到 false。统一改用 `@keydown` + `imeGuard()` 包装。
+
+### Path::join 会逃出仓库，校验必须遍历全部 component
+
+`Path::new(&repo).join(user_path)` 不是"拼接"而是**路径解析**：`..` 会往上一级，
+绝对路径 / 盘符会**直接替换** base。实测 `repo.join("../IMPORTANT-OUTSIDE")` → `is_dir()==true`，
+接着 `remove_dir_all` 真的把仓库外那个目录连文件一起删了。凡是用户可控的 path 进
+文件系统操作（读/写/删），一律先过 `check_repo_path()`。
+
+**实现坑**：第一版只看了 `components().next()`（第一个 component），于是 `a/../../x`
+这种"以正常目录开头"的逃逸被漏掉——是单测抓出来的。必须 `for c in path.components()`
+遍历全部，对 `Prefix`/`RootDir`/`ParentDir` 三类一律拒绝。
+
+### 用 PowerShell 验证「空参数」会得出相反的错误结论
+
+PowerShell 会把空字符串参数**整个吞掉**，于是 `& git show ''` 实际执行的是 `git show`
+（不带参数）——而 `git show` 不带参数默认就是 HEAD，exit=0。据此会误判成
+「空 hash 会静默作用到 HEAD」，把一个 P3 健壮性问题写成数据安全问题。
+
+真实行为（用 Rust 的 `std::process::Command` 如实传空 argv 元素）：show / revert /
+cherry-pick / log / rev-parse **全部 exit=128**（`ambiguous argument ''` / `bad revision ''`）。
+
+**教训**：验证"空参数 / 含空格 / 含特殊字符的参数"时，测试宿主必须如实传递 argv，
+不能用会吞参数或做二次解析的 shell。同理适用于验证引号、`$`、反引号。
+
+### 所有外部进程调用都要有超时
+
+`cmd.output()` 会阻塞等到底。git 在认证挂起（凭据弹窗、ssh 卡住）或网络黑洞时不会自己退出，
+`spawn_blocking` 的线程会被永久占住，前端遮罩再也消失不了。`run()` 现在**本地 120s / 网络 600s** 超时。
+
+自己实现超时（`git.rs` 的 `output_with_timeout()`）时会撞上三个坑，都已有单测守着：
+
+1. **两个管道必须并发读**。先 `wait()` 再读管道，输出超过管道缓冲区（约 64KB）时子进程阻塞在写、
+   我们阻塞在读 → 死锁。std 的 `Command::output()` 内部就是这么做的，自己写容易漏。
+2. **不能靠线程 `join()` 收结果**。`kill()` 只杀得掉**直接子进程**；git 会派生孙进程
+   （`git-remote-https` / `ssh` / 凭据助手），它们**继承了管道写端**，`join()` 会一直阻塞到孙进程
+   自己退出——超时形同虚设。实测 `cmd /C ping -n 30`：kill 掉 `cmd.exe` 后读线程仍阻塞 **29.4 秒**。
+   正确做法是读线程把结果 `send` 回来，主线程 `recv_timeout` 限时收集，超时就直接放弃这些字节。
+3. **读线程要边读边发，不能读完了再发一次**。`read_to_end` 只在 EOF 时返回，而孙进程可能让管道
+   **永不 EOF**——那样这批输出就永远送不回来（成功后静默丢掉整个 diff）。
+   改成每读一块就 `send`，并用一个 `None` 消息标记「这个管道 EOF 了」，
+   主线程收到两个 EOF 标记才提前结束，否则按预算收尾。
+4. **别靠消息到达顺序区分 stdout/stderr**——两个读线程是竞速的，消息必须自带标记。
+
+另外：`wait-timeout` 这类 crate 只解决 wait 的超时，管道还是得自己并发读，省不了几行却多一个依赖，
+所以这里选择手写。
+
+### 焦点陷阱的可聚焦选择器：`<summary>` 没有 tabindex 属性
+
+写 focus trap 时用 `[tabindex]:not([tabindex="-1"])` 是匹配不到 `<details>` 的 `<summary>` 的——
+它由浏览器**隐式**赋予可聚焦性，DOM 上并没有 `tabindex` 属性，必须把 `summary` 单独写进选择器。
+
+这个漏项会造成**真回归**而不是小瑕疵：陷阱内若只剩一个被匹配到的元素（典型是错误框里
+「详细信息」+「确认」，只有「确认」匹配得上），`first === last`，Tab / Shift+Tab 双向都被拦回它自己，
+`summary` 彻底键盘不可达。**加焦点陷阱是在改键盘可达性，必须核对陷阱内每个原本可达的元素仍可达。**
+
+### read_to_string().unwrap_or_default() 会把文件清空
+
+`git_ignore_add` 原本 `read_to_string(&f).unwrap_or_default()`：遇到非 UTF-8 的 .gitignore
+（中文 Windows 上的 GBK 文件很常见）返回空串，随后把「空串 + 新行」写回 → **原内容全丢**。
+读文件失败要报错，不要降级成"当作空文件"，因为下一步往往是写回。
+
