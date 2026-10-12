@@ -15,17 +15,21 @@
 
 ```bash
 pnpm tauri dev                                # 开发（首次 Rust 编译 3-5 分钟）
+pnpm verify                                   # 一把梭：契约检查 + 对比度检查 + 类型检查 + 5 个前端自检
 npx vue-tsc --noEmit                          # 类型检查（pnpm build 内置）
+node scripts/check-contract.mjs               # 契约检查：command 注册 + gitApi↔git.rs 结构体镜像
+node scripts/check-contrast.mjs               # 对比度检查：7 套主题的 WCAG AA（改主题/配色后必跑）
 node --experimental-strip-types src/graph.test.ts        # 泳道布局自检（需 Node ≥22.6）
 node --experimental-strip-types src/lib/patch.test.ts    # diff 解析自检
 node --experimental-strip-types src/lib/overlays.test.ts # 浮层优先级自检
+node --experimental-strip-types src/lib/safeJson.test.ts # localStorage 安全解析自检
 node --experimental-strip-types src/workflow.test.ts     # 工作流数据层自检
 cd src-tauri && cargo check                   # Rust 检查
 cd src-tauri && cargo test --lib              # Rust 单测（路径校验/超时/大输出）
 pnpm tauri build                              # release（产物 src-tauri/target/release/）
 ```
 
-注意：四个 *.test.ts 自检脚本被 tsconfig exclude，不参与 vue-tsc；改布局/diff 解析/浮层优先级后手动跑。
+注意：五个 *.test.ts 自检脚本被 tsconfig exclude，不参与 vue-tsc；改布局/diff 解析/浮层优先级/localStorage 读写后手动跑（或直接 `pnpm verify`）。
 
 ## 硬性架构规则（违反会炸或埋雷）
 

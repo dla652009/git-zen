@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
+    "check:contract": "node scripts/check-contract.mjs",
+    "check:contrast": "node scripts/check-contrast.mjs",
+    "verify": "node scripts/check-contract.mjs && node scripts/check-contrast.mjs && vue-tsc --noEmit && node --experimental-strip-types src/graph.test.ts && node --experimental-strip-types src/lib/patch.test.ts && node --experimental-strip-types src/lib/overlays.test.ts && node --experimental-strip-types src/lib/safeJson.test.ts && node --experimental-strip-types src/workflow.test.ts",
     "tauri": "tauri"
   },
   "dependencies": {
