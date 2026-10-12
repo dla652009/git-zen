@@ -31,7 +31,7 @@ async function onClick(e: MouseEvent) {
 
 <template>
   <div
-    :class="cn('text-[13px] leading-relaxed', props.class)"
+    :class="cn('text-base leading-relaxed', props.class)"
     v-html="html"
     @click="onClick"
   />
@@ -41,7 +41,7 @@ async function onClick(e: MouseEvent) {
 :deep(h1),
 :deep(h2),
 :deep(h3) {
-  font-size: 13px;
+  font-size: var(--text-base);
   font-weight: 600;
   margin: 0.6em 0 0.3em;
 }
@@ -58,14 +58,14 @@ async function onClick(e: MouseEvent) {
 }
 :deep(code) {
   background: var(--muted);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 0.1em 0.4em;
-  font-family: Consolas, monospace;
-  font-size: 11.5px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
 }
 :deep(pre) {
   background: var(--muted);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   padding: 8px 10px;
   overflow-x: auto;
   margin: 0.5em 0;

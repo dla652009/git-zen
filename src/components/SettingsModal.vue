@@ -264,22 +264,22 @@ const NAV = [
 <template>
   <div
     v-trap
-    class="fixed inset-0 z-30 flex items-center justify-center bg-black/50"
+    class="fixed inset-0 z-30 flex items-center justify-center bg-scrim"
     role="dialog"
     aria-modal="true"
     aria-labelledby="dlg-settings-title"
     @click.self="emit('close')"
   >
     <!-- 880x520：热力图满幅 + 各页留白；窗口过小时回退 95vw/95vh（热力图横向滚动，内容区滚动） -->
-    <div class="flex h-[520px] max-h-[95vh] w-[880px] max-w-[95vw] overflow-hidden rounded-lg border border-border bg-card shadow-xl">
+    <div class="pop-in surface flex h-[520px] max-h-[95vh] w-[880px] max-w-[95vw] overflow-hidden rounded-lg">
       <!-- 左侧导航 -->
       <nav class="w-36 shrink-0 space-y-0.5 border-r border-border bg-muted/30 p-2">
         <button
           v-for="item in NAV"
           :key="item.id"
           :class="[
-            'flex w-full cursor-pointer items-center gap-2 rounded-md px-3 py-1.5 text-left text-[13px] transition-colors',
-            tab === item.id ? 'bg-primary/10 font-medium text-primary' : 'text-muted-foreground hover:bg-muted',
+            'flex w-full cursor-pointer items-center gap-2 rounded-sm px-3 py-1.5 text-left text-base transition-colors duration-fast',
+            tab === item.id ? 'bg-primary-soft font-medium text-primary' : 'text-muted-foreground hover:bg-hover',
           ]"
           @click="tab = item.id"
         >
@@ -300,7 +300,7 @@ const NAV = [
           <!-- 用户信息（仓库级） -->
           <template v-if="tab === 'user'">
             <section>
-              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">提交者信息</h3>
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">提交者信息</h3>
               <div class="space-y-3">
                 <div class="flex items-center gap-3">
                   <label class="w-16 shrink-0 text-xs text-muted-foreground">名字</label>
@@ -311,14 +311,14 @@ const NAV = [
                   <Input v-model="userEmail" placeholder="you@example.com" />
                 </div>
               </div>
-              <p class="mt-2 text-[11px] text-muted-foreground">
+              <p class="mt-2 text-xs text-muted-foreground">
                 保存到当前仓库的 git config（{{ props.repo || "未选择仓库" }}）
               </p>
             </section>
 
             <!-- 提交热力图（只统计上方邮箱名下的提交） -->
             <section v-if="props.repo">
-              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">提交热力图</h3>
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">提交热力图</h3>
               <CommitHeatmap :repo="props.repo" :author-email="userEmail" />
             </section>
           </template>
@@ -326,7 +326,7 @@ const NAV = [
           <!-- AI -->
           <template v-else-if="tab === 'ai'">
             <section>
-              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">AI 服务（OpenAI 兼容协议）</h3>
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">AI 服务（OpenAI 兼容协议）</h3>
               <div class="mb-4 flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2">
                 <span class="text-xs">启用 AI 功能</span>
                 <Switch v-model="aiOn" />
@@ -356,7 +356,7 @@ const NAV = [
                   />
                 </div>
               </div>
-              <p class="mt-2 text-[11px] text-muted-foreground">
+              <p class="mt-2 text-xs text-muted-foreground">
                 兼容 OpenAI/DeepSeek/Kimi 等任意兼容服务；本地 Ollama 填
                 http://localhost:11434/v1 且 Key 留空。Key 存本机 localStorage，不会上传。
               </p>
@@ -366,16 +366,16 @@ const NAV = [
           <!-- 外观 -->
           <template v-else-if="tab === 'appearance'">
             <section>
-              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">主题</h3>
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">主题</h3>
               <div class="grid grid-cols-4 gap-1.5">
                 <button
                   v-for="t in THEMES"
                   :key="t.id"
                   :class="[
-                    'cursor-pointer rounded-md border px-2 py-1.5 text-xs transition-colors',
+                    'cursor-pointer rounded-md border px-2 py-1.5 text-xs transition-colors duration-fast',
                     draft.theme === t.id
-                      ? 'border-primary/60 bg-primary/10 text-primary'
-                      : 'border-border hover:bg-muted',
+                      ? 'border-primary/60 bg-primary-soft text-primary'
+                      : 'border-border hover:bg-hover',
                   ]"
                   @click="draft.theme = t.id"
                 >
@@ -385,7 +385,7 @@ const NAV = [
             </section>
 
             <section>
-              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">字体</h3>
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">字体</h3>
               <div class="space-y-3">
                 <div class="flex items-center gap-3">
                   <label class="w-16 shrink-0 text-xs text-muted-foreground">UI 字体</label>
@@ -406,13 +406,13 @@ const NAV = [
           <!-- 个性化 -->
           <template v-else-if="tab === 'personal'">
             <section>
-              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">分支前缀（可多个）</h3>
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">分支前缀（可多个）</h3>
               <!-- tag 式编辑：回车/逗号添加，点 × 删除；存储仍是逗号分隔字符串，创建弹窗下拉自动同步 -->
               <div class="flex min-h-[32px] flex-wrap items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5">
                 <span
                   v-for="p in prefixList"
                   :key="p"
-                  class="flex items-center gap-1 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[11px] text-primary"
+                  class="flex items-center gap-1 rounded-xs bg-primary-soft px-1.5 py-0.5 font-mono text-xs text-primary"
                 >
                   {{ p }}
                   <X class="size-3 cursor-pointer hover:text-destructive" @click="removePrefix(p)" />
@@ -426,13 +426,13 @@ const NAV = [
                   @blur="addPrefix"
                 />
               </div>
-              <p class="mt-2 text-[11px] text-muted-foreground">
+              <p class="mt-2 text-xs text-muted-foreground">
                 新建分支弹窗的前缀下拉会同步这里；名字已含前缀时不重复加。
               </p>
             </section>
 
             <section>
-              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">性能</h3>
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">性能</h3>
               <div class="flex items-center gap-3">
                 <label class="w-16 shrink-0 text-xs text-muted-foreground">切换缓存</label>
                 <input
@@ -444,7 +444,7 @@ const NAV = [
                 />
                 <span class="w-14 text-right text-xs">{{ draft.repoCacheSize }} 个仓库</span>
               </div>
-              <p class="mt-2 text-[11px] text-muted-foreground">
+              <p class="mt-2 text-xs text-muted-foreground">
                 最近打开的仓库切换时直接恢复快照秒开；开了很多仓库时调大更顺。只存内存不落盘，调大对内存影响很小。
               </p>
             </section>
@@ -454,8 +454,8 @@ const NAV = [
           <!-- 工作流 -->
           <template v-else-if="tab === 'workflow'">
             <section>
-              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">什么是工作流</h3>
-              <p class="mb-4 text-[11px] leading-relaxed text-muted-foreground">
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">什么是工作流</h3>
+              <p class="mb-4 text-xs leading-relaxed text-muted-foreground">
                 把「切分支 → 拉取 → 合并 → 推送」这类固定套路串起来，工具栏
                 <WorkflowIcon class="inline size-3.5 align-[-2px] text-primary" /> 按钮下拉一键执行。
                 步骤自上而下顺序执行，任一步失败立即中止；「提交推送」在有改动时自动全部暂存，无改动时跳过。
@@ -469,7 +469,7 @@ const NAV = [
               <div v-for="w in workflows" :key="w.id" class="mb-3 rounded-md border border-border">
                 <div class="flex items-center gap-2 px-3 py-2">
                   <button
-                    class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left text-[13px]"
+                    class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left text-base"
                     @click="wfExpanded = wfExpanded === w.id ? '' : w.id"
                   >
                     <ChevronDown
@@ -478,13 +478,13 @@ const NAV = [
                     />
                     <WorkflowIcon class="size-3.5 shrink-0 text-primary" />
                     <span class="truncate font-medium">{{ w.name }}</span>
-                    <span class="shrink-0 text-[11px] text-muted-foreground">{{ w.steps.length }} 步</span>
+                    <span class="shrink-0 text-xs text-muted-foreground">{{ w.steps.length }} 步</span>
                   </button>
-                  <Button variant="ghost" size="sm" class="h-6 px-2 text-[11px]" @click="renameFlow(w)">重命名</Button>
+                  <Button variant="ghost" size="sm" class="h-6 px-2 text-xs" @click="renameFlow(w)">重命名</Button>
                   <Button
                     variant="ghost"
                     size="sm"
-                    class="h-6 px-2 text-[11px]"
+                    class="h-6 px-2 text-xs"
                     @click="openDeleteFlow(w)"
                   >
                     删除
@@ -499,7 +499,7 @@ const NAV = [
                   >
                     <div class="flex items-center gap-2">
                       <span
-                        class="grid size-5 shrink-0 place-items-center rounded bg-primary/15 text-[10px] font-medium text-primary"
+                        class="grid size-5 shrink-0 place-items-center rounded-xs bg-primary-soft text-2xs font-medium text-primary"
                       >{{ si + 1 }}</span>
                       <span class="w-16 shrink-0 text-xs font-medium">{{ KIND_LABELS[s.kind] }}</span>
                       <div class="flex min-w-0 flex-1 items-center gap-1.5">
@@ -517,7 +517,7 @@ const NAV = [
                             placeholder="分支名"
                             @update:model-value="(v: string | number) => { const r = refOf(s); if (r) r.name = String(v); }"
                           />
-                          <span v-else class="min-w-0 flex-1 text-[11px] text-muted-foreground">
+                          <span v-else class="min-w-0 flex-1 text-xs text-muted-foreground">
                             {{ refOf(s)!.mode === "start" ? "使用执行开始时的当前分支" : "执行时填写分支名" }}
                           </span>
                         </template>
@@ -535,7 +535,7 @@ const NAV = [
                             placeholder="固定提交信息"
                             @update:model-value="(v: string | number) => (s.message = String(v))"
                           />
-                          <span v-else class="min-w-0 flex-1 text-[11px] text-muted-foreground">执行时由 AI 读取暂存区 diff 生成</span>
+                          <span v-else class="min-w-0 flex-1 text-xs text-muted-foreground">执行时由 AI 读取暂存区 diff 生成</span>
                         </template>
                         <Input
                           v-else-if="s.kind === 'createBranch'"
@@ -546,7 +546,7 @@ const NAV = [
                         />
                         <span
                           v-else
-                          class="min-w-0 flex-1 text-[11px] text-muted-foreground"
+                          class="min-w-0 flex-1 text-xs text-muted-foreground"
                         >{{ s.kind === "pull" ? "拉取并合并远程更新" : s.kind === "push" ? "推送当前分支（无上游自动 -u）" : "回到执行开始时所在的分支" }}</span>
                       </div>
                       <div class="ml-auto flex shrink-0 items-center gap-0.5">
@@ -576,7 +576,7 @@ const NAV = [
                   </div>
                   <!-- 添加步骤 -->
                   <div class="rounded-md border border-dashed border-border px-2.5 py-2.5">
-                    <div class="mb-2 text-[11px] text-muted-foreground">添加步骤</div>
+                    <div class="mb-2 text-xs text-muted-foreground">添加步骤</div>
                     <div class="flex flex-wrap items-center gap-1.5">
                       <Select v-model="newStepKind" class="h-8 w-36 shrink-0 text-xs" :options="STEP_KIND_OPTIONS" />
                       <template v-if="newStepKind === 'checkout' || newStepKind === 'merge'">
@@ -616,9 +616,9 @@ const NAV = [
           <!-- 远程 -->
           <template v-else-if="tab === 'remote'">
             <section>
-              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">远程仓库路径</h3>
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">远程仓库路径</h3>
               <Input v-model="remoteLink" :placeholder="originUrl || '未配置 origin 远程'" />
-              <p class="mt-2 text-[11px] text-muted-foreground">
+              <p class="mt-2 text-xs text-muted-foreground">
                 默认填充 origin URL（{{ originUrl || "未配置" }}），可改为任意网页链接；
                 主页状态栏「远程」按钮会打开它。清空保存则恢复自动推断。
               </p>
@@ -628,14 +628,14 @@ const NAV = [
           <!-- 快捷键 -->
           <template v-else>
             <section>
-              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">快捷键列表</h3>
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">快捷键列表</h3>
               <div class="divide-y divide-border rounded-md border border-border">
                 <div
                   v-for="[keys, desc] in SHORTCUTS"
                   :key="keys"
                   class="flex items-center justify-between gap-4 px-3 py-2"
                 >
-                  <span class="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]">{{ keys }}</span>
+                  <span class="shrink-0 rounded-xs bg-muted px-1.5 py-0.5 font-mono text-xs">{{ keys }}</span>
                   <span class="text-right text-xs text-muted-foreground">{{ desc }}</span>
                 </div>
               </div>
@@ -645,7 +645,7 @@ const NAV = [
 
         <!-- 底部操作条 -->
         <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-2.5">
-          <span v-if="verifyErr" class="mr-auto text-[11px] text-destructive">{{ verifyErr }}</span>
+          <span v-if="verifyErr" class="mr-auto text-xs text-destructive">{{ verifyErr }}</span>
           <Button variant="ghost" size="sm" :disabled="verifying" @click="emit('close')">取消</Button>
           <Button variant="default" size="sm" :disabled="verifying" @click="save">
             <Spinner v-if="verifying" :size="14" />
@@ -661,14 +661,14 @@ const NAV = [
     <div
       v-if="delFlow"
       v-trap
-      class="fixed inset-0 z-50 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-50 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-wf-del-title"
       @click.self="delFlow = null"
       @keydown.esc.stop="delFlow = null"
     >
-      <div class="w-[420px] rounded-lg border border-border bg-card p-4 shadow-xl">
+      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
         <div id="dlg-wf-del-title" class="mb-1.5 font-medium">删除工作流</div>
         <div>确定删除「{{ delFlow.name }}」？删除后不可恢复。</div>
         <div class="mt-3 flex justify-end gap-2">

@@ -500,6 +500,16 @@ localStorage.removeItem("gz.tabGroupsCollapsed"); // 旧版折叠状态键，废
 syncBar();
 
 const repoByPath = computed(() => new Map(repos.value.map((r) => [r.path, r])));
+// 顶部只显示「父目录 › 仓库名」：整条路径太长会把右侧工具挤走，完整路径留给 tooltip
+const repoCrumb = computed(() => {
+  const p = repo.value;
+  if (!p) return null;
+  const parts = p.split(/[\\/]/).filter(Boolean);
+  return {
+    parent: parts.length > 1 ? parts[parts.length - 2] : "",
+    name: repoByPath.value.get(p)?.name ?? parts[parts.length - 1] ?? p,
+  };
+});
 const groupCount = (g: string) => repos.value.filter((r) => r.group === g).length;
 const isGroupActive = (g: string) => repos.value.some((r) => r.group === g && r.path === repo.value);
 
@@ -1925,19 +1935,28 @@ onUnmounted(() => {
     <Transition name="fade">
       <div
         v-if="refreshing"
-        class="absolute inset-0 z-20 grid place-items-center bg-background/50 text-sm"
+        class="absolute inset-0 z-20 grid place-items-center bg-background/50 text-sm backdrop-blur-[2px]"
       >
         <Spinner label="刷新中…" />
       </div>
     </Transition>
-    <header class="flex items-center gap-2 border-b border-border px-3 py-2">
+    <!-- 窗口镶边（header / 选项卡栏 / footer）统一用卡片色，工作区回落画布色：
+         选项卡的「连着下面」才好成立 —— 激活页签跟内容同色，才像真的嵌进去 -->
+    <header class="flex items-center gap-2 border-b border-border bg-card px-3 py-2">
       <Tooltip text="打开仓库">
-        <Button variant="ghost" size="sm" aria-label="打开仓库" @click="openModal = 'choose'">
+        <Button variant="ghost" aria-label="打开仓库" @click="openModal = 'choose'">
           <FolderOpen class="size-4" />
           打开
         </Button>
       </Tooltip>
-      <span class="max-w-[340px] truncate text-muted-foreground"><Tooltip :text="repo">{{ repo }}</Tooltip></span>
+      <Tooltip v-if="repoCrumb" :text="repo">
+        <span class="flex min-w-0 max-w-[420px] items-baseline gap-1.5 text-xs">
+          <span v-if="repoCrumb.parent" class="shrink-0 truncate text-muted-foreground">{{ repoCrumb.parent }}</span>
+          <span v-if="repoCrumb.parent" class="shrink-0 text-muted-foreground">›</span>
+          <span class="truncate font-medium text-foreground">{{ repoCrumb.name }}</span>
+        </span>
+      </Tooltip>
+      <span v-else class="text-xs text-muted-foreground">未打开仓库</span>
       <span class="flex-1" />
       <Badge v-if="status?.behind" variant="warning">↓{{ status.behind }}</Badge>
       <Tooltip v-if="status?.ahead" text="未推送的提交：Review 或放弃">
@@ -1946,7 +1965,7 @@ onUnmounted(() => {
           aria-label="未推送提交菜单"
           @click.stop="aheadMenu = { x: $event.clientX, y: $event.clientY }"
         >
-          <Badge variant="info" class="hover:bg-primary/30">↑{{ status.ahead }}</Badge>
+          <Badge variant="info" class="transition-colors duration-fast hover:bg-primary/30">↑{{ status.ahead }}</Badge>
         </button>
       </Tooltip>
       <span class="mx-1 h-4 w-px bg-border" />
@@ -1955,15 +1974,17 @@ onUnmounted(() => {
           <GitBranchPlus class="size-4" />
         </Button>
       </Tooltip>
+      <!-- 顶部这排统一用默认高度：图标按钮是 h-8，文字按钮若用 sm(h-7) 会在同一行里
+           差 4px，对齐看得很明显；32px 也是更舒服的点击目标 -->
       <Tooltip text="拉取并合并远程更新">
-        <Button size="sm" :disabled="!repo || busy" @click="doPull">
+        <Button :disabled="!repo || busy" @click="doPull">
           <Spinner v-if="runningAction === 'pull'" :size="14" />
           <ArrowDownToLine v-else class="size-3.5" />
           Pull
         </Button>
       </Tooltip>
       <Tooltip text="推送（无上游自动建立跟踪）">
-        <Button size="sm" :disabled="!repo || busy" @click="doPush">
+        <Button :disabled="!repo || busy" @click="doPush">
           <Spinner v-if="runningAction === 'push'" :size="14" />
           <ArrowUpFromLine v-else class="size-3.5" />
           Push
@@ -2000,7 +2021,7 @@ onUnmounted(() => {
     </header>
 
     <!-- 仓库选项卡栏：文件夹（分组）+ 未分组仓库，可拖动排序；最右侧按钮打开分组管理 -->
-    <div class="flex items-end border-b border-border">
+    <div class="flex items-end border-b border-border bg-card">
       <VueDraggable
         v-model="barOrder"
         :animation="150"
@@ -2021,13 +2042,13 @@ onUnmounted(() => {
             v-if="item.kind === 'group'"
             data-group-folder
             :data-group-folder-name="item.name"
-            class="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap select-none"
+            class="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors duration-fast select-none"
             :class="[
               dragOverGroup === item.name
                 ? 'border-primary/60 bg-primary/10 text-primary ring-1 ring-primary/40'
                 : isGroupActive(item.name)
-                  ? 'border-border bg-card font-medium text-foreground'
-                  : 'border-transparent text-muted-foreground hover:bg-muted/60',
+                  ? 'border-border bg-background font-medium text-foreground'
+                  : 'border-transparent text-muted-foreground transition-colors duration-fast hover:bg-hover',
             ]"
             :title="`分组「${item.name}」· ${groupCount(item.name)} 个仓库 · 点击展开，拖仓库到此处可收进分组`"
             @click.stop="toggleFolder(item.name, $event)"
@@ -2043,11 +2064,11 @@ onUnmounted(() => {
           <div
             v-else
             :data-repo-path="item.path"
-            class="group/tab flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors select-none"
+            class="group/tab flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors duration-fast select-none"
             :class="[
               item.path === repo
-                ? 'border-border bg-card font-medium text-foreground shadow-sm hover:bg-card'
-                : 'border-transparent text-muted-foreground',
+                ? 'border-border bg-background font-medium text-foreground'
+                : 'border-transparent text-muted-foreground transition-colors duration-fast hover:bg-hover',
             ]"
             @click="switchRepo(item.path)"
             @contextmenu.prevent="tabCtx = { x: $event.clientX, y: $event.clientY, path: item.path }"
@@ -2060,7 +2081,7 @@ onUnmounted(() => {
               <span class="max-w-[120px] truncate">{{ repoByPath.get(item.path)?.name }}</span>
             </Tooltip>
             <X
-              class="size-3 opacity-0 transition-opacity group-hover/tab:opacity-60 hover:!opacity-100 hover:text-destructive"
+              class="size-3 opacity-0 transition-opacity duration-fast group-hover/tab:opacity-60 hover:!opacity-100 hover:text-destructive"
               aria-label="关闭仓库选项卡"
               @mousedown.stop
               @click.stop="askCloseTab(item.path)"
@@ -2082,7 +2103,7 @@ onUnmounted(() => {
         class="shrink-0 overflow-y-auto border-r border-border"
         :style="{ width: leftW + 'px' }"
       >
-        <div class="px-3 pt-3 pb-1.5 text-[11px] tracking-wide text-muted-foreground">
+        <div class="px-3 pt-3.5 pb-2 text-2xs font-semibold tracking-wide text-muted-foreground">
           分支
         </div>
         <!-- 分支模糊搜索（创建分支在工具栏按钮） -->
@@ -2094,13 +2115,13 @@ onUnmounted(() => {
         </div>
         <!-- 本地分支组：一级栏，图标+强调 -->
         <div
-          class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium select-none hover:bg-muted"
+          class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-base font-medium select-none transition-colors duration-fast hover:bg-hover"
           @click="toggleGroup('local')"
         >
-          <ChevronDown class="size-3 transition-transform" :class="collapsedGroups.has('local') && '-rotate-90'" />
+          <ChevronDown class="size-3 transition-transform duration-fast" :class="collapsedGroups.has('local') && '-rotate-90'" />
           <GitBranch class="size-3.5" />
           本地
-          <span class="text-[11px] font-normal text-muted-foreground">{{ localBranches.length }}</span>
+          <span class="text-xs font-normal text-muted-foreground">{{ localBranches.length }}</span>
         </div>
         <BranchTree
           v-if="!collapsedGroups.has('local')"
@@ -2113,13 +2134,13 @@ onUnmounted(() => {
         <!-- 远程分组：一级栏图标+强调，默认收起 -->
         <template v-for="[prefix, list] in remoteGroups" :key="prefix">
           <div
-            class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium select-none hover:bg-muted"
+            class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-base font-medium select-none transition-colors duration-fast hover:bg-hover"
             @click="toggleRemote(prefix)"
           >
-            <ChevronDown class="size-3 transition-transform" :class="!openRemotes.has(prefix) && '-rotate-90'" />
+            <ChevronDown class="size-3 transition-transform duration-fast" :class="!openRemotes.has(prefix) && '-rotate-90'" />
             <Cloud class="size-3.5" />
             {{ prefix }}
-            <span class="text-[11px] font-normal text-muted-foreground">{{ list.length }}</span>
+            <span class="text-xs font-normal text-muted-foreground">{{ list.length }}</span>
           </div>
           <BranchTree
             v-if="openRemotes.has(prefix)"
@@ -2132,21 +2153,21 @@ onUnmounted(() => {
 
         <!-- 标签组：右键组头出 新建/AI Release Notes，右键行出 推送/删除/复制 -->
         <div
-          class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium select-none hover:bg-muted"
+          class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-base font-medium select-none transition-colors duration-fast hover:bg-hover"
           title="右键：新建标签 / AI Release Notes"
           @click="toggleGroup('gz:tags')"
           @contextmenu.prevent="tagHeaderMenu = { x: $event.clientX, y: $event.clientY }"
         >
-          <ChevronDown class="size-3 transition-transform" :class="collapsedGroups.has('gz:tags') && '-rotate-90'" />
+          <ChevronDown class="size-3 transition-transform duration-fast" :class="collapsedGroups.has('gz:tags') && '-rotate-90'" />
           <Tag class="size-3.5" />
           标签
-          <span class="ml-auto text-[11px] font-normal text-muted-foreground">{{ tags.length }}</span>
+          <span class="ml-auto text-xs font-normal text-muted-foreground">{{ tags.length }}</span>
         </div>
         <ul v-if="!collapsedGroups.has('gz:tags')" class="pb-1">
           <li
             v-for="t in tagsFiltered"
             :key="t.name"
-            class="flex cursor-pointer items-center gap-1 py-1.5 pr-3 pl-6 hover:bg-muted"
+            class="flex cursor-pointer items-center gap-1 py-1.5 pr-3 pl-6 transition-colors duration-fast hover:bg-hover"
             :title="`${t.annotated ? '附注标签' : '轻量标签'} · ${t.date} · 指向 ${t.target.slice(0, 10)}${t.message ? '\n' + t.message : ''}（右键更多操作）`"
             @contextmenu.prevent="tagMenu = { x: $event.clientX, y: $event.clientY, name: t.name }"
           >
@@ -2160,7 +2181,7 @@ onUnmounted(() => {
 
       <!-- 左把手：拖宽 / 双击折叠（Ctrl+Shift+L）；折叠后点箭头展开 -->
       <div
-        class="flex shrink-0 cursor-col-resize items-center justify-center hover:bg-primary/40"
+        class="flex shrink-0 cursor-col-resize items-center justify-center transition-colors duration-fast hover:bg-primary/40"
         :class="leftFold ? 'w-3' : 'w-1'"
         :title="leftFold ? '展开侧栏（Ctrl+Shift+L）' : '拖宽 · 双击折叠'"
         @dblclick="toggleFold('l')"
@@ -2177,7 +2198,7 @@ onUnmounted(() => {
 
       <!-- 历史（滚动与虚拟化内聚在 HistoryGraph，App 只接加载更多） -->
       <section class="flex min-w-0 flex-1 flex-col">
-        <div class="flex items-center gap-2 border-b border-border px-2 py-1.5">
+        <div class="flex items-center gap-2 border-b border-border px-2.5 py-2">
           <!-- 视图范围：当前分支 / 所有分支 -->
           <Select
             v-model="historyMode"
@@ -2190,11 +2211,11 @@ onUnmounted(() => {
           <!-- 文件路径过滤 chip，× 退出 -->
           <div
             v-if="historyFilePath"
-            class="flex shrink-0 cursor-default items-center gap-1 rounded bg-muted px-2 py-1 text-[11px]"
+            class="flex shrink-0 cursor-default items-center gap-1 rounded-xs bg-muted px-2 py-1 text-xs"
             :title="`历史已按文件过滤：${historyFilePath}`"
           >
             {{ historyFilePath.split(/[\\/]/).pop() }}
-            <X class="size-3 cursor-pointer hover:text-destructive" @click="historyFilePath = null" />
+            <X class="size-3 cursor-pointer transition-colors duration-fast hover:text-destructive" @click="historyFilePath = null" />
           </div>
           <div class="relative min-w-0 flex-1">
             <Search class="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -2206,7 +2227,7 @@ onUnmounted(() => {
           <Transition name="fade">
             <div
               v-if="historyLoading"
-              class="absolute inset-0 z-10 grid place-items-center bg-background/60 text-sm"
+              class="absolute inset-0 z-10 grid place-items-center bg-background/60 text-sm backdrop-blur-[2px]"
             >
               <Spinner label="加载中…" />
             </div>
@@ -2221,16 +2242,25 @@ onUnmounted(() => {
             @commit-menu="onCommitMenu"
             @load-more="loadMorePage"
           />
-          <div v-else-if="repo" class="grid h-full place-items-center text-muted-foreground">
-            暂无提交
+          <!-- 空态：这是用户看到的第一屏，值得比别的空态多花一点功夫 -->
+          <div v-else-if="repo" class="grid h-full place-items-center">
+            <div class="flex flex-col items-center gap-2.5 text-center">
+              <div class="grid size-12 place-items-center rounded-lg bg-primary-soft">
+                <GitBranch class="size-6 text-primary" />
+              </div>
+              <div class="text-sm text-muted-foreground">这个仓库还没有提交</div>
+              <div class="text-xs text-muted-foreground">在右侧暂存改动、写好提交信息，就能创建第一个提交</div>
+            </div>
           </div>
-          <!-- 空态首屏：欢迎 + 最近仓库 + 拖拽提示 -->
+          <!-- 首屏：欢迎 + 最近仓库 + 拖拽提示 -->
           <div v-else class="grid h-full place-items-center">
-            <div class="flex w-[380px] flex-col items-center gap-4 text-center">
-              <GitBranch class="size-10 text-primary/40" />
+            <div class="flex w-[420px] flex-col items-center gap-5 text-center">
+              <div class="grid size-14 place-items-center rounded-lg bg-primary-soft">
+                <GitBranch class="size-7 text-primary" />
+              </div>
               <div>
-                <div class="font-medium">打开一个 Git 仓库开始</div>
-                <div class="mt-1 text-xs text-muted-foreground">
+                <div class="text-lg font-semibold">打开一个 Git 仓库开始</div>
+                <div class="mt-1.5 text-xs text-muted-foreground">
                   把仓库文件夹拖进窗口，或从下面选择最近打开的
                 </div>
               </div>
@@ -2241,13 +2271,13 @@ onUnmounted(() => {
               <ul v-if="repos.length" class="max-h-44 w-full space-y-0.5 overflow-y-auto text-left">
                 <li v-for="r in repos.slice(0, 8)" :key="r.path">
                   <button
-                    class="flex w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1.5 text-xs hover:bg-muted"
+                    class="flex w-full cursor-pointer items-center gap-2 rounded-sm px-2.5 py-1.5 text-xs transition-colors duration-fast hover:bg-hover"
                     :title="r.path"
                     @click="switchRepo(r.path)"
                   >
-                    <span class="size-1.5 shrink-0 rounded-full bg-border" />
+                    <span class="size-1.5 shrink-0 rounded-full bg-primary/40" />
                     <span class="shrink-0 font-medium">{{ r.name }}</span>
-                    <span class="min-w-0 flex-1 truncate text-right text-[10.5px] text-muted-foreground">{{ r.path }}</span>
+                    <span class="min-w-0 flex-1 truncate text-right text-xs text-muted-foreground">{{ r.path }}</span>
                   </button>
                 </li>
               </ul>
@@ -2258,7 +2288,7 @@ onUnmounted(() => {
 
       <!-- 右把手：拖宽 / 双击折叠（Ctrl+Shift+R）；折叠后点箭头展开 -->
       <div
-        class="flex shrink-0 cursor-col-resize items-center justify-center hover:bg-primary/40"
+        class="flex shrink-0 cursor-col-resize items-center justify-center transition-colors duration-fast hover:bg-primary/40"
         :class="rightFold ? 'w-3' : 'w-1'"
         :title="rightFold ? '展开侧栏（Ctrl+Shift+R）' : '拖宽 · 双击折叠'"
         @dblclick="toggleFold('r')"
@@ -2307,14 +2337,14 @@ onUnmounted(() => {
     <div
       v-if="showCreateBranch"
       v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-create-branch-title"
       @click.self="showCreateBranch = false"
     >
-      <div class="w-[400px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div id="dlg-create-branch-title" class="mb-2 font-medium">新建分支</div>
+      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
+        <div id="dlg-create-branch-title" class="mb-3 text-base font-semibold">新建分支</div>
         <div class="flex gap-2">
           <Select
             v-model="newBranchPrefix"
@@ -2326,10 +2356,10 @@ onUnmounted(() => {
           />
           <Input v-model="newBranchName" placeholder="分支名" @keydown.enter.prevent="imeConfirmCreateBranch" />
         </div>
-        <p class="mt-2 text-[11px] text-muted-foreground">
+        <p class="mt-2 text-xs text-muted-foreground">
           基于当前分支 {{ status?.branch || "—" }} 创建并自动切换。
         </p>
-        <div class="mt-3 flex justify-end gap-2">
+        <div class="mt-5 flex justify-end gap-2">
           <Button variant="ghost" size="sm" @click="showCreateBranch = false">取消</Button>
           <Button variant="default" size="sm" :disabled="!newBranchName.trim() || busy" @click="confirmCreateBranch">
             创建
@@ -2342,52 +2372,55 @@ onUnmounted(() => {
     <div
       v-if="openModal"
       v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       :aria-labelledby="openModal === 'choose' ? 'dlg-open-repo-title' : 'dlg-clone-title'"
       @click.self="openModal = null"
     >
-      <div class="w-[480px] rounded-lg border border-border bg-card p-4 shadow-xl">
+      <div class="w-dlg-lg surface rounded-lg p-5 pop-in">
         <!-- 选择入口 -->
         <template v-if="openModal === 'choose'">
-          <div id="dlg-open-repo-title" class="mb-3 font-medium">打开仓库</div>
+          <div id="dlg-open-repo-title" class="mb-3 text-base font-semibold">打开仓库</div>
           <div class="grid grid-cols-2 gap-3">
             <button
-              class="cursor-pointer rounded-md border border-border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-primary/5"
+              class="cursor-pointer rounded-md surface-panel p-4 text-left transition-colors duration-fast hover:border-primary/60 hover:bg-primary/5 hover:shadow-elev-2"
               @click="
                 openModal = null;
                 openRepo();
               "
             >
               <FolderOpen class="mb-1.5 size-5 text-primary" />
-              <div class="text-sm font-medium">本地目录</div>
-              <div class="mt-0.5 text-[11px] text-muted-foreground">选择本机已有的 Git 仓库</div>
+              <span class="block text-sm font-medium">本地目录</span>
+              <span class="mt-0.5 block text-xs text-muted-foreground">选择本机已有的 Git 仓库</span>
             </button>
             <button
-              class="cursor-pointer rounded-md border border-border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-primary/5"
+              class="cursor-pointer rounded-md surface-panel p-4 text-left transition-colors duration-fast hover:border-primary/60 hover:bg-primary/5 hover:shadow-elev-2"
               @click="openRemoteClone"
             >
               <Download class="mb-1.5 size-5 text-primary" />
-              <div class="text-sm font-medium">从远程克隆</div>
-              <div class="mt-0.5 text-[11px] text-muted-foreground">输入 URL 克隆到本地并打开</div>
+              <span class="block text-sm font-medium">从远程克隆</span>
+              <span class="mt-0.5 block text-xs text-muted-foreground">输入 URL 克隆到本地并打开</span>
             </button>
+            <!-- 第三个动作横跨整行：三个等宽卡片在 520px 里太挤，而且它本来就比前两个少见 -->
             <button
-              class="cursor-pointer rounded-md border border-border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-primary/5"
+              class="col-span-2 flex cursor-pointer items-center gap-3 rounded-md surface-panel p-4 text-left transition-colors duration-fast hover:border-primary/60 hover:bg-primary/5 hover:shadow-elev-2"
               @click="
                 openModal = null;
                 initRepo();
               "
             >
-              <FolderPlus class="mb-1.5 size-5 text-primary" />
-              <div class="text-sm font-medium">初始化新仓库</div>
-              <div class="mt-0.5 text-[11px] text-muted-foreground">把选中的空目录 git init 后打开</div>
+              <FolderPlus class="size-5 shrink-0 text-primary" />
+              <span class="min-w-0">
+                <span class="block text-sm font-medium">初始化新仓库</span>
+                <span class="mt-0.5 block text-xs text-muted-foreground">把选中的空目录 git init 后打开</span>
+              </span>
             </button>
           </div>
         </template>
         <!-- 远程克隆表单 -->
         <template v-else>
-          <div id="dlg-clone-title" class="mb-3 font-medium">从远程克隆</div>
+          <div id="dlg-clone-title" class="mb-3 text-base font-semibold">从远程克隆</div>
           <Input
             v-model="remoteUrlInput"
             v-focus
@@ -2410,17 +2443,17 @@ onUnmounted(() => {
             @keydown.enter.prevent="imeDoClone"
             @keydown.esc="imeCloseOpenModal"
           />
-          <div v-if="cloneErr" class="mt-2 text-[11px] text-destructive">
+          <div v-if="cloneErr" class="mt-2 text-xs text-destructive">
             {{ cloneErr }}
             <details v-if="cloneErrDetail" class="mt-1">
               <summary class="cursor-pointer text-muted-foreground">详细信息</summary>
-              <pre class="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-[10.5px] text-muted-foreground">{{ cloneErrDetail }}</pre>
+              <pre class="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-xs text-muted-foreground">{{ cloneErrDetail }}</pre>
             </details>
           </div>
-          <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+          <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
             将克隆到「位置 / 目录名」，完成后自动打开。认证走系统凭据（credential helper / ssh key）。
           </p>
-          <div class="mt-3 flex justify-end gap-2">
+          <div class="mt-5 flex justify-end gap-2">
             <Button variant="ghost" size="sm" @click="openModal = null">取消</Button>
             <Button
               variant="default"
@@ -2440,14 +2473,14 @@ onUnmounted(() => {
     <div
       v-if="showCreateTag"
       v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-create-tag-title"
       @click.self="showCreateTag = false"
     >
-      <div class="w-[400px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div id="dlg-create-tag-title" class="mb-2 font-medium">新建标签</div>
+      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
+        <div id="dlg-create-tag-title" class="mb-3 text-base font-semibold">新建标签</div>
         <Input
           v-model="newTagName"
           v-focus
@@ -2461,10 +2494,10 @@ onUnmounted(() => {
           placeholder="附注信息（可选，填写即创建附注标签）"
           @keydown.esc="imeCloseCreateTag"
         />
-        <p class="mt-2 text-[11px] text-muted-foreground">
+        <p class="mt-2 text-xs text-muted-foreground">
           基于{{ tagTarget ? `提交 ${tagTarget.slice(0, 10)}` : `当前 HEAD（${status?.branch || "—"}）` }}创建。
         </p>
-        <div class="mt-3 flex justify-end gap-2">
+        <div class="mt-5 flex justify-end gap-2">
           <Button variant="ghost" size="sm" @click="showCreateTag = false">取消</Button>
           <Button variant="default" size="sm" :disabled="!newTagName.trim() || busy" @click="confirmCreateTag">
             创建
@@ -2573,26 +2606,26 @@ onUnmounted(() => {
     <div
       v-if="reviewOpen"
       v-trap
-      class="fixed inset-0 z-30 flex items-center justify-center bg-black/50"
+      class="fixed inset-0 z-30 flex items-center justify-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-review-title"
       @click.self="reviewOpen = false"
     >
-      <div class="flex max-h-[80vh] w-[640px] flex-col rounded-lg border border-border bg-card shadow-xl">
-        <header class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
+      <div class="flex max-h-[80vh] w-dlg-xl flex-col surface rounded-lg pop-in">
+        <header class="flex shrink-0 items-center gap-2 border-b border-border px-5 py-3">
           <Bot class="size-4 text-primary" />
-          <span id="dlg-review-title" class="font-medium">AI Review · 未推送的 {{ status?.ahead }} 个提交</span>
+          <span id="dlg-review-title" class="text-base font-semibold">AI Review · 未推送的 {{ status?.ahead }} 个提交</span>
           <span class="flex-1" />
           <Button variant="ghost" size="icon" @click="reviewOpen = false"><X class="size-4" /></Button>
         </header>
-        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-[13px] leading-relaxed">
+        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-base leading-relaxed">
           <Spinner v-if="reviewBusy" label="AI 正在审查未推送的变更…" />
           <div v-else-if="reviewErr" class="text-destructive">{{ reviewErr }}</div>
           <Md v-else :source="reviewText" />
         </div>
-        <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-2.5">
-          <span v-if="reviewSaved" class="mr-auto text-[11px] text-primary">已保存 ✓</span>
+        <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <span v-if="reviewSaved" class="mr-auto text-xs text-primary">已保存 ✓</span>
           <Button variant="secondary" size="sm" :disabled="reviewBusy || !reviewText" @click="saveReviewToFile">保存到本地</Button>
           <Button variant="secondary" size="sm" :disabled="reviewBusy || !status?.ahead" @click="startReview(true)">
             重新生成
@@ -2606,28 +2639,28 @@ onUnmounted(() => {
     <div
       v-if="notesOpen"
       v-trap
-      class="fixed inset-0 z-30 flex items-center justify-center bg-black/50"
+      class="fixed inset-0 z-30 flex items-center justify-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-notes-title"
       @click.self="notesOpen = false"
     >
-      <div class="flex max-h-[80vh] w-[640px] flex-col rounded-lg border border-border bg-card shadow-xl">
-        <header class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
+      <div class="flex max-h-[80vh] w-dlg-xl flex-col surface rounded-lg pop-in">
+        <header class="flex shrink-0 items-center gap-2 border-b border-border px-5 py-3">
           <Sparkles class="size-4 text-primary" />
-          <span id="dlg-notes-title" class="font-medium">AI Release Notes</span>
+          <span id="dlg-notes-title" class="text-base font-semibold">AI Release Notes</span>
           <Select v-model="notesFrom" class="w-56" :options="notesOptions" />
           <span class="flex-1" />
           <Button variant="ghost" size="icon" @click="notesOpen = false"><X class="size-4" /></Button>
         </header>
-        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-[13px] leading-relaxed">
+        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-base leading-relaxed">
           <Spinner v-if="notesBusy" label="AI 正在汇总提交生成 Release Notes…" />
           <div v-else-if="notesErr" class="text-destructive">{{ notesErr }}</div>
           <Md v-else-if="notesText" :source="notesText" />
           <div v-else class="text-muted-foreground">选择范围后点「生成」。</div>
         </div>
-        <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-2.5">
-          <span v-if="notesSaved" class="mr-auto text-[11px] text-primary">已保存 ✓</span>
+        <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <span v-if="notesSaved" class="mr-auto text-xs text-primary">已保存 ✓</span>
           <Button variant="secondary" size="sm" :disabled="notesBusy || !notesText" @click="saveNotesToFile">
             保存到本地
           </Button>
@@ -2644,15 +2677,15 @@ onUnmounted(() => {
       @close="showSettings = false"
     />
 
-    <footer class="flex items-center gap-3 border-t border-border px-3 py-1 text-xs text-muted-foreground">
-      <span>{{ status?.branch ?? "—" }}</span>
+    <footer class="flex items-center gap-3 border-t border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
+      <span class="font-medium text-foreground">{{ status?.branch ?? "—" }}</span>
       <span class="flex-1" />
       <span v-if="status">{{ status.files.length }} 个变更文件</span>
       <Tooltip v-if="remoteWebUrl" :text="`打开远程仓库网页：${remoteWebUrl}`">
         <Button
           variant="ghost"
           size="sm"
-          class="h-5 gap-1 px-1.5 text-[11px]"
+          class="h-5 gap-1 px-1.5 text-xs"
           @click="openRemote"
         >
         <ExternalLink class="size-3" />
@@ -2696,16 +2729,16 @@ onUnmounted(() => {
     <!-- 分组文件夹下拉：成员仓库列表，点击激活 -->
     <div v-if="folderDd" class="fixed inset-0 z-40" @click="folderDd = null" @contextmenu.prevent="folderDd = null">
       <div
-        class="fixed max-h-[60vh] w-[260px] overflow-y-auto rounded-md border border-border bg-card py-1 shadow-xl"
+        class="fixed max-h-[60vh] w-[260px] overflow-y-auto surface-menu rounded-sm py-1 pop-in"
         :style="{ left: folderDd.x + 'px', top: folderDd.y + 'px' }"
       >
-        <div class="px-3 py-1 text-[10.5px] tracking-wide text-muted-foreground">
+        <div class="px-3 pt-3 pb-1.5 text-2xs font-semibold tracking-wide text-muted-foreground">
           {{ folderDd.group }} · {{ folderMembers.length }} 个仓库
         </div>
         <button
           v-for="r in folderMembers"
           :key="r.path"
-          class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-muted"
+          class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors duration-fast hover:bg-hover"
           :class="r.path === repo && 'text-primary'"
           :title="r.path"
           @click.stop="openFromFolder(r.path)"
@@ -2721,7 +2754,7 @@ onUnmounted(() => {
         </div>
         <div class="mt-1 border-t border-border/60 pt-1">
           <button
-            class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs text-muted-foreground hover:bg-muted"
+            class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors duration-fast hover:bg-hover"
             @click.stop="openGroupMgr"
           >
             管理分组…
@@ -2734,16 +2767,16 @@ onUnmounted(() => {
     <div
       v-if="showGroupMgr"
       v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-group-mgr-title"
       @click.self="showGroupMgr = false"
     >
-      <div class="flex max-h-[75vh] w-[520px] flex-col rounded-lg border border-border bg-card shadow-xl">
-        <header class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
+      <div class="flex max-h-[75vh] w-dlg-lg flex-col surface rounded-lg pop-in">
+        <header class="flex shrink-0 items-center gap-2 border-b border-border px-5 py-3">
           <FolderPlus class="size-4 text-primary" />
-          <span id="dlg-group-mgr-title" class="font-medium">分组管理</span>
+          <span id="dlg-group-mgr-title" class="text-base font-semibold">分组管理</span>
           <span class="flex-1" />
           <Button variant="ghost" size="icon" @click="showGroupMgr = false"><X class="size-4" /></Button>
         </header>
@@ -2757,20 +2790,20 @@ onUnmounted(() => {
           <div v-for="g in groupList" :key="g" class="mb-2 rounded-md border border-border">
             <div class="flex items-center gap-2 px-3 py-2">
               <button
-                class="flex flex-1 cursor-pointer items-center gap-1.5 text-left text-[13px]"
+                class="flex flex-1 cursor-pointer items-center gap-1.5 text-left text-base"
                 @click="mgrExpanded = mgrExpanded === g ? '' : g"
               >
                 <ChevronDown
-                  class="size-3 text-muted-foreground transition-transform"
+                  class="size-3 text-muted-foreground transition-transform duration-fast"
                   :class="mgrExpanded !== g && '-rotate-90'"
                 />
                 <Folder class="size-3.5 text-primary" />
                 <span class="font-medium">{{ g }}</span>
-                <span class="text-[11px] text-muted-foreground">{{ groupCount(g) }} 个仓库</span>
+                <span class="text-xs text-muted-foreground">{{ groupCount(g) }} 个仓库</span>
                 <span v-if="isGroupActive(g)" class="size-1.5 rounded-full bg-primary" title="当前打开的仓库在此分组" />
               </button>
-              <Button variant="ghost" size="sm" class="h-6 px-2 text-[11px]" @click="openGroupRename(g)">重命名</Button>
-              <Button variant="ghost" size="sm" class="h-6 px-2 text-[11px] text-destructive" @click="askDeleteGroup(g)">
+              <Button variant="ghost" size="sm" class="h-6 px-2 text-xs" @click="openGroupRename(g)">重命名</Button>
+              <Button variant="ghost" size="sm" class="h-6 px-2 text-xs text-destructive" @click="askDeleteGroup(g)">
                 删除
               </Button>
             </div>
@@ -2786,9 +2819,9 @@ onUnmounted(() => {
                   :class="r.path === repo ? 'bg-primary' : 'bg-border'"
                 />
                 <span class="shrink-0 font-medium">{{ r.name }}</span>
-                <span class="flex-1 truncate text-[10.5px] text-muted-foreground">{{ r.path }}</span>
+                <span class="flex-1 truncate text-xs text-muted-foreground">{{ r.path }}</span>
                 <button
-                  class="cursor-pointer text-muted-foreground hover:text-destructive"
+                  class="cursor-pointer text-muted-foreground transition-colors duration-fast hover:text-destructive"
                   title="移出分组（回到标签栏，可在下方列表点回来）"
                   @click="removeMember(r.path)"
                 >
@@ -2797,17 +2830,17 @@ onUnmounted(() => {
               </div>
               <div v-if="!groupCount(g)" class="py-1 text-xs text-muted-foreground">空分组</div>
               <div class="mt-1 border-t border-border/60 pt-1.5">
-                <div class="mb-1 text-[10.5px] text-muted-foreground">添加仓库（一个仓库只属一个分组）：</div>
+                <div class="mb-1 text-xs text-muted-foreground">添加仓库（一个仓库只属一个分组）：</div>
                 <div class="max-h-32 space-y-0.5 overflow-y-auto">
                   <button
                     v-for="r in repos.filter((x) => x.group !== g)"
                     :key="r.path"
-                    class="flex w-full cursor-pointer items-center gap-1.5 rounded px-1.5 py-1 text-left text-xs hover:bg-muted"
+                    class="flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-xs transition-colors duration-fast hover:bg-hover"
                     @click="addMember(g, r.path)"
                   >
                     <Plus class="size-3 shrink-0 text-primary" />
                     <span class="truncate">{{ r.name }}</span>
-                    <span class="ml-auto truncate text-[10.5px] text-muted-foreground">
+                    <span class="ml-auto truncate text-xs text-muted-foreground">
                       {{ r.group ? `来自「${r.group}」` : "未分组" }}
                     </span>
                   </button>
@@ -2816,7 +2849,7 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
-        <footer class="shrink-0 border-t border-border px-4 py-2 text-[11px] text-muted-foreground">
+        <footer class="shrink-0 border-t border-border px-4 py-2 text-xs text-muted-foreground">
           分组像书签文件夹：组内仓库不占选项卡，点文件夹下拉打开。移出/删除分组不会关闭任何仓库。
         </footer>
       </div>
@@ -2826,14 +2859,14 @@ onUnmounted(() => {
     <div
       v-if="groupModal"
       v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-group-name-title"
       @click.self="groupModal = null"
     >
-      <div class="w-[360px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div id="dlg-group-name-title" class="mb-2 font-medium">{{ groupModal.mode === "create" ? "新建分组" : "重命名分组" }}</div>
+      <div class="w-dlg-sm surface rounded-lg p-5 pop-in">
+        <div id="dlg-group-name-title" class="mb-3 text-base font-semibold">{{ groupModal.mode === "create" ? "新建分组" : "重命名分组" }}</div>
         <Input
           v-model="groupNameDraft"
           v-focus
@@ -2841,8 +2874,8 @@ onUnmounted(() => {
           @keydown.enter.prevent="imeConfirmGroupModal"
           @keydown.esc="imeCloseGroupModal"
         />
-        <div v-if="groupModalErr" class="mt-1.5 text-[11px] text-destructive">{{ groupModalErr }}</div>
-        <div class="mt-3 flex justify-end gap-2">
+        <div v-if="groupModalErr" class="mt-1.5 text-xs text-destructive">{{ groupModalErr }}</div>
+        <div class="mt-5 flex justify-end gap-2">
           <Button variant="ghost" size="sm" @click="groupModal = null">取消</Button>
           <Button variant="default" size="sm" :disabled="!groupNameDraft.trim()" @click="confirmGroupModal">
             确定
@@ -2855,13 +2888,13 @@ onUnmounted(() => {
     <div
       v-if="showSwitcher"
       v-trap
-      class="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-[15vh]"
+      class="fixed inset-0 z-50 flex items-start justify-center bg-scrim pt-[15vh]"
       role="dialog"
       aria-modal="true"
       aria-label="仓库快速切换器"
       @click.self="showSwitcher = false"
     >
-      <div class="w-[520px] overflow-hidden rounded-lg border border-border bg-card shadow-xl">
+      <div class="w-dlg-lg surface overflow-hidden rounded-lg pop-in">
         <div class="relative p-2">
           <Search
             class="pointer-events-none absolute top-1/2 left-5 size-4 -translate-y-1/2 text-muted-foreground"
@@ -2880,7 +2913,7 @@ onUnmounted(() => {
             :id="`sw-item-${idx}`"
             :key="r.path"
             :class="[
-              'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-[13px]',
+              'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-base',
               idx === switcherIndex && 'bg-primary/10',
             ]"
             @click="pickSwitcher(r.path)"
@@ -2892,7 +2925,7 @@ onUnmounted(() => {
             />
             <span class="shrink-0 font-medium">{{ r.name }}</span>
             <Badge v-if="r.group" variant="muted">{{ r.group }}</Badge>
-            <span class="flex-1 truncate text-right text-[11px] text-muted-foreground">{{ r.path }}</span>
+            <span class="flex-1 truncate text-right text-xs text-muted-foreground">{{ r.path }}</span>
           </li>
           <li v-if="!switcherResults.length" class="px-3 py-6 text-center text-xs text-muted-foreground">
             没有匹配的仓库
@@ -2905,22 +2938,22 @@ onUnmounted(() => {
     <div
       v-if="renameTarget"
       v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-rename-tab-title"
       @click.self="renameTarget = ''"
     >
-      <div class="w-[360px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div id="dlg-rename-tab-title" class="mb-2 font-medium">重命名仓库选项卡</div>
+      <div class="w-dlg-sm surface rounded-lg p-5 pop-in">
+        <div id="dlg-rename-tab-title" class="mb-3 text-base font-semibold">重命名仓库选项卡</div>
         <Input
           v-model="renameDraft"
           v-focus
           @keydown.enter.prevent="imeConfirmRename"
           @keydown.esc="imeCloseRename"
         />
-        <p class="mt-1.5 truncate text-[11px] text-muted-foreground">{{ renameTarget }}</p>
-        <div class="mt-3 flex justify-end gap-2">
+        <p class="mt-1.5 truncate text-xs text-muted-foreground">{{ renameTarget }}</p>
+        <div class="mt-5 flex justify-end gap-2">
           <Button variant="ghost" size="sm" @click="renameTarget = ''">取消</Button>
           <Button variant="default" size="sm" @click="confirmRename">确定</Button>
         </div>
@@ -2931,22 +2964,22 @@ onUnmounted(() => {
     <div
       v-if="branchRename"
       v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-rename-branch-title"
       @click.self="branchRename = null"
     >
-      <div class="pop-in w-[360px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div id="dlg-rename-branch-title" class="mb-2 font-medium">重命名分支</div>
+      <div class="w-dlg-sm surface rounded-lg p-5 pop-in">
+        <div id="dlg-rename-branch-title" class="mb-3 text-base font-semibold">重命名分支</div>
         <Input
           v-model="branchRename.draft"
           v-focus
           @keydown.enter.prevent="imeConfirmBranchRename"
           @keydown.esc="imeCloseBranchRename"
         />
-        <p class="mt-1.5 truncate text-[11px] text-muted-foreground">{{ branchRename.b.name }}</p>
-        <div class="mt-3 flex justify-end gap-2">
+        <p class="mt-1.5 truncate text-xs text-muted-foreground">{{ branchRename.b.name }}</p>
+        <div class="mt-5 flex justify-end gap-2">
           <Button variant="ghost" size="sm" @click="branchRename = null">取消</Button>
           <Button variant="default" size="sm" :disabled="!branchRename.draft.trim()" @click="confirmBranchRename">
             确定
@@ -2959,13 +2992,13 @@ onUnmounted(() => {
     <div
       v-if="showBranchSwitcher"
       v-trap
-      class="fixed inset-0 z-50 flex items-start justify-center bg-black/50 pt-[15vh]"
+      class="fixed inset-0 z-50 flex items-start justify-center bg-scrim pt-[15vh]"
       role="dialog"
       aria-modal="true"
       aria-label="分支快速切换器"
       @click.self="showBranchSwitcher = false"
     >
-      <div class="pop-in w-[480px] overflow-hidden rounded-lg border border-border bg-card shadow-xl">
+      <div class="w-dlg-lg surface overflow-hidden rounded-lg pop-in">
         <div class="relative p-2">
           <GitBranch
             class="pointer-events-none absolute top-1/2 left-5 size-4 -translate-y-1/2 text-muted-foreground"
@@ -2984,7 +3017,7 @@ onUnmounted(() => {
             :id="`bs-item-${idx}`"
             :key="b.name + (b.remote ? '@' : '')"
             :class="[
-              'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-[13px]',
+              'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-base',
               idx === bsIndex && 'bg-primary/10',
               b.current && 'font-medium text-primary',
             ]"
@@ -2994,8 +3027,8 @@ onUnmounted(() => {
             <Cloud v-if="b.remote" class="size-3.5 shrink-0 text-muted-foreground" />
             <GitBranch v-else class="size-3.5 shrink-0 text-muted-foreground" />
             <span class="truncate">{{ b.name }}</span>
-            <span v-if="b.ahead" class="shrink-0 text-[10px] text-[var(--c-mod)]">↑{{ b.ahead }}</span>
-            <span v-if="b.behind" class="shrink-0 text-[10px] text-[var(--c-conf)]">↓{{ b.behind }}</span>
+            <span v-if="b.ahead" class="shrink-0 text-2xs text-[var(--c-mod)]">↑{{ b.ahead }}</span>
+            <span v-if="b.behind" class="shrink-0 text-2xs text-[var(--c-conf)]">↓{{ b.behind }}</span>
             <span class="flex-1" />
             <Badge v-if="b.current" variant="default">当前</Badge>
             <Badge v-if="b.remote" variant="muted">远程</Badge>
@@ -3011,14 +3044,14 @@ onUnmounted(() => {
     <div
       v-if="wfConfirm"
       v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-wf-confirm-title"
       @click.self="wfConfirm = null"
     >
-      <div class="pop-in w-[440px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div id="dlg-wf-confirm-title" class="mb-2 font-medium">执行工作流：{{ wfConfirm.wf.name }}</div>
+      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
+        <div id="dlg-wf-confirm-title" class="mb-3 text-base font-semibold">执行工作流：{{ wfConfirm.wf.name }}</div>
         <Input
           v-if="wfConfirm.needInput"
           v-model="wfInput"
@@ -3027,17 +3060,17 @@ onUnmounted(() => {
           placeholder="运行时输入的分支名（新建分支 / 运行时输入的切换与合并用）"
           @keydown.enter.prevent="imeConfirmFlow"
         />
-        <ol class="space-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-[12px] text-muted-foreground">
+        <ol class="space-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
           <li v-for="(s, i) in wfConfirm.wf.steps" :key="i">
             {{ i + 1 }}. {{ describeStep(s, status?.branch) }}
           </li>
           <li v-if="!wfConfirm.wf.steps.length">（空工作流，先到管理里添加步骤）</li>
         </ol>
-        <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+        <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
           顺序执行、任一步失败立即中止。「提交推送」在有改动时自动全部暂存，无改动时跳过；
           工作区有未提交改动时拉取/合并可能失败或被带入提交。
         </p>
-        <div class="mt-3 flex justify-end gap-2">
+        <div class="mt-5 flex justify-end gap-2">
           <Button variant="ghost" size="sm" @click="wfConfirm = null">取消</Button>
           <Button
             variant="default"
@@ -3055,21 +3088,21 @@ onUnmounted(() => {
     <div
       v-if="wfRun"
       v-trap
-      class="fixed inset-0 z-30 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-30 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-wf-run-title"
       @click.self="wfRun = null"
     >
-      <div class="pop-in w-[440px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div id="dlg-wf-run-title" class="mb-3 flex items-center gap-2 font-medium">
+      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
+        <div id="dlg-wf-run-title" class="mb-3 flex items-center gap-2 text-base font-semibold">
           <WorkflowIcon class="size-4 text-primary" />
           {{ wfRun.wf.name }}
-          <span v-if="wfRun.start" class="text-[11px] font-normal text-muted-foreground">
+          <span v-if="wfRun.start" class="text-xs font-normal text-muted-foreground">
             起始分支 {{ wfRun.start }}
           </span>
         </div>
-        <ul class="space-y-2 text-[13px]">
+        <ul class="space-y-2 text-base">
           <li v-for="(s, i) in wfRun.states" :key="i" class="flex items-start gap-2">
             <span class="flex w-4 shrink-0 justify-center pt-0.5">
               <Spinner v-if="s.state === 'running'" :size="13" />
@@ -3080,13 +3113,13 @@ onUnmounted(() => {
             </span>
             <span class="min-w-0 flex-1" :class="s.state === 'fail' && 'text-destructive'">
               {{ describeStep(wfRun.wf.steps[i]!, wfRun.start) }}
-              <span v-if="s.note" class="text-[11px] text-muted-foreground">· {{ s.note }}</span>
+              <span v-if="s.note" class="text-xs text-muted-foreground">· {{ s.note }}</span>
             </span>
           </li>
         </ul>
         <div
           v-if="wfRun.error"
-          class="mt-3 whitespace-pre-wrap rounded border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-[11px] text-destructive"
+          class="mt-3 whitespace-pre-wrap rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
         >{{ wfRun.error }}</div>
         <div class="mt-3 flex justify-end">
           <Button variant="secondary" size="sm" @click="wfRun = null">关闭</Button>
@@ -3106,20 +3139,21 @@ onUnmounted(() => {
     <div
       v-if="error"
       v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-error-title"
       @click.self="dismissError()"
     >
-      <div class="w-[460px] rounded-lg border border-destructive/50 bg-card p-4 shadow-xl">
-        <div id="dlg-error-title" class="mb-1.5 font-medium text-destructive">操作失败</div>
+      <!-- 错误框不用 surface：它要保持红色描边，会和 surface 自带的 border 打架 -->
+      <div class="w-dlg-md rounded-lg border border-destructive/40 bg-elevated p-5 shadow-elev-4 pop-in">
+        <div id="dlg-error-title" class="mb-3 text-base font-semibold text-destructive">操作失败</div>
         <div>{{ error }}</div>
         <details v-if="errDetail" class="mt-2">
           <summary class="cursor-pointer text-xs text-muted-foreground">详细信息</summary>
-          <pre class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-[11px] text-muted-foreground">{{ errDetail }}</pre>
+          <pre class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-xs text-muted-foreground">{{ errDetail }}</pre>
         </details>
-        <div class="mt-3 flex justify-end gap-2">
+        <div class="mt-5 flex justify-end gap-2">
           <!-- 只对 run() 包起来的操作给重试：那是「重放一次同样的调用」，校验类错误重试没意义 -->
           <Button v-if="retryFn" variant="secondary" size="sm" @click="retryLast()">重试</Button>
           <Button variant="secondary" size="sm" @click="dismissError()">知道了</Button>
@@ -3131,20 +3165,20 @@ onUnmounted(() => {
     <div
       v-if="confirmState"
       v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-confirm-title"
       @click.self="confirmState = null"
     >
-      <div class="w-[420px] rounded-lg border border-border bg-card p-4 shadow-xl">
-        <div id="dlg-confirm-title" class="mb-1.5 font-medium">{{ confirmState.title }}</div>
+      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
+        <div id="dlg-confirm-title" class="mb-3 text-base font-semibold">{{ confirmState.title }}</div>
         <div>{{ confirmState.body }}</div>
         <label v-if="confirmState.checkbox" class="mt-2 flex cursor-pointer items-center gap-2 text-xs">
           <input v-model="confirmChecked" type="checkbox" class="accent-[var(--primary)]" />
           {{ confirmState.checkbox }}
         </label>
-        <div class="mt-3 flex justify-end gap-2">
+        <div class="mt-5 flex justify-end gap-2">
           <Button ref="confirmCancelBtn" variant="ghost" size="sm" @click="confirmState = null">取消</Button>
           <Button
             variant="destructive"
@@ -3168,7 +3202,7 @@ onUnmounted(() => {
 <style scoped>
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.25s;
+  transition: opacity var(--dur-slow) var(--ease-out);
 }
 .fade-enter-from,
 .fade-leave-to {

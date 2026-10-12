@@ -106,10 +106,10 @@ watch(
 
 <template>
   <!-- 未配置邮箱：没有"当前提交者"可过滤，显示引导而不是误导性的全量数据 -->
-  <div v-if="!authorEmail.trim()" class="text-[11px] text-muted-foreground">
+  <div v-if="!authorEmail.trim()" class="text-xs text-muted-foreground">
     先在上方填写提交邮箱，热力图将只统计该邮箱名下的提交。
   </div>
-  <div v-else-if="failed" class="text-[11px] text-muted-foreground">
+  <div v-else-if="failed" class="text-xs text-muted-foreground">
     无法加载提交统计（该仓库可能不是 Git 仓库或没有提交历史）。
   </div>
   <template v-else>
@@ -133,7 +133,7 @@ watch(
           >
             <span
               v-if="monthLabels.some((m) => m.col === col)"
-              class="absolute left-0 whitespace-nowrap text-[9px] leading-3 text-muted-foreground"
+              class="absolute left-0 whitespace-nowrap text-2xs leading-3 text-muted-foreground"
             >
               {{ monthLabels.find((m) => m.col === col)!.label }}
             </span>
@@ -141,7 +141,7 @@ watch(
         </div>
         <div class="flex gap-[2px]">
           <!-- 星期标尺 -->
-          <div class="flex w-8 shrink-0 flex-col gap-[2px] text-right text-[9px] leading-none text-muted-foreground">
+          <div class="flex w-8 shrink-0 flex-col gap-[2px] text-right text-2xs leading-none text-muted-foreground">
             <span
               v-for="(d, i) in WEEKDAY_LABELS"
               :key="i"
@@ -154,19 +154,19 @@ watch(
               <div
                 v-for="(c, row) in w"
                 :key="row"
-                :class="[c.future ? 'opacity-0' : LEVEL_CLASS[c.level], 'size-[10px] rounded-[2px]']"
+                :class="[c.future ? 'opacity-0' : LEVEL_CLASS[c.level], 'size-[10px] rounded-xs']"
                 :title="c.future ? undefined : `${c.date}：${LEVEL_DESC[c.level]}`"
               />
             </div>
           </div>
         </div>
         <!-- 图例 -->
-        <div class="mt-1 flex items-center gap-1 pl-8 text-[9px] text-muted-foreground">
+        <div class="mt-1 flex items-center gap-1 pl-8 text-2xs text-muted-foreground">
           <span>少</span>
           <span
             v-for="i in 5"
             :key="i"
-            :class="[LEVEL_CLASS[i - 1], 'size-[10px] rounded-[2px]']"
+            :class="[LEVEL_CLASS[i - 1], 'size-[10px] rounded-xs']"
           />
           <span>多</span>
         </div>

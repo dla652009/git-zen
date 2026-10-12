@@ -57,13 +57,13 @@ async function select(hash: string) {
 <template>
   <div
     v-trap
-    class="fixed inset-0 z-30 flex items-center justify-center bg-black/50"
+    class="fixed inset-0 z-30 flex items-center justify-center bg-scrim"
     role="dialog"
     aria-modal="true"
     aria-labelledby="dlg-file-history-title"
     @click.self="emit('close')"
   >
-    <div class="flex h-[80vh] w-[85vw] flex-col overflow-hidden rounded-lg border border-border bg-card shadow-xl">
+    <div class="pop-in surface flex h-[80vh] w-[85vw] flex-col overflow-hidden rounded-lg">
       <header class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
         <span id="dlg-file-history-title" class="truncate font-medium">{{ path }}</span>
         <span class="shrink-0 text-xs text-muted-foreground">文件变更历史 · {{ commits.length }} 个提交</span>
@@ -84,14 +84,14 @@ async function select(hash: string) {
               v-for="c in commits"
               :key="c.hash"
               :class="[
-                'cursor-pointer border-b border-border/60 px-3 py-2 hover:bg-muted',
-                selected === c.hash && 'bg-primary/10',
+                'cursor-pointer border-b border-border/60 px-3 py-2 transition-colors duration-fast hover:bg-hover',
+                selected === c.hash && 'bg-primary-soft',
               ]"
               @click="select(c.hash)"
             >
               <div class="truncate text-xs font-medium">{{ c.subject }}</div>
-              <div class="mt-0.5 text-[10.5px] text-muted-foreground">
-                {{ c.hash.slice(0, 8) }} · {{ c.author }} · {{ c.date }}
+              <div class="mt-0.5 text-xs text-muted-foreground">
+                <span class="font-mono">{{ c.hash.slice(0, 8) }}</span> · {{ c.author }} · {{ c.date }}
               </div>
             </li>
           </ul>

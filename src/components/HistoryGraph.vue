@@ -207,8 +207,8 @@ const hitSegments = computed(() => {
       <div
         v-for="(c, vi) in visible"
         :key="c.hash"
-        class="absolute flex cursor-pointer items-center gap-1.5 overflow-hidden pr-3 whitespace-nowrap hover:bg-muted/60"
-        :class="selected === c.hash && 'bg-primary/10'"
+        class="absolute flex cursor-pointer items-center gap-1.5 overflow-hidden pr-3 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
+        :class="selected === c.hash && 'bg-primary-soft'"
         :style="{
           top: (winStart + vi) * ROW_H + 'px',
           height: ROW_H + 'px',
@@ -227,7 +227,7 @@ const hitSegments = computed(() => {
         </span>
         <Badge v-for="r in c.refs" :key="r" :variant="refVariant(r)">{{ r.replace(/^tag: /, "") }}</Badge>
         <span
-          class="max-w-[38%] shrink-0 truncate text-[11.5px] text-muted-foreground"
+          class="max-w-[38%] shrink-0 truncate text-sm text-muted-foreground"
           :title="`${c.author} · ${c.date}`"
           >{{ c.author }} · {{ c.date }}</span
         >
@@ -237,7 +237,7 @@ const hitSegments = computed(() => {
     <div
       v-if="showTailHint"
       aria-live="polite"
-      class="flex h-6 items-center justify-center text-[11px] text-muted-foreground"
+      class="flex h-6 items-center justify-center text-xs text-muted-foreground"
     >
       <Spinner v-if="loadingMore" :size="12" label="正在加载更多…" />
       <span v-else>已到底部</span>

@@ -61,7 +61,7 @@ function onScroll() {
         <div
           v-if="show"
           ref="tipEl"
-          class="pointer-events-none fixed z-50 max-w-[380px] whitespace-pre-line rounded-md border border-border bg-card px-2.5 py-1.5 text-left text-xs leading-relaxed text-foreground shadow-lg"
+          class="surface-menu pointer-events-none fixed z-50 max-w-[380px] whitespace-pre-line rounded-sm px-2.5 py-1.5 text-left text-xs leading-relaxed text-foreground"
           :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
         >
           {{ text }}

@@ -9,7 +9,7 @@ import { toasts } from "./toast";
       <div
         v-for="t in toasts"
         :key="t.id"
-        class="rounded-md border border-border bg-card px-3 py-1.5 text-xs shadow-lg"
+        class="surface-menu rounded-sm px-3 py-1.5 text-xs"
       >
         {{ t.text }}
       </div>

@@ -317,7 +317,7 @@ async function genCommitMsg() {
       class="mx-3 mt-3 flex items-start gap-2 rounded-md border border-[var(--c-mod)]/40 bg-[var(--c-mod)]/10 px-2.5 py-2"
     >
       <GitMerge class="mt-0.5 size-3.5 shrink-0 text-[var(--c-mod)]" />
-      <div class="min-w-0 flex-1 text-[11px] leading-relaxed">
+      <div class="min-w-0 flex-1 text-xs leading-relaxed">
         <div class="font-medium">合并冲突未解决（{{ conflictFiles.length }} 个文件）</div>
         <div class="mt-0.5 text-muted-foreground">
           逐个解决后暂存并提交即完成合并；也可以直接放弃，回到合并前。
@@ -326,7 +326,7 @@ async function genCommitMsg() {
       <Button
         variant="ghost"
         size="sm"
-        class="h-6 shrink-0 px-2 text-[11px]"
+        class="h-6 shrink-0 px-2 text-xs"
         @click="emit('abortMerge')"
       >
         放弃合并
@@ -335,14 +335,14 @@ async function genCommitMsg() {
 
     <!-- 已暂存 -->
     <div class="flex items-center gap-2 px-3 pt-3 pb-1.5">
-      <span class="text-[11px] tracking-wide text-muted-foreground">已暂存</span>
+      <span class="text-2xs font-semibold tracking-wide text-muted-foreground">已暂存</span>
       <Badge v-if="staged.length" variant="default">{{ staged.length }}</Badge>
       <!-- 全部取消暂存 -->
       <Button
         v-if="staged.length"
         variant="ghost"
         size="sm"
-        class="ml-auto h-6 px-2 text-[11px]"
+        class="ml-auto h-6 px-2 text-xs"
         @click="
           emit('action', async () => {
             await api.unstage(repo, staged.map((f) => filePath(f)));
@@ -357,14 +357,14 @@ async function genCommitMsg() {
       <li
         v-for="f in staged"
         :key="'s' + f.path"
-        class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 whitespace-nowrap hover:bg-muted"
-        :class="selKey === 's' + f.path && 'bg-primary/10'"
+        class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-sm px-2 py-1.5 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
+        :class="selKey === 's' + f.path && 'bg-primary-soft'"
         @click="onRowClick('s' + f.path, () => emit('openDiff', { path: filePath(f), cached: !isUnmerged(f), untracked: false, conflict: isUnmerged(f) }))"
         @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: true }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
         <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（单击选中 · 双击查看变更）`">
-          <span class="truncate text-[12.5px]">
+          <span class="truncate text-sm">
             <template v-if="renameParts(f.path)">
               <span class="text-muted-foreground line-through">{{ renameParts(f.path)![0] }}</span>
               → {{ renameParts(f.path)![1] }}
@@ -389,13 +389,13 @@ async function genCommitMsg() {
 
     <!-- 未暂存 -->
     <div class="mt-2 flex items-center gap-2 border-t border-border px-3 pt-3 pb-1.5">
-      <span class="text-[11px] tracking-wide text-muted-foreground">未暂存</span>
+      <span class="text-2xs font-semibold tracking-wide text-muted-foreground">未暂存</span>
       <Badge v-if="unstaged.length" variant="danger">{{ unstaged.length }}</Badge>
       <Button
         v-if="unstaged.length"
         variant="ghost"
         size="sm"
-        class="ml-auto h-6 px-2 text-[11px]"
+        class="ml-auto h-6 px-2 text-xs"
         @click="
           emit('action', async () => {
             await api.stage(repo, unstaged.map((f) => filePath(f)));
@@ -422,14 +422,14 @@ async function genCommitMsg() {
       <li
         v-for="f in unstaged"
         :key="'u' + f.path"
-        class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-md px-2 py-1.5 whitespace-nowrap hover:bg-muted"
-        :class="selKey === 'u' + f.path && 'bg-primary/10'"
+        class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-sm px-2 py-1.5 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
+        :class="selKey === 'u' + f.path && 'bg-primary-soft'"
         @click="onRowClick('u' + f.path, () => emit('openDiff', { path: filePath(f), cached: false, untracked: f.x === '?', conflict: isUnmerged(f) }))"
         @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: false }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
         <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（单击选中 · 双击查看变更）`">
-          <span class="truncate text-[12.5px]">
+          <span class="truncate text-sm">
             <template v-if="renameParts(f.path)">
               <span class="text-muted-foreground line-through">{{ renameParts(f.path)![0] }}</span>
               → {{ renameParts(f.path)![1] }}
@@ -486,7 +486,7 @@ async function genCommitMsg() {
     />
 
     <!-- 提交区：固定底部卡片 -->
-    <div class="shrink-0 space-y-2 border-t border-border bg-card/60 p-3">
+    <div class="shrink-0 space-y-2 border-t border-border bg-card p-3">
       <div class="relative">
         <Textarea
           v-model="message"
@@ -520,15 +520,15 @@ async function genCommitMsg() {
           </Button>
         </Tooltip>
       </div>
-      <div v-if="aiErr" class="text-[11px] leading-relaxed text-destructive">{{ aiErr }}</div>
+      <div v-if="aiErr" class="text-xs leading-relaxed text-destructive">{{ aiErr }}</div>
       <!-- 已有草稿时不静默覆盖：覆盖 / 保留，二选一 -->
       <div
         v-if="pendingMsg"
-        class="flex items-center gap-2 rounded border border-[var(--c-conf)]/40 bg-[var(--c-conf)]/10 px-2 py-1 text-[11px]"
+        class="flex items-center gap-2 rounded-md border border-[var(--c-conf)]/40 bg-[var(--c-conf)]/10 px-2 py-1 text-xs"
       >
         <span class="flex-1">已生成新的提交信息，覆盖已输入的内容？</span>
-        <Button variant="secondary" size="sm" class="h-5 px-1.5 text-[11px]" @click="applyPending">覆盖</Button>
-        <Button variant="ghost" size="sm" class="h-5 px-1.5 text-[11px]" @click="pendingMsg = ''">保留原内容</Button>
+        <Button variant="secondary" size="sm" class="h-5 px-1.5 text-xs" @click="applyPending">覆盖</Button>
+        <Button variant="ghost" size="sm" class="h-5 px-1.5 text-xs" @click="pendingMsg = ''">保留原内容</Button>
       </div>
       <!-- 勾选框与 amend/撤销 icons 同行，省纵向空间；两者改写历史，确认框在 App 侧 -->
       <div class="flex items-center gap-1.5">
@@ -584,21 +584,21 @@ async function genCommitMsg() {
       @contextmenu.prevent="stashMenuOpen = false"
     >
       <div
-        class="fixed max-h-[60vh] w-[300px] overflow-y-auto rounded-md border border-border bg-card py-1 shadow-xl"
+        class="pop-in surface-menu fixed max-h-[60vh] w-[300px] overflow-y-auto rounded-sm py-1"
         :style="{ left: stashAnchor.x + 'px', top: stashAnchor.y + 'px' }"
       >
-        <div class="px-3 py-1 text-[10.5px] tracking-wide text-muted-foreground">
+        <div class="px-3 py-1 text-2xs font-semibold tracking-wide text-muted-foreground">
           Stash · 暂存架
         </div>
         <button
           v-if="unstaged.length || staged.length"
-          class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs hover:bg-muted"
+          class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs transition-colors duration-fast hover:bg-hover"
           @click.stop="openStashPush"
         >
           <Archive class="mr-1.5 inline size-3" />
           收纳当前改动…
         </button>
-        <div v-if="stashErr" class="px-3 py-2 text-[11px] text-destructive">{{ stashErr }}</div>
+        <div v-if="stashErr" class="px-3 py-2 text-xs text-destructive">{{ stashErr }}</div>
         <div v-else-if="stashEntries === null" class="px-3 py-2">
           <Spinner label="加载中…" />
         </div>
@@ -606,7 +606,7 @@ async function genCommitMsg() {
           <div
             v-for="e in stashEntries"
             :key="e.index"
-            class="group/st flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted"
+            class="group/st flex items-center gap-2 px-3 py-1.5 text-xs transition-colors duration-fast hover:bg-hover"
             :title="`${e.subject} · ${e.date}\n右侧图标：恢复（保留记录）/ 恢复并删除（pop）/ 删除记录`"
           >
             <Archive class="size-3 shrink-0 text-muted-foreground" />
@@ -660,20 +660,20 @@ async function genCommitMsg() {
     <div
       v-if="stashPushOpen"
       v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-stash-push-title"
       @click.self="stashPushOpen = false"
     >
-      <div class="w-[380px] rounded-lg border border-border bg-card p-4 shadow-xl">
+      <div class="w-dlg-sm surface rounded-lg p-5 pop-in">
         <div id="dlg-stash-push-title" class="mb-2 font-medium">收纳改动到 Stash</div>
         <Input v-model="stashMsg" placeholder="备注（可选）" />
         <label class="mt-2 flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
           <input v-model="stashUntracked" type="checkbox" class="accent-[var(--primary)]" />
           包含未跟踪文件
         </label>
-        <p class="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+        <p class="mt-1.5 text-xs leading-relaxed text-muted-foreground">
           把已暂存与未暂存的改动一起收进暂存架，工作区恢复干净；稍后可从 stash 菜单恢复。
         </p>
         <div class="mt-3 flex justify-end gap-2">
@@ -687,13 +687,13 @@ async function genCommitMsg() {
     <div
       v-if="stashPopConfirm"
       v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-stash-pop-title"
       @click.self="closeStashPop"
     >
-      <div class="w-[420px] rounded-lg border border-border bg-card p-4 shadow-xl">
+      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
         <div id="dlg-stash-pop-title" class="mb-1.5 font-medium">恢复并删除 Stash 记录</div>
         <div>
           将把「{{ stashPopConfirm.subject }}」的改动恢复到工作区，并删除这条 stash 记录。

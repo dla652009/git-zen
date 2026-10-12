@@ -268,13 +268,13 @@ onUnmounted(() => {
   <!-- 固定高度，避免加载前后高度跳动 -->
   <div
     v-trap
-    class="fixed inset-0 z-20 flex items-center justify-center bg-black/50"
+    class="fixed inset-0 z-20 flex items-center justify-center bg-scrim"
     role="dialog"
     aria-modal="true"
     aria-labelledby="dlg-diff-title"
     @click.self="emit('close')"
   >
-    <div class="pop-in flex h-[80vh] w-[80vw] flex-col rounded-lg border border-border bg-card shadow-xl">
+    <div class="pop-in surface flex h-[80vh] w-[80vw] flex-col rounded-lg">
       <header class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
         <span id="dlg-diff-title" class="truncate font-medium">
           {{ commit ? commit.subject : file?.path }}
@@ -314,26 +314,26 @@ onUnmounted(() => {
               v-for="s in sections"
               :key="s.file"
               :class="[
-                'cursor-pointer border-b border-border/60 px-3 py-2 font-sans hover:bg-muted',
-                selectedFile === s.file && 'bg-primary/10',
+                'cursor-pointer border-b border-border/60 px-3 py-2 transition-colors duration-fast hover:bg-hover',
+                selectedFile === s.file && 'bg-primary-soft',
               ]"
               :title="s.file"
               @click="selectedFile = s.file"
             >
               <div class="truncate text-xs font-medium">{{ s.file }}</div>
-              <div class="mt-0.5 text-[10.5px] text-muted-foreground">{{ s.lines.length }} 行</div>
+              <div class="mt-0.5 text-xs text-muted-foreground">{{ s.lines.length }} 行</div>
             </li>
           </ul>
         </aside>
         <!-- 文件列表拖宽把手 -->
-        <div class="w-1 shrink-0 cursor-col-resize hover:bg-primary/40" @mousedown="startListResize" />
+        <div class="w-1 shrink-0 cursor-col-resize transition-colors duration-fast hover:bg-primary/40" @mousedown="startListResize" />
         <div class="min-w-0 flex-1 select-text overflow-auto p-3 font-mono text-xs leading-5">
           <Spinner v-if="loading" label="加载中…" />
           <div v-else-if="err" class="text-destructive">{{ err }}</div>
           <div v-else-if="!sections.length" class="text-muted-foreground">没有文件变更。</div>
           <template v-else>
             <div
-              class="mb-2 truncate rounded bg-muted/60 px-2 py-1 font-sans text-[11px] text-muted-foreground"
+              class="mb-2 truncate rounded-md bg-muted/60 px-2 py-1 font-mono text-xs text-muted-foreground"
               :title="selectedFile"
             >
               {{ selectedFile }}
@@ -358,14 +358,14 @@ onUnmounted(() => {
         class="max-h-[35%] shrink-0 overflow-y-auto border-t border-border px-3 py-2"
       >
         <div class="mb-1 flex items-center gap-2">
-          <span class="text-[11px] tracking-wide text-muted-foreground">AI 解释</span>
-          <Button variant="ghost" size="sm" class="h-5 px-1.5 text-[11px]" :disabled="!explainText" @click="saveExplainToFile">
+          <span class="text-xs tracking-wide text-muted-foreground">AI 解释</span>
+          <Button variant="ghost" size="sm" class="h-5 px-1.5 text-xs" :disabled="!explainText" @click="saveExplainToFile">
             <FileDown class="size-3" />{{ savedTip ? "已保存 ✓" : "保存到本地" }}
           </Button>
           <span class="flex-1" />
         </div>
         <Spinner v-if="explainBusy" label="AI 分析中…" />
-        <div v-else-if="explainErr" class="text-[11px] text-destructive">{{ explainErr }}</div>
+        <div v-else-if="explainErr" class="text-xs text-destructive">{{ explainErr }}</div>
         <Md v-else :source="explainText" class="text-xs" />
       </div>
     </div>

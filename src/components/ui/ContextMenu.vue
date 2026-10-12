@@ -91,7 +91,7 @@ function onKey(e: KeyboardEvent) {
   <div class="fixed inset-0 z-50" @click="emit('close')" @contextmenu.prevent="onOverlayContextmenu">
     <div
       ref="root"
-      class="pop-in fixed min-w-[150px] max-w-[440px] overflow-hidden rounded-md border border-border bg-card py-1 shadow-xl"
+      class="pop-in surface-menu fixed min-w-[150px] max-w-[440px] overflow-hidden rounded-sm py-1"
       :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
       @click.stop
     >
@@ -99,10 +99,10 @@ function onKey(e: KeyboardEvent) {
         <div v-if="it.separator" class="my-1 border-t border-border/60" />
         <button
           v-else
-          class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs"
+          class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors duration-fast"
           :class="[
             it.danger ? 'text-destructive' : '',
-            active === i ? 'bg-muted' : '',
+            active === i ? 'bg-hover' : '',
             it.disabled && 'pointer-events-none opacity-40',
           ]"
           @mousemove="active = i"

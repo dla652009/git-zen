@@ -28,13 +28,13 @@ function toggle(path: string) {
     <!-- 中间节点：可折叠 -->
     <template v-if="n.children.length">
       <div
-        class="flex cursor-pointer items-center gap-1 py-1 pr-3 text-xs select-none hover:bg-muted"
+        class="flex cursor-pointer items-center gap-1 py-1 pr-3 text-xs transition-colors duration-fast select-none hover:bg-hover"
         :style="{ paddingLeft: (props.depth ?? 0) * 12 + 12 + 'px' }"
         @click="toggle(n.path)"
       >
         <ChevronDown class="size-3 shrink-0 transition-transform" :class="collapsed.has(n.path) && '-rotate-90'" />
         <span class="truncate text-muted-foreground" :title="`${n.seg}（含 ${n.count} 个分支）`">{{ n.seg }}</span>
-        <span class="shrink-0 text-[10px] opacity-60">{{ n.count }}</span>
+        <span class="shrink-0 text-2xs opacity-60">{{ n.count }}</span>
       </div>
       <BranchTree
         v-if="!collapsed.has(n.path)"
@@ -50,7 +50,7 @@ function toggle(path: string) {
     <li
       v-else
       :class="[
-        'flex cursor-pointer items-center gap-1 py-1.5 pr-3 hover:bg-muted',
+        'flex cursor-pointer items-center gap-1 py-1.5 pr-3 transition-colors duration-fast hover:bg-hover',
         n.branch?.current && 'font-semibold text-primary',
       ]"
       :style="{ paddingLeft: (props.depth ?? 0) * 12 + 24 + 'px' }"
@@ -59,7 +59,7 @@ function toggle(path: string) {
       @contextmenu.prevent="emit('menu', n.branch!, $event.clientX, $event.clientY)"
     >
       <span class="truncate">{{ n.seg }}</span>
-      <span class="ml-auto shrink-0 pl-1 text-[10px] leading-none">
+      <span class="ml-auto shrink-0 pl-1 text-2xs leading-none">
         <span v-if="n.branch!.ahead" class="mr-0.5 text-[var(--c-mod)]">↑{{ n.branch!.ahead }}</span>
         <span v-if="n.branch!.behind" class="text-[var(--c-conf)]">↓{{ n.branch!.behind }}</span>
       </span>

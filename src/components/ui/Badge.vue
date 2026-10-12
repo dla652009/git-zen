@@ -4,7 +4,9 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const badgeVariants = cva(
-  "inline-flex items-center rounded-full px-2 py-0 text-[10.5px] font-medium leading-[16px] whitespace-nowrap",
+  // 圆角刻意留 full：徽标是一颗「药丸」，形状本身就在表达「这是个标记」。
+  // 圆角档位管的是矩形（按钮/卡片/弹窗），不辖制这种独立形状。
+  "inline-flex items-center rounded-full px-2 py-0 text-xs font-medium whitespace-nowrap",
   {
     variants: {
       variant: {

@@ -39,7 +39,7 @@ const current = () => props.options.find((o) => o.value === model.value);
       :disabled="disabled"
       :class="
         cn(
-          'flex h-8 w-full items-center justify-between gap-2 rounded-md border border-border bg-background px-2.5 text-[13px] outline-none transition-colors focus-visible:border-primary/60 disabled:opacity-45',
+          'flex h-8 w-full items-center justify-between gap-2 rounded-sm border border-border bg-background px-2.5 text-base outline-none transition-colors duration-fast focus-visible:border-primary/60 disabled:opacity-45',
           props.class
         )
       "
@@ -52,15 +52,15 @@ const current = () => props.options.find((o) => o.value === model.value);
     </button>
     <div
       v-if="open"
-      class="absolute top-full left-0 z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-md border border-border bg-card py-1 shadow-lg"
+      class="pop-in surface-menu absolute top-full left-0 z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-sm py-1"
     >
       <button
         v-for="o in options"
         :key="o.value"
         type="button"
         :class="[
-          'block w-full cursor-pointer px-2.5 py-1.5 text-left text-xs hover:bg-muted',
-          o.value === model && 'bg-primary/10 text-primary',
+          'block w-full cursor-pointer px-2.5 py-1.5 text-left text-xs transition-colors duration-fast hover:bg-hover',
+          o.value === model && 'bg-primary-soft text-primary',
         ]"
         @click="pick(o.value)"
       >
