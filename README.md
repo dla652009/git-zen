@@ -54,6 +54,13 @@ SourceTree 功能全但太卡。git-zen 只做日常高频操作，把资源花�
 - 拖拽调整侧栏宽度、整页刷新动画、窗口标题显示未推送数
 - 提交统计热力图：设置-用户信息页，GitHub 风格 12 个月提交热力（随主题配色，按你的提交邮箱过滤）
 
+### 外观
+
+- **8 套主题**：跟随系统 / 浅色 / 深色 / Catppuccin Latte·Mocha / One Dark / GitHub Light·Dark
+- **字号可调**，全部文字跟着一起缩放（不是只有一半会变）
+- 层次分明：画布 → 内嵌区 → 面板 → 浮层四层表面，弹窗真的「浮」在界面上面
+- 界面动效统一时长与缓动，遵循系统的「减少动态效果」设置
+
 ### AI（可选，OpenAI 兼容协议）
 
 - AI 生成提交信息（遵循 Conventional Commits，自动学习仓库提交风格，可配中文/English）
@@ -135,6 +142,11 @@ git-zen/
 - **`-c core.quotepath=false` 全局注入**：中文路径不乱码
 - **`CREATE_NO_WINDOW`**：打包后 git 调用不闪终端黑框
 - 泳道图不解析 `--graph` ASCII，基于 `%H%x1f%P` 自算布局（纯函数可测）
+- **界面层次靠「越亮越高」的四层表面**（画布 < 内嵌区 < 面板 < 浮层），不是靠阴影硬撑；
+  交互态由 `color-mix()` 从前景色派生，不占层次
+- **尺度按语义分档**：字号 6 档（全 rem，跟随「设置 → 字号」缩放）、圆角 4 档、阴影 4 档、
+  时长 3 档、弹窗宽度 4 档——避免「每个值都在用到它的那一刻就地决定」
+- **不用 `oklch()`**：`build.target` 是 `safari13`，`oklch()` 需要 Safari 15.4+，Tailwind 不会替你降级
 - 完整决策与踩坑记录见 [docs/DESIGN.md](docs/DESIGN.md) 与 [docs/NOTES.md](docs/NOTES.md)
 
 ## 已知限制

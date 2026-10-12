@@ -481,4 +481,72 @@ AI 生成、diff 加载、文件历史、stash 列表这 6 处都是 `String(e).
 `HistoryGraph` 增加 `loadingMore` / `canLoadMore` props 并在列表末尾渲染
 「正在加载更多…」/「已到底部」。
 
+## 视觉短板（M14：令牌化与现代化）
+
+这一节的「缺陷」不是功能错，是**尺度与层次没有系统**。根因高度一致：
+**每个值都是在用到它的那一刻就地决定的，没有一个地方规定过「一共几档」**。
+
+### 字号有 8 档，其中 111 处是任意值 px
+
+**根因**：`src/settings.ts` 把 `html { font-size: settings.fontSize + "px" }`（默认 13px），
+于是 Tailwind 的 `text-xs` = 0.75rem = **9.75px**、`text-sm` = 0.875rem = **11.375px**——
+按浏览器默认的 16px 基数设计的档位，在 13px 基数下全都偏小。
+作者想要的尺寸在这两档之间，于是就地写 `text-[11px]`（73 处）、`text-[10.5px]`（10 处）……
+
+**后果不只是丑**：用户调「设置 → 字号」，用 rem 的那一半会跟着变，用 px 硬写的另一半不变，
+**同一屏里的相对大小会错乱**。
+
+**修复**：字号 6 档全部改 rem（`--text-2xs` 0.75rem / `--text-xs` 0.8125rem / `--text-sm` 0.90625rem /
+`--text-base` 1rem / `--text-lg` 1.1875rem / `--text-xl` 1.375rem），任意值清零。
+`text-xs` / `text-sm` / `text-base` 是**覆盖** Tailwind 默认值，不是新增档位——这样旧代码里的
+命名档位不需要改也自动归位。
+
+### 表面只有 3 层，浮层与常驻面板同色
+
+**根因**：`--background` / `--card` / `--muted` 三色既要表达「内嵌区比画布低」，
+又要表达「浮层比画布高」，两个相反的方向挤在同一组色阶上。
+结果是 19 个弹窗都写 `border border-border bg-card`——**背景色和它下面的侧栏面板一模一样**，
+只能靠 `shadow-xl` 硬撑，而 24 个弹窗全都用同一个 `shadow-xl`，等于没有层次。
+
+**修复**：加第四层 `--elevated`，明确 `--background` < `--muted` < `--card` < `--elevated`；
+阴影拆成 `--elev-1..4` 四档（每档「紧贴投影 + 环境投影」两级 + 顶部 1px 高光）；
+交互态（`--hover` / `--active`）用 `color-mix()` 从前景色派生，**不占层次**——
+过去 hover 借用 `bg-muted`，而 `--muted` 是「内嵌区」语义，深色主题下它与画布几乎同色，hover 几乎看不见。
+
+### 遮罩写死 `bg-black/50`，21 处不随主题
+
+**根因**：遮罩是在第一次写弹窗时就地决定的，之后被复制了 20 次。
+深色主题下 50% 黑正常，浅色主题下它把整个界面压成灰色——**浅色主题的弹窗看起来像蒙了层灰布**。
+
+**修复**：`--scrim` 按主题给（深色 62% 黑、浅色 34% 深蓝、`one-dark` 58%），
+`bg-black/50` 全仓清零。
+
+### 弹窗宽度 8 个写死 px，内部节奏各不相同
+
+**根因**：同上——宽度是在写每个弹窗时按内容临时估的（360 / 400 / 420 / 440 / 460 / 480 / 520 / 640），
+内边距（`p-4`）、标题（`mb-2` / `mb-1.5` / `mb-3` + `font-medium` 三种写法）、
+底部按钮区间距（`mt-3`）也各自为政。**19 个弹窗放在一起看就是 19 种设计**。
+
+**修复**：宽度归到 4 档（`w-dlg-sm/md/lg/xl`，rem 跟随字号设置）；
+标题统一 `mb-3 text-base font-semibold`；按钮区统一 `mt-5`；内边距统一 `p-5`（带边框的内部区块 `px-5 py-3`）。
+配合 `surface` 工具类，弹窗的类名从「四个类描述外观」变成「一个类表达意图」。
+
+### 等宽字体栈硬编码 `Consolas`，中文掉字体
+
+**根因**：`src/components/ui/Md.vue` 给代码块写 `font-family: Consolas, monospace`。
+Consolas **没有中文字形**，代码块里出现中文注释时会掉到系统兜底字体，与周围拉丁字符错位。
+
+**修复**：统一走 `--font-mono`（`ui-monospace` → `Cascadia Mono` → `SF Mono` → `JetBrains Mono` →
+`Menlo` → `Consolas` → `Microsoft YaHei UI` → …），中文回退在栈内。
+
+### 全局没有任何过渡时长基准
+
+**根因**：`transition` 出现 33 次，`duration` 只出现在两处（`duration-150` / `duration-500`），
+其余全是默认的 150ms；另有 14 处元素「有 hover 变色但没写 transition」，颜色是硬切的。
+**同一屏里有的元素滑顺、有的元素闪跳**，这是「廉价感」最直接的来源。
+
+**修复**：`--dur-fast/base/slow` 三档 + `--ease-out` / `--ease-spring` 两条曲线；
+过渡统一到 `duration-fast`（交互反馈）/ `duration-base`（浮层入场）/ `duration-slow`（大面积变化）。
+`prefers-reduced-motion: reduce` 下三档全部压到 0.01ms。
+
 

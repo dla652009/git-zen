@@ -408,5 +408,60 @@ Windows(WebView2) / macOS(WKWebView) / Linux(WebKitGTK) 三端。
 2. `preventDefault()` 要放在**确认确实有可做的事之后**。过去它在最前面，
    一个仓库都没有时 `Ctrl+P` / `Ctrl+1` 也被吃掉，用户按下去毫无反馈——这叫按键吞噬。
 
+### Tailwind v4 只把「用到的」令牌写进产物
+
+首轮 `@theme` 加完令牌后 grep 产物，`--text-2xs` / `--radius-xs` / `--container-dlg-sm` /
+`bg-elevated` / `shadow-elev-1` / `.surface` **全部 MISS**——看着像没注册，其实只是没人用。
+
+验证方法：临时建一个 `src/__twprobe.ts`，内容是一个包含所有新类名的字符串常量，
+`vite build` 后 grep 产物，验完删掉。**「产物里没有」不等于「没注册」，
+但「产物里有」才等于「真的能用」**，而后者才是要验的。
+
+### `duration-*` 在 v4 里没有命名空间
+
+`tailwindcss/theme.css` 只有 `--default-transition-duration: 150ms` 与 `--ease-*`，
+**没有 `--duration-*`**——`duration-150` 这类只吃裸数值。所以
+`@theme { --duration-fast: 110ms }` 不会生成 `duration-fast`。
+改法：时长变量放 `:root`，再用 `@utility duration-fast { transition-duration: var(--dur-fast); }` 包一层。
+
+### `@utility` 定义的类排在核心工具类**之后**
+
+实测构建产物的字节偏移：`.border-destructive` 17616、`.bg-elevated` 20715、`.text-base` 25337，
+而 `.surface` 在 **29129**。同一元素上两者优先级相同（都是单类选择器），**后出现的赢**。
+
+因为 `.surface` 里写的是 `background:` 和 `border:` 简写，于是：
+
+- `class="surface border-destructive/40"` → 红边被还原成 `var(--border)`
+- `class="surface bg-primary-soft"` → 底色被还原成 `var(--elevated)`
+
+规则：这类「组合式表面」工具类只能用在**默认描边 + 默认底色**的标准情形；
+要改底色或描边色就手写那一组（`bg-elevated border border-<色> shadow-elev-4`）。
+抽象掉的东西一旦要破例，破例的成本会立刻暴露出来。
+
+### 层次方向：统一「越亮越高」，不惜与官方主题相反
+
+Catppuccin 与 One Dark 官方都是「侧栏比主区更暗」（mantle < base）。但桌面应用有一条不可让渡的约束：
+**浮层必须比画布亮**。沿用官方方向的话，弹窗就得以比画布更暗的色出现——那才叫真的没法看。
+
+做法：让卡片走官方 base、内嵌区走 mantle/surface0，于是「越亮越高」成立而官方色值全部保留。
+**主题是用来提供色相的，层次得由应用自己定。**
+
+### 换令牌系统时，旧令牌的「残留引用」比新令牌的缺失更危险
+
+新令牌没生效，通常一眼能看出来（样式是 0）；但旧令牌残留会**静默地把新值改回旧值**，
+看起来「设置了但没反应」。这次踩到两处，都是我自己埋的：
+
+1. **`@theme inline` 尾部留了一行旧映射**：`--radius-md: var(--radius)`。Tailwind v4 的 `@theme`
+   与 `@theme inline` 写进同一组 CSS 变量，**后写的赢**，于是 `@theme` 里新定义的
+   `--radius-md: 7px` 被改回 `var(--radius)`（`0.375rem`）。整个圆角中档失效，而 `grep --radius-md`
+   在源码里看到的是 7px —— 只有把**产物**里解析出来的值打出来才发现是 4.875px。
+2. **`rem` 在本项目不等于 16px**。`src/settings.ts` 把 `html { font-size: settings.fontSize + "px" }`
+   写成用户可调（默认 13px），所以 `22rem = 286px` 而不是 352px。我把弹窗宽度写成 rem 并注释成
+   「352px」，实际渲染出来窄了两成。**字号档位是「正文变多大」（该跟 rem），
+   弹窗宽度是「一块版面有多宽」（该用 px），两件事。**
+
+规则：**改令牌系统时，先 `grep` 旧令牌名的全部引用（含 `@theme` / `@theme inline` 这类映射），
+再在 clean build 之后从产物里核对解析值**——源码里的定义正确，不等于浏览器算出来的正确。
+
 
 

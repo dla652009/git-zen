@@ -97,7 +97,30 @@ git-zen 的对策：
 - 主题 = CSS 变量集（`[data-theme=...]` 覆盖 token），内置 8 种：跟随系统/浅色/深色/Catppuccin Latte·Mocha/One Dark/GitHub Light·Dark
 - diff 配色随主题走，不单独配置
 
-### 4.5 明确不做的（YAGNI）
+### 4.5 视觉系统：令牌分层（src/style.css）
+
+界面观感的问题往往被归到「颜色不好看」，但真正的病因通常是**没有层次**——
+一个界面的高级感来自「谁在谁上面」，不是来自色相。所以第一版做的是层次，不是调色。
+
+- **表面四层**：`--background`（画布）< `--muted`（内嵌区）< `--card`（面板）< `--elevated`（浮层）。
+  第三层之前的版本只有三层，浮层与常驻面板共用 `--card`，弹窗只能靠阴影硬撑「浮」起来
+- **交互态不占层次**：`--hover` / `--active` / `--primary-soft` / `--border-soft` 用 `color-mix()`
+  从前景色派生。过去 hover 借用 `--muted`，那是「内嵌区」语义，深色主题下与画布几乎同色
+- **遮罩 `--scrim` 按主题给**，不再是写死的 `bg-black/50`（浅色主题下会把界面压成灰色）
+- **阴影四档 `--elev-1..4`**，每档「紧贴投影 + 环境投影」两级并带顶部 1px 高光；浅色主题单独换色，
+  否则白底上的黑影会发脏
+- **尺度按语义分档而非按大小**：字号 6 档（全 rem，跟随「设置 → 字号」缩放）、
+  圆角 4 档、时长 3 档、弹窗宽度 4 档。此前字号 8 档中有 111 处是任意值 px，
+  导致改字号设置时只有一半文字会跟着变
+- **层次方向统一「越亮越高」**，与 Catppuccin / One Dark 官方的「侧栏比主区暗」相反——
+  因为浮层必须比画布亮，若沿用官方方向弹窗就得以比画布更暗的色出现。做法是卡片走官方 base、
+  内嵌区走 mantle/surface0，官方色值全部保留
+- **`surface` / `surface-menu` / `surface-panel` 三档组合式工具类**：底 + 描边 + 投影 + 高光一次给全。
+  注意它们在产物 CSS 里排在核心工具类**之后**，所以不能与 `bg-*` / `border-*` 同元素覆盖（见 NOTES.md）
+- **不用 `oklch()`**：`vite.config.js` 的 `build.target` 是 `safari13`，`oklch()` 需要 Safari 15.4+，
+  Tailwind 不会替你做降级；`color-mix()` 可用（Tailwind v4 的 `/opacity` 本身就编译成它）
+
+### 4.6 明确不做的（YAGNI）
 
 - rebase / cherry-pick 交互 UI → 终端更顺手
 - 冲突解决 UI → 只做报错引导
@@ -111,18 +134,27 @@ git-zen 的对策：
 ```text
 git-zen/
 ├── docs/               # 设计/笔记/任务/Bug记录/BTW想法
-├── scripts/gen-icon.mjs # 应用图标生成器（纯 node）
+├── scripts/
+│   ├── gen-icon.mjs         # 应用图标生成器（纯 node）
+│   ├── check-contract.mjs   # git.rs ↔ lib.rs ↔ gitApi.ts 契约检查（硬性规则 1 / 3）
+│   └── check-contrast.mjs   # 7 套主题的 WCAG 对比度检查
 ├── src/
 │   ├── gitApi.ts       # invoke 封装 + 后端返回类型镜像（唯一与后端耦合处）
 │   ├── graph.ts/.test.ts # 泳道布局纯函数 + 自检
 │   ├── branchTree.ts   # 分支前缀树纯函数
 │   ├── settings.ts     # 设置中心：持久化+应用（主题/字体）
-│   ├── style.css       # Tailwind v4 入口 + 各主题 token
+│   ├── style.css       # Tailwind v4 入口 + 各主题 token + 组合式工具类
+│   ├── lib/            # 无 DOM 依赖或可独立自检的纯模块
+│   │   ├── patch.ts         # unified / combined diff 解析
+│   │   ├── safeJson.ts      # localStorage 安全解析
+│   │   ├── errors.ts        # humanize：git 错误 → 人话
+│   │   ├── overlays.ts      # 浮层优先级表（Esc 分层关闭）
+│   │   └── focusTrap.ts     # v-trap 指令
 │   ├── shims-vue.d.ts
 │   └── components/
-│       ├── ui/         # shadcn 风格基础组件（Button/Badge/Input/Textarea/Tooltip/Spinner）
+│       ├── ui/         # shadcn 风格基础组件（Button/Badge/Input/Textarea/Select/Switch/Tooltip/Spinner/Toast/Md/ContextMenu）
 │       ├── HistoryGraph.vue / ChangesPanel.vue / DiffViewer.vue
-│       ├── BranchTree.vue / SettingsModal.vue
+│       ├── BranchTree.vue / SettingsModal.vue / FileHistoryModal.vue / CommitHeatmap.vue
 ├── src-tauri/
 │   └── src/git.rs      # 所有后端逻辑，单文件
 └── package.json
