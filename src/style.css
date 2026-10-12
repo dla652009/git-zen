@@ -26,6 +26,27 @@
   --c-del: #e07078;
   --c-ren: #9d8cf0;
   --c-conf: #cf9c44;
+
+  /* 泳道连线（HistoryGraph SVG stroke）；对 --background ≥3:1 才在深底上看得见 */
+  --graph-line: #5f6472;
+
+  /* 徽标实心色对：旧写法 bg-xxx/10 半透明底合成后对比不足，改为不透明白名单色 */
+  --badge-default-bg: #6f60f3;
+  --badge-default-fg: #ffffff;
+  --badge-info-bg: #2e7abe;
+  --badge-info-fg: #ffffff;
+  --badge-warning-bg: #a87d2e;
+  --badge-warning-fg: #101014;
+  --badge-danger-bg: #d53f4a;
+  --badge-danger-fg: #ffffff;
+
+  /* 危险按钮专用色对：--destructive 还当文字色用在 25 处，不能为按钮去调暗它，故与按钮解耦 */
+  --btn-danger-bg: #f26d78;
+  --btn-danger-fg: #12101c;
+  --btn-danger-bg-hover: #e05f6a;
+
+  /* 开关关闭态轨道：白滑块压在 --muted-foreground/40 的合成色上，取不透明等价色（浅色主题下必须压暗） */
+  --switch-off-bg: #494952;
 }
 
 [data-theme="light"],
@@ -34,16 +55,16 @@
   --foreground: #1c1c23;
   --card: #ffffff;
   --muted: #f0f0f4;
-  --muted-foreground: #767680;
+  --muted-foreground: #6c6c76;
   --border: #e4e4ea;
-  --primary: #6d5ef0;
-  --primary-foreground: #12101c;
+  --primary: #6b5cf0;
+  --primary-foreground: #ffffff; /* 深字对 #6b5cf0 只有 3.95:1，反白后 4.76:1（实心主按钮的文字对） */
   --secondary: #f0f0f4;
   --secondary-foreground: #1c1c23;
-  --destructive: #d5484f;
+  --destructive: #d23b42;
   --scrollbar-thumb: #c9c9d2;
   --diff-add-bg: #e3f4e8;
-  --diff-add-text: #1a7f37;
+  --diff-add-text: #1a7d36;
   --diff-del-bg: #fce8ea;
   --diff-del-text: #c53038;
 
@@ -53,6 +74,25 @@
   --c-del: #c53038;
   --c-ren: #6d5ef0;
   --c-conf: #a16207;
+
+  --graph-line: #7c7c85;
+
+  --badge-default-bg: #6f60f3;
+  --badge-default-fg: #ffffff;
+  --badge-info-bg: #1a6fb5;
+  --badge-info-fg: #fafafa;
+  --badge-warning-bg: #a16207;
+  --badge-warning-fg: #fafafa;
+  --badge-danger-bg: #c53038;
+  --badge-danger-fg: #fafafa;
+
+  /* 危险按钮专用色对（见 :root 注释） */
+  --btn-danger-bg: #d23b42;
+  --btn-danger-fg: #ffffff;
+  --btn-danger-bg-hover: #b93038;
+
+  /* 关闭态轨道：原 --muted-foreground/40 合成出 #c4c4c8，白滑块只有 1.8:1，压暗到 5.2:1 */
+  --switch-off-bg: #6c6c76;
 }
 
 [data-theme="catppuccin-mocha"] {
@@ -60,7 +100,7 @@
   --foreground: #cdd6f4;
   --card: #181825;
   --muted: #313244;
-  --muted-foreground: #9399b2;
+  --muted-foreground: #959bb3;
   --border: #45475a;
   --primary: #8b7ff5;
   --primary-foreground: #12101c;
@@ -79,6 +119,25 @@
   --c-del: #e07078;
   --c-ren: #9d8cf0;
   --c-conf: #cf9c44;
+
+  --graph-line: #676d82;
+
+  --badge-default-bg: #6f60f3;
+  --badge-default-fg: #ffffff;
+  --badge-info-bg: #2e7abe;
+  --badge-info-fg: #ffffff;
+  --badge-warning-bg: #a87d2e;
+  --badge-warning-fg: #101014;
+  --badge-danger-bg: #d53f4a;
+  --badge-danger-fg: #ffffff;
+
+  /* 危险按钮专用色对（见 :root 注释） */
+  --btn-danger-bg: #f26d78;
+  --btn-danger-fg: #12101c;
+  --btn-danger-bg-hover: #e05f6a;
+
+  /* 关闭态轨道（原 /40 合成色 #4a4c5e 的等价不透明色） */
+  --switch-off-bg: #4a4c5e;
 }
 
 [data-theme="catppuccin-latte"] {
@@ -86,16 +145,16 @@
   --foreground: #4c4f69;
   --card: #e6e9ef;
   --muted: #ccd0da;
-  --muted-foreground: #7c7f93;
+  --muted-foreground: #565868;
   --border: #bcc0cc;
-  --primary: #6d5ef0;
+  --primary: #5e4eef;
   --primary-foreground: #ffffff;
   --secondary: #ccd0da;
   --secondary-foreground: #4c4f69;
-  --destructive: #d5484f;
+  --destructive: #c52d35;
   --scrollbar-thumb: #b4bacb;
   --diff-add-bg: #e3f4e8;
-  --diff-add-text: #1a7f37;
+  --diff-add-text: #1a7d36;
   --diff-del-bg: #fce8ea;
   --diff-del-text: #c53038;
 
@@ -105,6 +164,25 @@
   --c-del: #c53038;
   --c-ren: #6d5ef0;
   --c-conf: #a16207;
+
+  --graph-line: #7c7c85;
+
+  --badge-default-bg: #6f60f3;
+  --badge-default-fg: #ffffff;
+  --badge-info-bg: #1a6fb5;
+  --badge-info-fg: #eff1f5;
+  --badge-warning-bg: #a16207;
+  --badge-warning-fg: #ffffff;
+  --badge-danger-bg: #c53038;
+  --badge-danger-fg: #eff1f5;
+
+  /* 危险按钮专用色对（见 :root 注释） */
+  --btn-danger-bg: #c52d35;
+  --btn-danger-fg: #ffffff;
+  --btn-danger-bg-hover: #ac2029;
+
+  /* 关闭态轨道：原 /40 合成出 #acafb9，白滑块只有 2.0:1，压暗到 4.9:1 */
+  --switch-off-bg: #6e7080;
 }
 
 [data-theme="one-dark"] {
@@ -112,9 +190,9 @@
   --foreground: #abb2bf;
   --card: #21252b;
   --muted: #3a3f4b;
-  --muted-foreground: #7f848e;
+  --muted-foreground: #a6aab1;
   --border: #3e4451;
-  --primary: #8b7ff5;
+  --primary: #9084f5;
   --primary-foreground: #12101c;
   --secondary: #3a3f4b;
   --secondary-foreground: #abb2bf;
@@ -131,6 +209,25 @@
   --c-del: #e07078;
   --c-ren: #9d8cf0;
   --c-conf: #cf9c44;
+
+  --graph-line: #7d7d8a;
+
+  --badge-default-bg: #6f60f3;
+  --badge-default-fg: #ffffff;
+  --badge-info-bg: #2e7abe;
+  --badge-info-fg: #ffffff;
+  --badge-warning-bg: #a87d2e;
+  --badge-warning-fg: #101014;
+  --badge-danger-bg: #d53f4a;
+  --badge-danger-fg: #ffffff;
+
+  /* 危险按钮专用色对（见 :root 注释） */
+  --btn-danger-bg: #f26d78;
+  --btn-danger-fg: #12101c;
+  --btn-danger-bg-hover: #e05f6a;
+
+  /* 关闭态轨道（原 /40 合成色 #565a61 的等价不透明色） */
+  --switch-off-bg: #565a61;
 }
 
 [data-theme="github-dark"] {
@@ -157,6 +254,25 @@
   --c-del: #e07078;
   --c-ren: #9d8cf0;
   --c-conf: #cf9c44;
+
+  --graph-line: #676d80;
+
+  --badge-default-bg: #6f60f3;
+  --badge-default-fg: #ffffff;
+  --badge-info-bg: #2e7abe;
+  --badge-info-fg: #ffffff;
+  --badge-warning-bg: #a87d2e;
+  --badge-warning-fg: #101014;
+  --badge-danger-bg: #ca2c37;
+  --badge-danger-fg: #e6edf3;
+
+  /* 危险按钮专用色对（见 :root 注释） */
+  --btn-danger-bg: #f26d78;
+  --btn-danger-fg: #12101c;
+  --btn-danger-bg-hover: #e05f6a;
+
+  /* 关闭态轨道（原 /40 合成色 #454b54 的等价不透明色） */
+  --switch-off-bg: #454b54;
 }
 
 @theme inline {
@@ -171,6 +287,7 @@
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-destructive: var(--destructive);
+  --color-graph-line: var(--graph-line);
   --radius-md: var(--radius);
 }
 

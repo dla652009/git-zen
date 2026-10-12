@@ -8,11 +8,11 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary/20 text-primary",
+        default: "bg-[var(--badge-default-bg)] text-[var(--badge-default-fg)]",
         muted: "bg-muted text-muted-foreground",
-        info: "bg-[var(--c-mod)]/15 text-[var(--c-mod)]",
-        warning: "bg-[var(--c-conf)]/15 text-[var(--c-conf)]",
-        danger: "bg-destructive/15 text-destructive",
+        info: "bg-[var(--badge-info-bg)] text-[var(--badge-info-fg)]",
+        warning: "bg-[var(--badge-warning-bg)] text-[var(--badge-warning-fg)]",
+        danger: "bg-[var(--badge-danger-bg)] text-[var(--badge-danger-fg)]",
       },
     },
     defaultVariants: { variant: "default" },

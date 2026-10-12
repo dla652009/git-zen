@@ -19,7 +19,8 @@ function toggle() {
     :class="
       cn(
         'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors disabled:opacity-45',
-        model ? 'bg-primary' : 'bg-muted-foreground/40',
+        // 关闭态轨道用不透明 token：原来的 muted-foreground/40 合成后浅色主题只有 ~1.8:1，白滑块看不见
+        model ? 'bg-primary' : 'bg-[var(--switch-off-bg)]',
         props.class,
       )
     "

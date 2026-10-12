@@ -61,12 +61,15 @@ export function layout(commits: LogEntry[]): Layout {
   };
 }
 
+// 泳道圆点色：只靠亮度带保证「对 8 套主题的任意背景都 ≥3:1」，不跟主题 token（graph.ts 保持纯函数）。
+// 推导见 graph.test.ts 里的断言注释——下界由最亮的暗色背景 one-dark #282c34 决定，上界由最暗的浅色背景
+// catppuccin-latte #eff1f5 决定（这两者分别是最紧的上下界，不是各自极端的那一端）。色相与饱和度保持原样，只压/提明度。
 export const LANE_COLORS = [
-  "#8b7ff5",
-  "#4a9ec2",
-  "#c2884a",
-  "#9d64b0",
+  "#786af3",
+  "#3b8daf",
+  "#ac753a",
+  "#9b60ae",
   "#c05a66",
-  "#8a9aa8",
-  "#c2b25e",
+  "#76899a",
+  "#998a3a",
 ];

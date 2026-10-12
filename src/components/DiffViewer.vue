@@ -3,7 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from "vue";
 import { X, Bot, WrapText } from "@lucide/vue";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../gitApi";
-import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite } from "../ai";
+import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, isAbortError } from "../ai";
 import { settings } from "../settings";
 import { patchSections, type PatchLine } from "../lib/patch";
 import { FileDown } from "@lucide/vue";
@@ -106,6 +106,8 @@ async function loadExplain() {
     );
     aiCacheWrite("explain", explainId(), explainText.value);
   } catch (e) {
+    // 弹层关闭会调 abortAi()：主动取消不算失败，静默收尾（busy 由 finally 复位）
+    if (isAbortError(e)) return;
     explainErr.value = String(e).replace(/^Error: /, "");
   } finally {
     explainBusy.value = false;
@@ -228,6 +230,11 @@ function tipFor(l: PatchLine): string {
 
 // ---- 左侧文件列表拖宽 + 持久化（与主界面侧栏同款把手）----
 const listW = ref(Number(localStorage.getItem("gz.diffListW")) || 256);
+// 窄窗口下 560px 会把右侧 diff 挤没：上限随窗口收敛（同时用于拖拽钳制与渲染宽度）
+const winW = ref(window.innerWidth);
+const maxListW = computed(() => Math.min(560, Math.round(winW.value * 0.45)));
+const listWShown = computed(() => Math.min(maxListW.value, Math.max(160, listW.value)));
+const onWinResize = () => (winW.value = window.innerWidth);
 let resizeStartX = 0;
 let resizeStartW = 0;
 function startListResize(e: MouseEvent) {
@@ -238,7 +245,7 @@ function startListResize(e: MouseEvent) {
   window.addEventListener("mouseup", endListResize);
 }
 function onListResize(e: MouseEvent) {
-  listW.value = Math.min(560, Math.max(160, resizeStartW + e.clientX - resizeStartX));
+  listW.value = Math.min(maxListW.value, Math.max(160, resizeStartW + e.clientX - resizeStartX));
 }
 function endListResize() {
   window.removeEventListener("mousemove", onListResize);
@@ -246,9 +253,11 @@ function endListResize() {
   document.body.style.cursor = "";
   localStorage.setItem("gz.diffListW", String(listW.value));
 }
+onMounted(() => window.addEventListener("resize", onWinResize));
 onUnmounted(() => {
   window.removeEventListener("mousemove", onListResize);
   window.removeEventListener("mouseup", endListResize);
+  window.removeEventListener("resize", onWinResize);
 });
 </script>
 
@@ -295,7 +304,7 @@ onUnmounted(() => {
         <div class="flex min-h-0 flex-1">
         <aside
           class="shrink-0 overflow-y-auto border-r border-border"
-          :style="{ width: listW + 'px' }"
+          :style="{ width: listWShown + 'px' }"
         >
           <ul>
             <li
@@ -346,7 +355,7 @@ onUnmounted(() => {
         class="max-h-[35%] shrink-0 overflow-y-auto border-t border-border px-3 py-2"
       >
         <div class="mb-1 flex items-center gap-2">
-          <span class="text-[11px] uppercase tracking-wider text-muted-foreground">AI 解释</span>
+          <span class="text-[11px] tracking-wide text-muted-foreground">AI 解释</span>
           <Button variant="ghost" size="sm" class="h-5 px-1.5 text-[11px]" :disabled="!explainText" @click="saveExplainToFile">
             <FileDown class="size-3" />{{ savedTip ? "已保存 ✓" : "保存到本地" }}
           </Button>

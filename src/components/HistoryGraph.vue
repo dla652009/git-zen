@@ -179,9 +179,7 @@ const hitSegments = computed(() => {
           v-for="(d, i) in edgesSvg"
           :key="i"
           :d="d"
-          fill="none"
-          stroke="#3a4450"
-          stroke-width="1.5"
+          :style="{ fill: 'none', stroke: 'var(--graph-line)', strokeWidth: '1.5px' }"
         />
         <circle
           v-for="(c, vi) in visible"
@@ -189,7 +187,7 @@ const hitSegments = computed(() => {
           :cx="lay.colOf.get(c.hash)! * COL_W + COL_W / 2"
           :cy="(winStart + vi) * ROW_H + ROW_H / 2"
           :r="R"
-          :fill="color(lay.colOf.get(c.hash)!)"
+          :style="{ fill: color(lay.colOf.get(c.hash)!) }"
         />
       </svg>
 
@@ -215,7 +213,11 @@ const hitSegments = computed(() => {
           <template v-else>{{ c.subject }}</template>
         </span>
         <Badge v-for="r in c.refs" :key="r" :variant="refVariant(r)">{{ r.replace(/^tag: /, "") }}</Badge>
-        <span class="shrink-0 text-[11.5px] text-muted-foreground">{{ c.author }} · {{ c.date }}</span>
+        <span
+          class="max-w-[38%] shrink-0 truncate text-[11.5px] text-muted-foreground"
+          :title="`${c.author} · ${c.date}`"
+          >{{ c.author }} · {{ c.date }}</span
+        >
       </div>
     </div>
   </div>

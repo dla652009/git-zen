@@ -11,7 +11,8 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground hover:opacity-90",
         secondary: "bg-secondary text-secondary-foreground border border-border hover:border-primary/50",
         ghost: "hover:bg-muted",
-        destructive: "bg-destructive/15 text-destructive border border-destructive/40 hover:bg-destructive/25",
+        // 危险按钮走专用实心色对：半透明底（bg-destructive/15）合成后 6 套主题都不达标
+        destructive: "bg-[var(--btn-danger-bg)] text-[var(--btn-danger-fg)] hover:bg-[var(--btn-danger-bg-hover)]",
       },
       size: {
         default: "h-8 px-3.5",
