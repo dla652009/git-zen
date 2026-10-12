@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, reactive, watch, type Component } from "vue";
+import { ref, computed, reactive, watch, nextTick, type Component } from "vue";
 import {
   Plus,
   Undo2,
@@ -60,6 +60,7 @@ watch(
   () => {
     stashMenuOpen.value = false;
     stashPushOpen.value = false;
+    stashPopConfirm.value = null;
   },
 );
 
@@ -82,6 +83,9 @@ const stashErr = ref("");
 const stashPushOpen = ref(false);
 const stashMsg = ref("");
 const stashUntracked = ref(false);
+// 「恢复并删除」会丢掉 stash 记录，先弹确认（与 App.vue 的危险确认同款：焦点默认落「取消」）
+const stashPopConfirm = ref<StashEntry | null>(null);
+const stashPopCancelBtn = ref<{ $el: HTMLButtonElement } | null>(null);
 
 async function toggleStashMenu(ev: MouseEvent) {
   if (stashMenuOpen.value) {
@@ -110,6 +114,30 @@ function stashRestore(index: number, pop: boolean) {
     toast(pop ? "已恢复并移除记录" : "已恢复（记录保留）");
   });
 }
+// pop=true 的入口先走这一步：确认按钮是破坏性红色，Esc/取消直接关掉
+function askStashPop(e: StashEntry) {
+  stashMenuOpen.value = false;
+  stashPopConfirm.value = e;
+  nextTick(() => stashPopCancelBtn.value?.$el.focus());
+}
+function closeStashPop() {
+  stashPopConfirm.value = null;
+}
+function confirmStashPop() {
+  const e = stashPopConfirm.value;
+  if (!e) return;
+  stashPopConfirm.value = null;
+  stashRestore(e.index, true);
+}
+function onStashPopKeydown(ev: KeyboardEvent) {
+  if (ev.key === "Escape") closeStashPop();
+}
+// 这个弹窗不进 App.vue 的 overlayOrder（那是顶层浮层的表），Esc 自己收
+watch(stashPopConfirm, (open, _prev, onCleanup) => {
+  if (!open) return;
+  window.addEventListener("keydown", onStashPopKeydown);
+  onCleanup(() => window.removeEventListener("keydown", onStashPopKeydown));
+});
 function openStashPush() {
   stashMenuOpen.value = false;
   stashMsg.value = "";
@@ -306,7 +334,7 @@ async function genCommitMsg() {
 
     <!-- 已暂存 -->
     <div class="flex items-center gap-2 px-3 pt-3 pb-1.5">
-      <span class="text-[11px] uppercase tracking-wider text-muted-foreground">已暂存</span>
+      <span class="text-[11px] tracking-wide text-muted-foreground">已暂存</span>
       <Badge v-if="staged.length" variant="default">{{ staged.length }}</Badge>
       <!-- 全部取消暂存 -->
       <Button
@@ -355,12 +383,12 @@ async function genCommitMsg() {
           </Button>
         </Tooltip>
       </li>
-      <li v-if="!staged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
+      <li v-if="!staged.length" class="px-3 py-1.5 text-xs text-muted-foreground">暂无已暂存的改动</li>
     </ul>
 
     <!-- 未暂存 -->
     <div class="mt-2 flex items-center gap-2 border-t border-border px-3 pt-3 pb-1.5">
-      <span class="text-[11px] uppercase tracking-wider text-muted-foreground">未暂存</span>
+      <span class="text-[11px] tracking-wide text-muted-foreground">未暂存</span>
       <Badge v-if="unstaged.length" variant="danger">{{ unstaged.length }}</Badge>
       <Button
         v-if="unstaged.length"
@@ -420,7 +448,7 @@ async function genCommitMsg() {
           </Button>
         </Tooltip>
       </li>
-      <li v-if="!unstaged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
+      <li v-if="!unstaged.length" class="px-3 py-1.5 text-xs text-muted-foreground">暂无未暂存的改动</li>
     </ul>
 
     <!-- 文件右键菜单（ui/ContextMenu 统一渲染） -->
@@ -558,7 +586,7 @@ async function genCommitMsg() {
         class="fixed max-h-[60vh] w-[300px] overflow-y-auto rounded-md border border-border bg-card py-1 shadow-xl"
         :style="{ left: stashAnchor.x + 'px', top: stashAnchor.y + 'px' }"
       >
-        <div class="px-3 py-1 text-[10.5px] uppercase tracking-wider text-muted-foreground">
+        <div class="px-3 py-1 text-[10.5px] tracking-wide text-muted-foreground">
           Stash · 暂存架
         </div>
         <button
@@ -602,7 +630,7 @@ async function genCommitMsg() {
                   size="icon"
                   class="size-6 shrink-0 hover:text-primary"
                   :aria-label="`恢复并删除 stash 记录 ${e.subject}`"
-                  @click.stop="stashRestore(e.index, true)"
+                  @click.stop="askStashPop(e)"
                 >
                   <ArchiveRestore class="size-3.5" />
                 </Button>
@@ -650,6 +678,34 @@ async function genCommitMsg() {
         <div class="mt-3 flex justify-end gap-2">
           <Button variant="ghost" size="sm" @click="stashPushOpen = false">取消</Button>
           <Button variant="default" size="sm" :disabled="busy" @click="doStashPush">收纳</Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 「恢复并删除」确认：pop 会丢掉这条 stash 记录，属破坏性操作 -->
+    <div
+      v-if="stashPopConfirm"
+      v-trap
+      class="fixed inset-0 z-40 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-stash-pop-title"
+      @click.self="closeStashPop"
+    >
+      <div class="w-[420px] rounded-lg border border-border bg-card p-4 shadow-xl">
+        <div id="dlg-stash-pop-title" class="mb-1.5 font-medium">恢复并删除 Stash 记录</div>
+        <div>
+          将把「{{ stashPopConfirm.subject }}」的改动恢复到工作区，并删除这条 stash 记录。
+          改动不会自动回到暂存区，需要重新暂存与提交。
+        </div>
+        <div class="mt-1.5 text-xs text-muted-foreground">
+          如果只是想先试试、稍后还要再恢复，请取消并改用 stash 菜单里的「仅恢复（记录保留）」。
+        </div>
+        <div class="mt-3 flex justify-end gap-2">
+          <Button ref="stashPopCancelBtn" variant="ghost" size="sm" @click="closeStashPop">取消</Button>
+          <Button variant="destructive" size="sm" :disabled="busy" @click="confirmStashPop">
+            恢复并删除
+          </Button>
         </div>
       </div>
     </div>

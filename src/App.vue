@@ -31,7 +31,7 @@ import {
   ExternalLink,
 } from "@lucide/vue";
 import * as api from "./gitApi";
-import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, aiCacheDelete } from "./ai";
+import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, aiCacheDelete, abortAi, isAbortError } from "./ai";
 import type { Status, LogEntry, Branch, TagEntry } from "./gitApi";
 import { settings } from "./settings";
 import { describeStep, flowNeedsInput } from "./workflow";
@@ -61,6 +61,7 @@ import { VueDraggable } from "vue-draggable-plus";
 import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
 import { closeTop, type OverlayLayer, type OverlayName } from "./lib/overlays";
+import { readJsonArray, readJsonObject } from "./lib/safeJson";
 
 const repo = ref(localStorage.getItem("gz.repo") ?? "");
 const status = ref<Status | null>(null);
@@ -159,10 +160,12 @@ const historyFilePath = ref<string | null>(null);
 const remoteRaw = ref(""); // origin 的 URL（git remote get-url）
 const remoteLink = ref(""); // 用户在设置里自定义的网页链接（留空自动推断）
 
-// 统一的历史拉取入口：带上 视图范围（--all）、文件历史（--follow -- path）与文件路径过滤
-function fetchLog(skip = 0) {
+// 统一的历史拉取入口：带上 视图范围（--all）、文件历史（--follow -- path）与文件路径过滤。
+// path 显式传入（默认当前仓库）——await 期间仓库可能已切走，隐式读 repo.value 会让调用方
+// 很难把「这次请求属于哪个仓库」和结果对应起来（历史范围 watcher 的串台就出在这里）。
+function fetchLog(skip = 0, path = repo.value) {
   return api.log(
-    repo.value,
+    path,
     skip,
     historyMode.value === "all" ? true : undefined,
     historyFilePath.value ?? undefined,
@@ -172,25 +175,29 @@ function fetchLog(skip = 0) {
 // fetch=true 时先静默 fetch 远程再拉数据——ahead/behind 基于本地 remote-tracking refs，
 // 不 fetch 就永远看不到「远程有新提交可拉」；离线时 fetch 失败不打扰，仍刷新本地状态。
 // 操作后的刷新（run()）不带 fetch：pull/push 已更新过 refs，无需重复网络请求
+// 刷新序号：窗口聚焦、F5、操作后刷新可能并发（focus 那条不看 busy），
+// 让「后发起的那次」胜出——否则先发起的旧请求晚回来会把提交后的新状态覆盖回旧值
+let refreshSeq = 0;
 async function refresh(opts: { fetch?: boolean } = {}) {
   // 仓库身份快照：await 期间用户可能已切走（Ctrl+Tab / Ctrl+数字绕过 busy 检查）
   const path = repo.value;
   if (!path) return;
+  const seq = ++refreshSeq;
   if (opts.fetch) {
     await api.fetchAll(path).catch(() => {});
-    if (repo.value !== path) return;
+    if (repo.value !== path || seq !== refreshSeq) return;
   }
-  remoteLink.value =
-    (JSON.parse(localStorage.getItem("gz.remoteLinks") ?? "{}") as Record<string, string>)[path] ?? "";
+  remoteLink.value = readJsonObject<Record<string, string>>("gz.remoteLinks", {})[path] ?? "";
   try {
     const [s, l, b, tg] = await Promise.all([
       api.status(path),
-      fetchLog(0),
+      fetchLog(0, path),
       api.branches(path),
       api.tagList(path),
     ]);
     // 结果属于已切走的仓库：丢弃，别写进新仓库的视图与 LRU 槽（否则切回来还是错数据）
-    if (repo.value !== path) return;
+    // seq 过期同理丢弃：已有更新的一次刷新在跑，它的结果才是真相
+    if (repo.value !== path || seq !== refreshSeq) return;
     status.value = s;
     commits.value = l;
     branchList.value = b;
@@ -198,7 +205,7 @@ async function refresh(opts: { fetch?: boolean } = {}) {
     canLoadMore.value = l.length >= 300;
     cachePut(path, { status: s, commits: l, branchList: b, tags: tg });
   } catch (e) {
-    if (repo.value === path) showError(String(e));
+    if (repo.value === path && seq === refreshSeq) showError(String(e));
   }
 }
 
@@ -221,7 +228,7 @@ async function loadMorePage() {
   const path = repo.value; // 仓库身份快照：翻页期间可能已切走
   loadingMore.value = true;
   try {
-    const next = await fetchLog(commits.value.length);
+    const next = await fetchLog(commits.value.length, path);
     // 仓库已切走：丢弃过期分页，别把上一仓库的提交 push 进新仓库的历史数组
     if (repo.value !== path) return;
     commits.value.push(...next);
@@ -259,16 +266,23 @@ function fetchOnce() {
 }
 
 // 视图范围 / 文件路径过滤变化 → 重载当前历史（两段式：遮罩先盖）
+// 仓库身份快照：fetchLog 期间用户可能已切走（Ctrl+Tab / Ctrl+数字绕过 busy），
+// 过期结果会覆盖新仓库的历史、还会提前把遮罩关掉——切走就整个丢弃。
 watch([historyMode, historyFilePath], () => {
-  if (!repo.value) return;
+  const path = repo.value;
+  if (!path) return;
   historyLoading.value = true;
   nextTick().then(async () => {
     try {
-      const l = await fetchLog(0);
+      const l = await fetchLog(0, path);
+      if (repo.value !== path) return;
       commits.value = l;
       canLoadMore.value = l.length >= 300;
+    } catch (e) {
+      if (repo.value === path) showError(String(e));
     } finally {
-      historyLoading.value = false;
+      // 已切走时不碰遮罩：新仓库的 activate() 正在自己管它
+      if (repo.value === path) historyLoading.value = false;
     }
   });
 });
@@ -418,7 +432,8 @@ interface RepoTab {
   name: string;
   group?: string;
 }
-const repos = ref<RepoTab[]>(JSON.parse(localStorage.getItem("gz.repos") ?? "[]"));
+// 读 localStorage 一律经 lib/safeJson：坏数据（手改坏 / 旧版本形状）不该让 setup 抛错白屏
+const repos = ref<RepoTab[]>(readJsonArray<RepoTab>("gz.repos"));
 watch(repos, (v) => localStorage.setItem("gz.repos", JSON.stringify(v)), { deep: true });
 
 // 启动时确保当前仓库在列表里
@@ -429,7 +444,7 @@ if (repo.value && !repos.value.some((r) => r.path === repo.value)) {
 // ---- 选项卡分组（书签文件夹模式）----
 // 分组以文件夹形式常驻标签栏，组内仓库只在点击文件夹弹出的下拉里出现；
 // 分组名录 gz.groups，标签栏顺序（文件夹+未分组仓库）存 gz.barOrder，管理集中在标签栏右侧按钮的弹窗
-const groupList = ref<string[]>(JSON.parse(localStorage.getItem("gz.groups") ?? "[]"));
+const groupList = ref<string[]>(readJsonArray<string>("gz.groups"));
 watch(groupList, (v) => localStorage.setItem("gz.groups", JSON.stringify(v)));
 
 interface BarGroup {
@@ -441,8 +456,20 @@ interface BarRepo {
   path: string;
 }
 type BarEntry = BarGroup | BarRepo;
-const barOrder = ref<BarEntry[]>(JSON.parse(localStorage.getItem("gz.barOrder") ?? "[]"));
+const barOrder = ref<BarEntry[]>(readJsonArray<BarEntry>("gz.barOrder"));
 watch(barOrder, (v) => localStorage.setItem("gz.barOrder", JSON.stringify(v)), { deep: true });
+
+// 逐项比较，代替两次 JSON.stringify 全量序列化——syncBar 挂在 deep watcher 上，
+// 拖拽/重命名时会被反复触发，序列化整表在仓库多时是白白烧掉的
+function sameBar(a: BarEntry[], b: BarEntry[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((e, i) => {
+    const y = b[i];
+    return e.kind === "group"
+      ? y.kind === "group" && y.name === e.name
+      : y.kind === "repo" && y.path === e.path;
+  });
+}
 
 // 自愈同步：修剪已关闭仓库/已删除分组的条目，补上漏掉的新分组/新仓库（放末尾）。
 // barOrder 与渲染列表 1:1，拖拽映射始终成立
@@ -463,7 +490,7 @@ function syncBar() {
       next.push({ kind: "repo", path: r.path });
     }
   }
-  if (JSON.stringify(next) !== JSON.stringify(barOrder.value)) barOrder.value = next;
+  if (!sameBar(next, barOrder.value)) barOrder.value = next;
 }
 watch([repos, groupList], syncBar, { deep: true });
 localStorage.removeItem("gz.tabGroupsCollapsed"); // 旧版折叠状态键，废弃
@@ -539,6 +566,8 @@ function addMember(group: string, path: string) {
   const r = repoByPath.value.get(path);
   if (r) r.group = group; // 一个仓库只属一个分组；syncBar 把它从标签栏移除
 }
+// 移出分组：仓库本身不会丢，只是回到标签栏——同一个面板下方的「添加仓库」列表
+// 一次点击就能加回来，属于完全可逆操作，故意不加确认框（危险操作到处确认会让确认失去意义）
 function removeMember(path: string) {
   const r = repoByPath.value.get(path);
   if (r) r.group = undefined;
@@ -729,7 +758,7 @@ async function activate(path: string) {
     commits.value = [];
     canLoadMore.value = false;
     await nextTick();
-    const l = await fetchLog(0);
+    const l = await fetchLog(0, path);
     if (seq !== activateSeq) return;
     commits.value = l;
     canLoadMore.value = l.length >= 300;
@@ -741,7 +770,20 @@ async function activate(path: string) {
   fetchOnce();
 }
 
-function closeTab(path: string) {
+// 关闭选项卡会把仓库从 gz.repos（持久化列表）里摘掉，重开必须再走一次系统目录选择框——
+// 恢复成本远高于一次确认。按项目既有约定（「丢失一条已保存记录」类操作都要确认，
+// 例如删除分支、删除工作流），这里也走确认框；磁盘上的仓库本身不受影响。
+function askCloseTab(path: string) {
+  const r = repoByPath.value.get(path);
+  if (!r) return;
+  openConfirm({
+    title: "关闭仓库选项卡",
+    body: `将从选项卡列表里移除「${r.name}」，重新打开需要再选一次目录。磁盘上的仓库不受影响。`,
+    ok: async () => doCloseTab(path),
+  });
+}
+
+function doCloseTab(path: string) {
   const i = repos.value.findIndex((r) => r.path === path);
   if (i === -1) return;
   const name = repos.value[i].name;
@@ -794,8 +836,24 @@ function confirmRename() {
   if (r && name) r.name = name;
   renameTarget.value = "";
 }
-// 关闭其他可见选项卡；分组内仓库是「归档」状态，不受影响
-function closeOthers(path: string) {
+// 关闭其他可见选项卡；分组内仓库是「归档」状态，不受影响。
+// 一次可能关掉多个，且它们都会从 gz.repos 里消失，所以先确认（文案里给数量）
+function askCloseOthers(path: string) {
+  const keep = repoByPath.value.get(path);
+  if (!keep) return;
+  tabCtx.value = null;
+  const n = repos.value.filter((r) => !r.group && r.path !== path).length;
+  if (!n) {
+    toast("没有其他选项卡可关闭");
+    return;
+  }
+  openConfirm({
+    title: "关闭其他选项卡",
+    body: `将关闭 ${n} 个仓库选项卡（收在分组里的仓库不受影响）。重新打开需要再选一次目录。`,
+    ok: async () => doCloseOthers(path),
+  });
+}
+function doCloseOthers(path: string) {
   const keep = repoByPath.value.get(path);
   if (!keep) return;
   repos.value = repos.value.filter((r) => r.group || r.path === path);
@@ -874,6 +932,8 @@ async function startReview(regen: boolean | Event = false) {
     );
     reviewCacheSet(key, reviewText.value);
   } catch (e) {
+    // 关弹窗触发的取消是正常操作，不是错误
+    if (isAbortError(e)) return;
     reviewErr.value = String(e).replace(/^Error: /, "");
   } finally {
     reviewBusy.value = false;
@@ -949,6 +1009,7 @@ async function genReleaseNotes() {
       list.map((c) => `${c.hash} ${c.date} ${c.author} ${c.subject}`).join("\n");
     notesText.value = await aiComplete(AI_PROMPTS.releaseNotes.system, clipForAI(user));
   } catch (e) {
+    if (isAbortError(e)) return; // 关弹窗取消，不是失败
     notesErr.value = String(e).replace(/^Error: /, "");
   } finally {
     notesBusy.value = false;
@@ -1028,6 +1089,13 @@ function remoteNodes(prefix: string): BNode[] {
   }));
   return buildNodes(list, `remote:${prefix}:`);
 }
+// 展开的远程组 → 树节点表：一次算好。原来模板在 v-for 里直接调 remoteNodes(prefix)，
+// 每次重渲染都把每个展开的远程组全量重建一遍树。
+const remoteNodeMap = computed(() => {
+  const map = new Map<string, BNode[]>();
+  for (const [prefix] of remoteGroups.value) map.set(prefix, remoteNodes(prefix));
+  return map;
+});
 
 // ---- 标签：侧栏标签组（推送/删除）+ 新建弹窗；历史行右键可对任意提交建 tag ----
 const tags = ref<TagEntry[]>([]);
@@ -1334,9 +1402,13 @@ async function execStep(
     case "pull":
       await api.pull(path);
       return;
-    case "push":
-      await api.push(path, status.value?.branch ?? "");
+    case "push": {
+      // 现读分支名：流程里前面的 checkout 步骤已经切走了，status.value 还停在流程开始时的值，
+      // 拿它当参数会让 git_push 的「无上游自动 -u」给一个不相干的分支建立跟踪
+      const st = await api.status(path);
+      await api.push(path, st.branch);
       return;
+    }
     case "merge":
       await api.merge(path, refName(step.ref)); // 冲突 → 报错停留，后续步骤不执行
       return;
@@ -1414,6 +1486,11 @@ async function switchBranch(b: Branch) {
   if (b.current || busy.value) return;
   // doSwitch 只做乐观更新 + checkout，刷新交给外层 run（确认路径 run(ok) 已包裹，避免嵌套 run）
   const doSwitch = async () => {
+    // 乐观更新：先让界面切过去，不用等 git 返回。但 checkout 失败（工作区脏且冲突、
+    // 分支被锁、目标分支已不存在…）必须回滚——否则界面停在一个从没切过去的分支名上，
+    // run() 只弹错误框，用户却以为自己已经在目标分支了。
+    const prevBranch = status.value?.branch ?? "";
+    const prevCurrent = branchList.value.map((x) => x.current);
     if (status.value && !b.remote) status.value.branch = b.name;
     branchList.value.forEach((x) => (x.current = x.name === b.name));
     historyLoading.value = true;
@@ -1421,6 +1498,10 @@ async function switchBranch(b: Branch) {
       // 远程叶子 name 已是剥掉远程前缀的 DWIM 名（release/dev），checkout 自动建同名本地跟踪分支；
       // 本地叶子 name 即分支名。不能用完整引用名（origin/xxx）checkout，那会进 detached HEAD
       await api.checkout(repo.value, b.name);
+    } catch (e) {
+      if (status.value) status.value.branch = prevBranch;
+      branchList.value.forEach((x, i) => (x.current = prevCurrent[i] ?? false));
+      throw e; // 交给 run() 弹错误框
     } finally {
       historyLoading.value = false;
     }
@@ -1638,6 +1719,16 @@ function closeTopOverlay() {
   closeTop(overlayLayers);
 }
 
+// AI 请求没有「后台完成还有用」的场景：弹窗一关结果就没人看，但请求会继续跑满 30s 超时。
+// 这里统一收口——任何一条关闭路径（Esc / 点遮罩 / 叉 / 关闭按钮）都会走到 flag 变化，
+// 比在 6 个关闭点上各调一次 abortAi() 更不容易漏。取消属于正常操作，不弹错误。
+watch(
+  [reviewOpen, notesOpen, showSettings, () => !!diffState.value],
+  ([r, n, s, d], [pr, pn, ps, pd]) => {
+    if ((pr && !r) || (pn && !n) || (ps && !s) || (pd && !d)) abortAi();
+  },
+);
+
 function onGlobalKeydown(e: KeyboardEvent) {
   if (e.isComposing) return; // 中文输入法组合中：Esc/Enter 是候选词操作，不碰任何快捷键/浮层
   if (e.ctrlKey && e.key === "Tab") {
@@ -1681,6 +1772,22 @@ const leftW = ref(Number(localStorage.getItem("gz.w.left")) || 208);
 const rightW = ref(Number(localStorage.getItem("gz.w.right")) || 320);
 let resizing: "l" | "r" | null = null;
 
+// 侧栏宽度上限不能只看固定像素：最小窗口 860px 时 420+520 的上限足够把中间内容挤没
+// （审查实测两侧合计可占 61%）。给中间区留出 MIN_CENTER，上限再跟窗口宽度取小。
+const MIN_CENTER = 460;
+function maxLeftW() {
+  return Math.max(140, Math.min(420, window.innerWidth - rightW.value - MIN_CENTER));
+}
+function maxRightW() {
+  return Math.max(240, Math.min(520, window.innerWidth - leftW.value - MIN_CENTER));
+}
+// 窗口变窄时把已存/已拖的宽度收回来。只改 ref 不写回 localStorage——
+// 用户在大窗口下的偏好宽度应该保留，回到大窗口时还能用。
+function clampSidebars() {
+  if (leftW.value > maxLeftW()) leftW.value = maxLeftW();
+  if (rightW.value > maxRightW()) rightW.value = maxRightW();
+}
+
 function startResize(side: "l" | "r") {
   resizing = side;
   document.body.style.cursor = "col-resize";
@@ -1688,8 +1795,8 @@ function startResize(side: "l" | "r") {
   window.addEventListener("mouseup", endResize);
 }
 function onResizeMove(e: MouseEvent) {
-  if (resizing === "l") leftW.value = Math.min(420, Math.max(140, e.clientX));
-  else rightW.value = Math.min(520, Math.max(240, window.innerWidth - e.clientX));
+  if (resizing === "l") leftW.value = Math.min(maxLeftW(), Math.max(140, e.clientX));
+  else rightW.value = Math.min(maxRightW(), Math.max(240, window.innerWidth - e.clientX));
 }
 function endResize() {
   window.removeEventListener("mousemove", onResizeMove);
@@ -1736,9 +1843,14 @@ const imeCloseBranchRename = imeGuard(() => {
   branchRename.value = null;
 });
 
+// 窗口重新获得焦点时静默刷新（切回来看到的就是最新状态）
+const onWindowFocus = () => refresh();
+
 onMounted(async () => {
-  window.addEventListener("focus", () => refresh());
+  window.addEventListener("focus", onWindowFocus);
   window.addEventListener("keydown", onGlobalKeydown);
+  window.addEventListener("resize", clampSidebars);
+  clampSidebars(); // 存下来的侧栏宽度可能来自更宽的窗口
   // MRU 种子：当前仓库优先，其余按选项卡顺序
   mruPaths.value = repo.value
     ? [repo.value, ...repos.value.map((r) => r.path).filter((p) => p !== repo.value)]
@@ -1747,6 +1859,13 @@ onMounted(async () => {
     await refresh();
     fetchOnce();
   }
+});
+
+onUnmounted(() => {
+  window.removeEventListener("focus", onWindowFocus);
+  window.removeEventListener("keydown", onGlobalKeydown);
+  window.removeEventListener("resize", clampSidebars);
+  endResize(); // 拖动中途卸载（热更新/退出）别把监听和 col-resize 光标留下
 });
 </script>
 
@@ -1895,7 +2014,7 @@ onMounted(async () => {
               class="size-3 opacity-0 transition-opacity group-hover/tab:opacity-60 hover:!opacity-100 hover:text-destructive"
               aria-label="关闭仓库选项卡"
               @mousedown.stop
-              @click.stop="closeTab(item.path)"
+              @click.stop="askCloseTab(item.path)"
             />
           </div>
         </template>
@@ -1914,7 +2033,7 @@ onMounted(async () => {
         class="shrink-0 overflow-y-auto border-r border-border"
         :style="{ width: leftW + 'px' }"
       >
-        <div class="px-3 pt-3 pb-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
+        <div class="px-3 pt-3 pb-1.5 text-[11px] tracking-wide text-muted-foreground">
           分支
         </div>
         <!-- 分支模糊搜索（创建分支在工具栏按钮） -->
@@ -1956,7 +2075,7 @@ onMounted(async () => {
           <BranchTree
             v-if="openRemotes.has(prefix)"
             v-model="collapsedGroups"
-            :nodes="remoteNodes(prefix)"
+            :nodes="remoteNodeMap.get(prefix) ?? []"
             @switch="switchBranch"
             @menu="(b, x, y) => (branchMenu = { x, y, b })"
           />
@@ -2516,8 +2635,8 @@ onMounted(async () => {
       :y="tabCtx.y"
       :items="[
         { label: '重命名…', fn: openRenameModal },
-        { label: '关闭', danger: true, fn: () => closeTab(tabCtx!.path) },
-        { label: '关闭其他', fn: () => closeOthers(tabCtx!.path) },
+        { label: '关闭', danger: true, fn: () => askCloseTab(tabCtx!.path) },
+        { label: '关闭其他', fn: () => askCloseOthers(tabCtx!.path) },
       ]"
       @close="tabCtx = null"
     />
@@ -2528,7 +2647,7 @@ onMounted(async () => {
         class="fixed max-h-[60vh] w-[260px] overflow-y-auto rounded-md border border-border bg-card py-1 shadow-xl"
         :style="{ left: folderDd.x + 'px', top: folderDd.y + 'px' }"
       >
-        <div class="px-3 py-1 text-[10.5px] uppercase tracking-wider text-muted-foreground">
+        <div class="px-3 py-1 text-[10.5px] tracking-wide text-muted-foreground">
           {{ folderDd.group }} · {{ folderMembers.length }} 个仓库
         </div>
         <button
@@ -2618,7 +2737,7 @@ onMounted(async () => {
                 <span class="flex-1 truncate text-[10.5px] text-muted-foreground">{{ r.path }}</span>
                 <button
                   class="cursor-pointer text-muted-foreground hover:text-destructive"
-                  title="移出分组（回到标签栏）"
+                  title="移出分组（回到标签栏，可在下方列表点回来）"
                   @click="removeMember(r.path)"
                 >
                   <X class="size-3" />

@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, reactive, ref, onMounted } from "vue";
+import { computed, reactive, ref, nextTick, onMounted } from "vue";
 import { X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe, Workflow as WorkflowIcon, ChevronDown, ChevronUp } from "@lucide/vue";
 import { THEMES, settings, type Settings } from "../settings";
 import * as api from "../gitApi";
-import { aiVerify } from "../ai";
+import { aiVerify, isAbortError } from "../ai";
+import { readJsonObject } from "../lib/safeJson";
 import { workflows } from "../workflowStore";
 import { newFlowId, type BranchRef, type Workflow, type WorkflowStep } from "../workflow";
 import { Button, Input, Spinner, Select, Switch } from "@/components/ui";
@@ -40,7 +41,7 @@ onMounted(async () => {
     }
   }
   const custom =
-    (JSON.parse(localStorage.getItem("gz.remoteLinks") ?? "{}") as Record<string, string>)[props.repo] ?? "";
+    readJsonObject<Record<string, string>>("gz.remoteLinks", {})[props.repo] ?? "";
   // 默认填充 origin URL；用户改过则显示自定义值
   remoteLink.value = custom || originUrl.value;
   if (!props.repo) return;
@@ -61,8 +62,10 @@ async function save() {
     try {
       await aiVerify(draft.aiBaseUrl, draft.aiApiKey);
     } catch (e) {
-      verifyErr.value = String(e).replace(/^Error: /, "");
       verifying.value = false;
+      // 关设置页会 abortAi()：那是用户自己的动作，不算「验通失败」，别报红字
+      if (isAbortError(e)) return;
+      verifyErr.value = String(e).replace(/^Error: /, "");
       return;
     }
     verifying.value = false;
@@ -72,7 +75,7 @@ async function save() {
     api.configUser(props.repo, userName.value.trim(), userEmail.value.trim()).catch(() => {});
   }
   // 仓库链接写回 per-repo map
-  const links = JSON.parse(localStorage.getItem("gz.remoteLinks") ?? "{}") as Record<string, string>;
+  const links = readJsonObject<Record<string, string>>("gz.remoteLinks", {});
   const link = remoteLink.value.trim();
   if (props.repo) {
     // 与 origin 相同 → 视为自动推断（存空）
@@ -88,7 +91,22 @@ async function save() {
 
 // ---- 工作流管理（M12：配置面在设置页，执行面在工具栏）----
 const wfExpanded = ref("");
-const deleteArm = ref(""); // 两段式删除：第一次点「删除」进入确认态，再点才真删
+// 删除工作流：改用真确认框。原来的两段式按钮（点一次变「确认删除？」再点一次）
+// 既容易被误点，也没说清删的是哪个工作流。
+const delFlow = ref<Workflow | null>(null);
+const delCancelBtn = ref<{ $el: HTMLButtonElement } | null>(null);
+function openDeleteFlow(w: Workflow) {
+  delFlow.value = w;
+  // 危险操作的安全默认：焦点落「取消」
+  nextTick(() => delCancelBtn.value?.$el.focus());
+}
+function confirmDeleteFlow() {
+  const w = delFlow.value;
+  delFlow.value = null;
+  if (!w) return;
+  workflows.splice(workflows.indexOf(w), 1);
+  if (wfExpanded.value === w.id) wfExpanded.value = "";
+}
 function addFlow() {
   const wf: Workflow = { id: newFlowId(), name: `工作流 ${workflows.length + 1}`, steps: [] };
   workflows.push(wf);
@@ -105,18 +123,6 @@ function confirmFlowRename() {
   if (!r || !name) return;
   const wf = workflows.find((x) => x.id === r.id);
   if (wf) wf.name = name;
-}
-function deleteFlow(w: Workflow) {
-  if (deleteArm.value === w.id) {
-    workflows.splice(workflows.indexOf(w), 1);
-    if (wfExpanded.value === w.id) wfExpanded.value = "";
-    deleteArm.value = "";
-    return;
-  }
-  deleteArm.value = w.id;
-  setTimeout(() => {
-    if (deleteArm.value === w.id) deleteArm.value = "";
-  }, 2500);
 }
 function moveStep(w: Workflow, i: number, d: -1 | 1) {
   const j = i + d;
@@ -289,7 +295,7 @@ const NAV = [
           <!-- 用户信息（仓库级） -->
           <template v-if="tab === 'user'">
             <section>
-              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">提交者信息</h3>
+              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">提交者信息</h3>
               <div class="space-y-3">
                 <div class="flex items-center gap-3">
                   <label class="w-16 shrink-0 text-xs text-muted-foreground">名字</label>
@@ -307,7 +313,7 @@ const NAV = [
 
             <!-- 提交热力图（只统计上方邮箱名下的提交） -->
             <section v-if="props.repo">
-              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">提交热力图</h3>
+              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">提交热力图</h3>
               <CommitHeatmap :repo="props.repo" :author-email="userEmail" />
             </section>
           </template>
@@ -315,7 +321,7 @@ const NAV = [
           <!-- AI -->
           <template v-else-if="tab === 'ai'">
             <section>
-              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">AI 服务（OpenAI 兼容协议）</h3>
+              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">AI 服务（OpenAI 兼容协议）</h3>
               <div class="mb-4 flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2">
                 <span class="text-xs">启用 AI 功能</span>
                 <Switch v-model="aiOn" />
@@ -355,7 +361,7 @@ const NAV = [
           <!-- 外观 -->
           <template v-else-if="tab === 'appearance'">
             <section>
-              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">主题</h3>
+              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">主题</h3>
               <div class="grid grid-cols-4 gap-1.5">
                 <button
                   v-for="t in THEMES"
@@ -374,7 +380,7 @@ const NAV = [
             </section>
 
             <section>
-              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">字体</h3>
+              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">字体</h3>
               <div class="space-y-3">
                 <div class="flex items-center gap-3">
                   <label class="w-16 shrink-0 text-xs text-muted-foreground">UI 字体</label>
@@ -395,7 +401,7 @@ const NAV = [
           <!-- 个性化 -->
           <template v-else-if="tab === 'personal'">
             <section>
-              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">分支前缀（可多个）</h3>
+              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">分支前缀（可多个）</h3>
               <!-- tag 式编辑：回车/逗号添加，点 × 删除；存储仍是逗号分隔字符串，创建弹窗下拉自动同步 -->
               <div class="flex min-h-[32px] flex-wrap items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5">
                 <span
@@ -421,7 +427,7 @@ const NAV = [
             </section>
 
             <section>
-              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">性能</h3>
+              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">性能</h3>
               <div class="flex items-center gap-3">
                 <label class="w-16 shrink-0 text-xs text-muted-foreground">切换缓存</label>
                 <input
@@ -443,7 +449,7 @@ const NAV = [
           <!-- 工作流 -->
           <template v-else-if="tab === 'workflow'">
             <section>
-              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">什么是工作流</h3>
+              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">什么是工作流</h3>
               <p class="mb-4 text-[11px] leading-relaxed text-muted-foreground">
                 把「切分支 → 拉取 → 合并 → 推送」这类固定套路串起来，工具栏
                 <WorkflowIcon class="inline size-3.5 align-[-2px] text-primary" /> 按钮下拉一键执行。
@@ -474,10 +480,9 @@ const NAV = [
                     variant="ghost"
                     size="sm"
                     class="h-6 px-2 text-[11px]"
-                    :class="deleteArm === w.id && 'text-destructive'"
-                    @click="deleteFlow(w)"
+                    @click="openDeleteFlow(w)"
                   >
-                    {{ deleteArm === w.id ? "确认删除？" : "删除" }}
+                    删除
                   </Button>
                 </div>
                 <div v-if="wfExpanded === w.id" class="border-t border-border/60 px-3 py-2.5">
@@ -606,7 +611,7 @@ const NAV = [
           <!-- 远程 -->
           <template v-else-if="tab === 'remote'">
             <section>
-              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">远程仓库路径</h3>
+              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">远程仓库路径</h3>
               <Input v-model="remoteLink" :placeholder="originUrl || '未配置 origin 远程'" />
               <p class="mt-2 text-[11px] text-muted-foreground">
                 默认填充 origin URL（{{ originUrl || "未配置" }}），可改为任意网页链接；
@@ -618,7 +623,7 @@ const NAV = [
           <!-- 快捷键 -->
           <template v-else>
             <section>
-              <h3 class="mb-2 text-[11px] uppercase tracking-wider text-muted-foreground">快捷键列表</h3>
+              <h3 class="mb-2 text-[11px] tracking-wide text-muted-foreground">快捷键列表</h3>
               <div class="divide-y divide-border rounded-md border border-border">
                 <div
                   v-for="[keys, desc] in SHORTCUTS"
@@ -642,6 +647,29 @@ const NAV = [
             {{ verifying ? "验通中…" : "保存" }}
           </Button>
         </footer>
+      </div>
+    </div>
+
+    <!-- 删除工作流确认：组件内独立浮层，风格对齐 App.vue 的危险操作确认框。
+         不进 overlays 的 overlayOrder —— 那张表是 App.vue 顶层浮层的，登记它得同步改 App.vue；
+         Esc 因此由自己捕获（同 ContextMenu 的做法）。 -->
+    <div
+      v-if="delFlow"
+      v-trap
+      class="fixed inset-0 z-50 grid place-items-center bg-black/50"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-wf-del-title"
+      @click.self="delFlow = null"
+      @keydown.esc.stop="delFlow = null"
+    >
+      <div class="w-[420px] rounded-lg border border-border bg-card p-4 shadow-xl">
+        <div id="dlg-wf-del-title" class="mb-1.5 font-medium">删除工作流</div>
+        <div>确定删除「{{ delFlow.name }}」？删除后不可恢复。</div>
+        <div class="mt-3 flex justify-end gap-2">
+          <Button ref="delCancelBtn" variant="ghost" size="sm" @click="delFlow = null">取消</Button>
+          <Button variant="destructive" size="sm" @click="confirmDeleteFlow">确认删除</Button>
+        </div>
       </div>
     </div>
   </div>

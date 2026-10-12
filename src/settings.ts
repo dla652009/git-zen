@@ -1,5 +1,6 @@
 // 设置：localStorage 持久化，保存后立即生效
 import { reactive, watch } from "vue";
+import { readJsonObject } from "./lib/safeJson";
 
 export interface Settings {
   theme: string; // system / light / dark / catppuccin-mocha / ...
@@ -41,20 +42,29 @@ const DEFAULTS: Settings = {
   aiEnabled: "on",
 };
 
+const pickStr = (v: unknown, dflt: string): string =>
+  typeof v === "string" ? v : dflt;
+const pickNum = (v: unknown, dflt: number): number =>
+  typeof v === "number" && Number.isFinite(v) ? v : dflt;
+
+// 逐字段取值 + 校验类型，缺省/类型不对的字段回退默认值。
+// 原来写法是 `{ ...DEFAULTS, ...saved } as Settings`——`as` 只是让编译器闭嘴，
+// 存坏的值（例如 fontSize: "big"）照样进 reactive 并生效。
+// 已废弃的历史字段（diffAddBg 等）不再读取，历史值由下一次 persist 自然清掉。
 function load(): Settings {
-  try {
-    const saved = JSON.parse(localStorage.getItem(KEY) ?? "{}");
-    return {
-      ...DEFAULTS,
-      ...saved,
-      diffAddBg: undefined,
-      diffAddText: undefined,
-      diffDelBg: undefined,
-      diffDelText: undefined,
-    } as Settings;
-  } catch {
-    return { ...DEFAULTS };
-  }
+  const saved = readJsonObject<Record<string, unknown>>(KEY, {});
+  return {
+    theme: pickStr(saved.theme, DEFAULTS.theme),
+    fontFamily: pickStr(saved.fontFamily, DEFAULTS.fontFamily),
+    fontSize: pickNum(saved.fontSize, DEFAULTS.fontSize),
+    branchPrefix: pickStr(saved.branchPrefix, DEFAULTS.branchPrefix),
+    repoCacheSize: pickNum(saved.repoCacheSize, DEFAULTS.repoCacheSize),
+    aiBaseUrl: pickStr(saved.aiBaseUrl, DEFAULTS.aiBaseUrl),
+    aiApiKey: pickStr(saved.aiApiKey, DEFAULTS.aiApiKey),
+    aiModel: pickStr(saved.aiModel, DEFAULTS.aiModel),
+    aiCommitLang: pickStr(saved.aiCommitLang, DEFAULTS.aiCommitLang),
+    aiEnabled: pickStr(saved.aiEnabled, DEFAULTS.aiEnabled),
+  };
 }
 
 export const settings = reactive<Settings>(load());

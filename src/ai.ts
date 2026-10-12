@@ -1,9 +1,88 @@
 // M6 AI 能力统一入口：OpenAI 兼容 chat/completions，前端直调（tauri-plugin-http 放行跨域）。
 // 约定：所有 AI 功能只读消费 diff/log 文本、产文本，不写工作区；一律经 aiComplete() 调用。
 import { fetch } from "@tauri-apps/plugin-http";
+import { readJsonObject } from "./lib/safeJson";
 import { settings } from "./settings";
 
 const TIMEOUT_MS = 30_000;
+const TIMEOUT_MSG = "AI 请求超时（30s）";
+
+// 进行中的请求。用户关掉 AI 弹窗后请求没必要再跑满 30s，统一取消。
+const inflight = new Set<AbortController>();
+// 取消序号：abortAi() 递增。跨过取消点之后才失败的杂项错误（例如响应体读到一半被掐断）
+// 同样算「用户取消」，否则关掉弹窗后还会冒出一个无意义的错误框。
+let abortSeq = 0;
+
+/** 用户主动取消（关弹窗）——UI 见到它应当静默，不要弹错误 */
+export class AiAbortError extends Error {
+  constructor(message = "AI 请求已取消") {
+    super(message);
+    this.name = "AiAbortError";
+  }
+}
+
+/** 是否是「用户主动取消」（与超时、网络失败区分开） */
+export function isAbortError(e: unknown): boolean {
+  return e instanceof Error && e.name === "AiAbortError";
+}
+
+/** 取消全部进行中的 AI 请求；没有请求时是安全 no-op */
+export function abortAi(): void {
+  abortSeq++;
+  for (const c of inflight) c.abort();
+  inflight.clear();
+}
+
+/** signal 一 abort 就立刻 reject——不等宿主 promise 自己结束（取消后它不保证会 settle） */
+function abortable<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new AiAbortError());
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener("abort", onAbort, { once: true });
+    p.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    );
+  });
+}
+
+/**
+ * 统一发请求：超时与取消都真正走 AbortController（原来 TIMEOUT_MS 只是个标志位，
+ * 请求本身会一直挂着）。超时抛超时错误、用户取消抛 AiAbortError，其余归为网络不通。
+ */
+async function aiFetch(
+  url: string,
+  init: RequestInit,
+  netMsg: string,
+): Promise<Response> {
+  const ac = new AbortController();
+  inflight.add(ac);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    ac.abort();
+  }, TIMEOUT_MS);
+  try {
+    return await abortable(fetch(url, { ...init, signal: ac.signal }), ac.signal);
+  } catch (e) {
+    if (ac.signal.aborted) {
+      throw timedOut ? new Error(TIMEOUT_MSG) : new AiAbortError();
+    }
+    throw new Error(netMsg);
+  } finally {
+    clearTimeout(timer);
+    inflight.delete(ac);
+  }
+}
 
 // diff 过长截断：模型上下文有限，二进制段已在后端剔除
 export function clipForAI(text: string, maxChars = 16_000): string {
@@ -42,11 +121,10 @@ export async function aiComplete(
   if (settings.aiApiKey.trim())
     headers.Authorization = `Bearer ${settings.aiApiKey}`;
 
-  let timedOut = false;
-  const timer = setTimeout(() => (timedOut = true), TIMEOUT_MS);
-  let res: Response;
-  try {
-    res = await fetch(url, {
+  const seq = abortSeq;
+  const res = await aiFetch(
+    url,
+    {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -57,14 +135,9 @@ export async function aiComplete(
         ],
         temperature: 0.7,
       }),
-    });
-  } catch {
-    clearTimeout(timer);
-    throw new Error(
-      timedOut ? "AI 请求超时（30s）" : "网络不通：无法连接 AI 服务",
-    );
-  }
-  clearTimeout(timer);
+    },
+    "网络不通：无法连接 AI 服务",
+  );
   if (!res.ok) {
     // 把服务端返回的真实原因带出来（如 model not found / 配额不足），否则无法定位生成失败的原因
     const body = await res.text().catch(() => "");
@@ -77,6 +150,8 @@ export async function aiComplete(
         detail = body.slice(0, 300);
       }
     }
+    // 取消会把错误响应体的读取掐断，这时别把「用户取消」报成 HTTP 失败
+    if (seq !== abortSeq) throw new AiAbortError();
     throw new Error(
       `${statusToText(res.status)}${detail ? `：${detail}` : ""}`,
     );
@@ -87,6 +162,8 @@ export async function aiComplete(
       choices?: { message?: { content?: string } }[];
     };
   } catch {
+    // 取消会把响应体流掐断，这不是「返回了坏内容」
+    if (seq !== abortSeq) throw new AiAbortError();
     throw new Error(
       "AI 返回了无法解析的内容（非 JSON），请检查 Base URL 是否正确",
     );
@@ -101,20 +178,14 @@ export async function aiVerify(baseUrl: string, apiKey: string): Promise<void> {
   const url = `${baseUrl.replace(/\/+$/, "")}/models`;
   const headers: Record<string, string> = {};
   if (apiKey.trim()) headers.Authorization = `Bearer ${apiKey}`;
-  let res: Response;
-  try {
-    res = await fetch(url, { headers });
-  } catch {
-    throw new Error("网络不通：无法连接该 Base URL");
-  }
+  const res = await aiFetch(url, { headers }, "网络不通：无法连接该 Base URL");
   if (!res.ok) throw new Error(statusToText(res.status));
 }
 
 // 功能点提示词集中在这
 export const AI_PROMPTS = {
   commitMessage: {
-    // 吸收 src/ai/skills/git-commit-message/SKILL.md 的规范：
-    // 跟随仓库既有风格，风格不明显时用 Conventional Commits；祈使语气、无尾句号、
+    // 提交信息规范：跟随仓库既有风格，风格不明显时用 Conventional Commits；祈使语气、无尾句号、
     // 不硬凑 type/scope、跟随仓库主导语言；只基于 diff 本身，不臆造行为。
     system(lang: string) {
       return `你是资深工程师。根据给定的暂存区 diff 写一条 Git 提交信息。
@@ -158,11 +229,8 @@ export const AI_PROMPTS = {
 const AI_CACHE_LIMIT = 30;
 
 function loadBucket(bucket: string): Record<string, string> {
-  try {
-    return JSON.parse(localStorage.getItem(`gz.ai.${bucket}`) ?? "{}");
-  } catch {
-    return {};
-  }
+  // 坏数据 / 被存成数组或字符串时退回空桶
+  return readJsonObject<Record<string, string>>(`gz.ai.${bucket}`, {});
 }
 
 export function aiCacheRead(bucket: string, id: string): string | undefined {
