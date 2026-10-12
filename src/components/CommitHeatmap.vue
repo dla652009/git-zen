@@ -129,7 +129,7 @@ watch(
           <div
             v-for="(w, col) in weeks"
             :key="'m' + col"
-            class="relative h-3 w-[10px] shrink-0"
+            class="relative size-3 shrink-0"
           >
             <span
               v-if="monthLabels.some((m) => m.col === col)"

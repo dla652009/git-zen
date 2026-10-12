@@ -32,7 +32,7 @@ function toggle(path: string) {
         :style="{ paddingLeft: (props.depth ?? 0) * 12 + 12 + 'px' }"
         @click="toggle(n.path)"
       >
-        <ChevronDown class="size-3 shrink-0 transition-transform" :class="collapsed.has(n.path) && '-rotate-90'" />
+        <ChevronDown class="size-3 shrink-0 transition-transform duration-fast" :class="collapsed.has(n.path) && '-rotate-90'" />
         <span class="truncate text-muted-foreground" :title="`${n.seg}（含 ${n.count} 个分支）`">{{ n.seg }}</span>
         <span class="shrink-0 text-2xs opacity-60">{{ n.count }}</span>
       </div>

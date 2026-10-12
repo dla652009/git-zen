@@ -59,7 +59,7 @@ const current = () => props.options.find((o) => o.value === model.value);
         :key="o.value"
         type="button"
         :class="[
-          'block w-full cursor-pointer px-2.5 py-1.5 text-left text-xs transition-colors duration-fast hover:bg-hover',
+          'block w-full cursor-pointer px-2.5 py-1.5 text-left text-xs transition-colors duration-fast hover:bg-hover active:bg-active',
           o.value === model && 'bg-primary-soft text-primary',
         ]"
         @click="pick(o.value)"

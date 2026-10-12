@@ -376,7 +376,7 @@ async function genCommitMsg() {
           <Button
             variant="ghost"
             size="icon"
-            class="ml-auto size-6 shrink-0 opacity-60 transition-opacity group-hover/li:opacity-100 hover:!opacity-100 focus-visible:opacity-100"
+            class="ml-auto size-6 shrink-0 opacity-60 transition-opacity duration-fast group-hover/li:opacity-100 hover:!opacity-100 focus-visible:opacity-100"
             :aria-label="`取消暂存 ${f.path}`"
             @click.stop="emit('action', () => api.unstage(repo, [filePath(f)]))"
           >
@@ -441,7 +441,7 @@ async function genCommitMsg() {
           <Button
             variant="ghost"
             size="icon"
-            class="ml-auto size-6 shrink-0 opacity-60 transition-opacity group-hover/li:opacity-100 hover:!opacity-100 focus-visible:opacity-100"
+            class="ml-auto size-6 shrink-0 opacity-60 transition-opacity duration-fast group-hover/li:opacity-100 hover:!opacity-100 focus-visible:opacity-100"
             :aria-label="`暂存 ${f.path}`"
             @click.stop="emit('action', () => api.stage(repo, [filePath(f)]))"
           >
@@ -612,7 +612,7 @@ async function genCommitMsg() {
             <Archive class="size-3 shrink-0 text-muted-foreground" />
             <span class="min-w-0 flex-1 truncate">{{ e.subject }}</span>
             <span
-              class="flex shrink-0 items-center gap-1 opacity-60 transition-opacity group-hover/st:opacity-100 group-focus-within/st:opacity-100"
+              class="flex shrink-0 items-center gap-1 opacity-60 transition-opacity duration-fast group-hover/st:opacity-100 group-focus-within/st:opacity-100"
             >
               <Tooltip text="恢复（保留记录，可再次恢复）">
                 <Button

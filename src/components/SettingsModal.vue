@@ -473,7 +473,7 @@ const NAV = [
                     @click="wfExpanded = wfExpanded === w.id ? '' : w.id"
                   >
                     <ChevronDown
-                      class="size-3 shrink-0 text-muted-foreground transition-transform"
+                      class="size-3 shrink-0 text-muted-foreground transition-transform duration-fast"
                       :class="wfExpanded !== w.id && '-rotate-90'"
                     />
                     <WorkflowIcon class="size-3.5 shrink-0 text-primary" />
