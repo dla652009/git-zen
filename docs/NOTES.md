@@ -74,6 +74,19 @@ CLI 输出即真相：认证走系统 credential helper、ssh 走系统配置，
 - pnpm v11: 构建脚本批准写在 pnpm-workspace.yaml 的 `allowBuilds: {esbuild: true}`，package.json 的 pnpm 字段已废弃
 - pnpm-workspace.yaml 不接受 verify-deps-before-run（schema 校验拒绝）
 
+### 让「忘了登记」变成编译错误
+
+Esc 关闭浮层原来是 `App.vue` 里一条 18 行手写 if 链，优先级就是 if 的顺序——新增浮层时
+很容易漏加一行，漏了的后果是 Esc 关不掉它、或者关错了层，而且没有任何提示。
+
+改成 `src/lib/overlays.ts` 的 `overlayOrder`（`as const` 数组）推出 `OverlayName` 联合类型，
+`App.vue` 那边用 `Record<OverlayName, OverlayLayer>` 建表。**关键是 Record 的键必须齐全**：
+只往 `overlayOrder` 里加名字、忘了补层，`vue-tsc` 直接报
+`error TS2741: Property 'diff' is missing in type '{…}' but required in type 'Record<…>'`（已实测）。
+
+一般化：把「藏在控制流顺序里的隐式约定」提成一张有名字的表，再用 `Record<联合类型, …>`
+逼调用方补齐。同类场景：新增 command 忘了注册 `lib.rs`（硬性规则 1，那条至今只能靠人记）。
+
 ### NSIS 安装包
 
 本机到 GitHub 的下载超时，tauri 拿不到 nsis-3.11.zip，安装包打不出来；exe 本身不受影响。

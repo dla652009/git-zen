@@ -421,9 +421,24 @@
 - [x] `FOCUSABLE_SELECTOR` 补 `summary` —— `<summary>` 默认可聚焦但没有 `tabindex` 属性，
       漏了它会让错误框的「详细信息」键盘不可达（陷阱内只剩「确认」一个元素时 Tab 被永远拦在它身上）
 
+### 13.5 浮层优先级表（拆 App.vue 的第一步）
+
+- [x] 抽出 `src/lib/overlays.ts`：`overlayOrder`（19 层优先级，全项目唯一一处定义）
+      + `closeTop(layers)`；`OverlayName` 是由该表推出的联合类型
+- [x] `App.vue` 的 `closeTopOverlay()` 从 18 行手写 if 链改为
+      `Record<OverlayName, OverlayLayer>` 表 + 一行 `closeTop(overlayLayers)`。
+      新增浮层忘了登记会 `error TS2741: Property '…' is missing`，而不是静默失效
+- [x] 新增 `src/lib/overlays.test.ts` 自检（已加进 `tsconfig.json` 的 exclude 与 AGENTS.md）：
+      逐层单独打开关掉的是它自己、多层同开取最上层、`locked`（克隆进行中）挡住下层不穿透、
+      连按 Esc 逐层关到 null、优先级表无重名
+- [x] 负向验证：临时删掉 `diff` 一层 → `vue-tsc` 报 `TS2741`（exit=2）；补回 → exit=0
+- [ ] `App.vue` 其余部分（仓库选项卡与分组、仓库/分支切换器、AI Review、Release Notes、
+      工作流执行）仍是单文件，继续拆需单独排期
+
 ### 明确不做（本轮）
 
-- 拆 `App.vue`（1617 行 script）：纯重构、零功能收益，需单独排期并配套回归
+- 拆 `App.vue` 的其余部分（同上）：纯重构、零功能收益，需单独排期并配套回归；
+  本轮只先拆了风险最集中的浮层优先级（见 13.5）
 - git 调用超时、弹层 `role="dialog"` + focus trap：已完成（见 13.1 / 13.4）
 
 ## 需求池（无需关注，后面排期）

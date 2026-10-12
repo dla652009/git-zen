@@ -60,6 +60,7 @@ import BranchTree from "./components/BranchTree.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
+import { closeTop, type OverlayLayer, type OverlayName } from "./lib/overlays";
 
 const repo = ref(localStorage.getItem("gz.repo") ?? "");
 const status = ref<Status | null>(null);
@@ -1596,31 +1597,45 @@ function askStashDrop(index: number, subject: string) {
 // Ctrl+1..9：跳到第 N 个选项卡
 // Ctrl+P：仓库切换器；Ctrl+B：分支切换器
 // Ctrl+Shift+L / R：折叠/展开左右侧栏；F5：刷新；Esc：按层级关闭最上层浮层
-function closeTopOverlay() {
-  // 菜单类（右键/下拉）由 ContextMenu 自身捕获 Esc，这里兜底旧浮层；确认框=取消
-  if (folderDd.value) return (folderDd.value = null);
-  if (error.value) return (error.value = "");
-  if (confirmState.value) return (confirmState.value = null);
-  if (showSwitcher.value) return (showSwitcher.value = false);
-  if (showBranchSwitcher.value) return (showBranchSwitcher.value = false);
-  if (showCreateBranch.value) return (showCreateBranch.value = false);
-  if (showCreateTag.value) return (showCreateTag.value = false);
-  if (openModal.value) {
+// 浮层优先级表（顺序在 src/lib/overlays.ts 的 overlayOrder 里，只有那一个地方定义）。
+// 这里的类型是 Record<OverlayName, OverlayLayer>：往 overlayOrder 里加一个新浮层后，
+// 如果忘了在这里补对应的层，vue-tsc 会直接报缺键 —— 不再靠「记得改 if 链」。
+const overlayLayers: Record<OverlayName, OverlayLayer> = {
+  folderDd: { open: () => !!folderDd.value, close: () => (folderDd.value = null) },
+  error: { open: () => !!error.value, close: () => (error.value = "") },
+  confirm: { open: () => !!confirmState.value, close: () => (confirmState.value = null) },
+  repoSwitcher: { open: () => showSwitcher.value, close: () => (showSwitcher.value = false) },
+  branchSwitcher: {
+    open: () => showBranchSwitcher.value,
+    close: () => (showBranchSwitcher.value = false),
+  },
+  createBranch: { open: () => showCreateBranch.value, close: () => (showCreateBranch.value = false) },
+  createTag: { open: () => showCreateTag.value, close: () => (showCreateTag.value = false) },
+  openRepo: {
+    open: () => !!openModal.value,
+    close: () => (openModal.value = null),
     // 克隆进行中不关表单：后台克隆完成后会自动切换仓库，弹窗还承担进度与取消入口
-    if (!cloneBusy.value) openModal.value = null;
-    return;
-  }
-  if (notesOpen.value) return (notesOpen.value = false);
-  if (reviewOpen.value) return (reviewOpen.value = false);
-  if (showGroupMgr.value) return (showGroupMgr.value = false);
-  if (groupModal.value) return (groupModal.value = null);
-  if (renameTarget.value) return (renameTarget.value = "");
-  if (branchRename.value) return (branchRename.value = null);
-  if (wfConfirm.value) return (wfConfirm.value = null);
-  if (wfRun.value) return (wfRun.value = null);
-  if (showSettings.value) return (showSettings.value = false);
-  if (fileHistoryModal.value) return (fileHistoryModal.value = null);
-  if (diffState.value) return (diffState.value = null);
+    locked: () => cloneBusy.value,
+  },
+  releaseNotes: { open: () => notesOpen.value, close: () => (notesOpen.value = false) },
+  aiReview: { open: () => reviewOpen.value, close: () => (reviewOpen.value = false) },
+  groupManager: { open: () => showGroupMgr.value, close: () => (showGroupMgr.value = false) },
+  groupModal: { open: () => !!groupModal.value, close: () => (groupModal.value = null) },
+  tabRename: { open: () => !!renameTarget.value, close: () => (renameTarget.value = "") },
+  branchRename: { open: () => !!branchRename.value, close: () => (branchRename.value = null) },
+  flowConfirm: { open: () => !!wfConfirm.value, close: () => (wfConfirm.value = null) },
+  flowRun: { open: () => !!wfRun.value, close: () => (wfRun.value = null) },
+  settings: { open: () => showSettings.value, close: () => (showSettings.value = false) },
+  fileHistory: {
+    open: () => !!fileHistoryModal.value,
+    close: () => (fileHistoryModal.value = null),
+  },
+  diff: { open: () => !!diffState.value, close: () => (diffState.value = null) },
+};
+
+function closeTopOverlay() {
+  // 菜单类（右键/下拉）由 ContextMenu 自身捕获 Esc，这里兜底的是上面这些
+  closeTop(overlayLayers);
 }
 
 function onGlobalKeydown(e: KeyboardEvent) {

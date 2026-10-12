@@ -6,7 +6,8 @@
 ## 目录
 
 - `src/` — Vue 前端。`App.vue` 是状态中枢（仓库 tabs/刷新调度/弹窗），业务组件在 `components/`，
-  shadcn 风格基础组件在 `components/ui/`，纯函数 `graph.ts`（泳道布局）、`branchTree.ts`、`lib/patch.ts`（diff 解析）
+  shadcn 风格基础组件在 `components/ui/`，纯函数 `graph.ts`（泳道布局）、`branchTree.ts`、
+  `lib/patch.ts`（diff 解析）、`lib/overlays.ts`（浮层优先级表）、`lib/focusTrap.ts`（`v-trap` 指令）
 - `src-tauri/src/git.rs` — 全部后端逻辑，单文件，一个 command = 一次 git CLI 调用
 - `docs/` — DESIGN（架构）/ NOTES（坑，必读）/ TASKS（里程碑与需求池）/ BUGS（缺陷+根因）
 
@@ -17,12 +18,14 @@ pnpm tauri dev                                # 开发（首次 Rust 编译 3-5 
 npx vue-tsc --noEmit                          # 类型检查（pnpm build 内置）
 node --experimental-strip-types src/graph.test.ts        # 泳道布局自检（需 Node ≥22.6）
 node --experimental-strip-types src/lib/patch.test.ts    # diff 解析自检
+node --experimental-strip-types src/lib/overlays.test.ts # 浮层优先级自检
 node --experimental-strip-types src/workflow.test.ts     # 工作流数据层自检
 cd src-tauri && cargo check                   # Rust 检查
+cd src-tauri && cargo test --lib              # Rust 单测（路径校验/超时/大输出）
 pnpm tauri build                              # release（产物 src-tauri/target/release/）
 ```
 
-注意：三个 *.test.ts 自检脚本被 tsconfig exclude，不参与 vue-tsc；改布局/diff 解析后手动跑。
+注意：四个 *.test.ts 自检脚本被 tsconfig exclude，不参与 vue-tsc；改布局/diff 解析/浮层优先级后手动跑。
 
 ## 硬性架构规则（违反会炸或埋雷）
 
@@ -33,6 +36,9 @@ pnpm tauri build                              # release（产物 src-tauri/targe
 3. **`src/gitApi.ts` 的 interface 与 `git.rs` 的 serde struct 是人工镜像**——改一边必须同步另一边，无代码生成。
 4. **刷新策略**：组件只 emit action，任何操作成功后由 `App.vue run()` 统一重拉 status/log/branches，不做增量更新。
 5. **AI 功能全部只读**（只消费 diff/log 文本），提示词只允许写在 `src/ai.ts` 的 AI_PROMPTS。
+6. **新增浮层（弹窗/菜单/下拉）必须在 `src/lib/overlays.ts` 的 `overlayOrder` 里登记**，
+   并在 `App.vue` 的 `overlayLayers` 补上对应的 `{ open, close }`——漏了 vue-tsc 会报缺键
+   （Esc 关闭靠这张表，不再靠手写 if 链）。右键菜单类由 `ContextMenu` 自己捕获 Esc，不进表。
 
 ## 编码约定
 

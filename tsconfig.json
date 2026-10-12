@@ -11,5 +11,10 @@
     "paths": { "@/*": ["./src/*"] }
   },
   "include": ["src/**/*.ts", "src/**/*.vue", "src/**/*.d.ts"],
-  "exclude": ["src/graph.test.ts", "src/lib/patch.test.ts", "src/workflow.test.ts"]
+  "exclude": [
+    "src/graph.test.ts",
+    "src/lib/patch.test.ts",
+    "src/lib/overlays.test.ts",
+    "src/workflow.test.ts"
+  ]
 }
