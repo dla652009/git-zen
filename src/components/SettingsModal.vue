@@ -5,6 +5,7 @@ import { THEMES, settings, type Settings } from "../settings";
 import * as api from "../gitApi";
 import { aiVerify, isAbortError } from "../ai";
 import { readJsonObject } from "../lib/safeJson";
+import { humanizeMsg } from "../lib/errors";
 import { workflows } from "../workflowStore";
 import { newFlowId, type BranchRef, type Workflow, type WorkflowStep } from "../workflow";
 import { Button, Input, Spinner, Select, Switch } from "@/components/ui";
@@ -49,8 +50,12 @@ onMounted(async () => {
     const [n, e] = await api.getUser(props.repo);
     userName.value = n;
     userEmail.value = e;
-  } catch {
-    /* 无仓库或非 git 目录时静默 */
+  } catch (e) {
+    // 后端已用 `config --default ""` 把「没配过」与真失败分开，走到这里说明仓库真的读不了；
+    // 不再完全静默——留一条日志，输入框保持空的 placeholder 提示用户去配
+    userName.value = "";
+    userEmail.value = "";
+    console.warn("[git-zen] 读取提交者信息失败:", e);
   }
 });
 
@@ -65,7 +70,7 @@ async function save() {
       verifying.value = false;
       // 关设置页会 abortAi()：那是用户自己的动作，不算「验通失败」，别报红字
       if (isAbortError(e)) return;
-      verifyErr.value = String(e).replace(/^Error: /, "");
+      verifyErr.value = humanizeMsg(e);
       return;
     }
     verifying.value = false;

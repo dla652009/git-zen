@@ -6,24 +6,26 @@ import * as api from "../gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, isAbortError } from "../ai";
 import { settings } from "../settings";
 import { patchSections, type PatchLine } from "../lib/patch";
+import { humanizeMsg } from "../lib/errors";
 import { FileDown } from "@lucide/vue";
 
 const savedTip = ref(false);
 async function saveExplainToFile() {
   if (!explainText.value) return;
   const base = props.commit ? `AI-explain-${props.commit.hash.slice(0, 8)}` : `AI-explain-${props.file!.path.split(/[\/]/).pop()}`;
-  const target = await saveDialog({
-    title: "保存 AI 解释",
-    defaultPath: `${base}.md`,
-    filters: [{ name: "Markdown", extensions: ["md"] }],
-  });
-  if (!target) return;
+  // saveDialog 放进 try：插件调用失败会 reject，放外面就是一次静默的未处理 rejection
   try {
+    const target = await saveDialog({
+      title: "保存 AI 解释",
+      defaultPath: `${base}.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (!target) return;
     await api.writeTextFile(target, explainText.value);
     savedTip.value = true;
     setTimeout(() => (savedTip.value = false), 2000);
   } catch (e) {
-    err.value = String(e).replace(/^Error: /, "");
+    err.value = humanizeMsg(e);
   }
 }
 import { Badge, Button, Spinner, Md, Tooltip } from "@/components/ui";
@@ -66,7 +68,7 @@ onMounted(async () => {
         : await api.diff(props.repo, [props.file.path], props.file.cached);
     }
   } catch (e) {
-    err.value = String(e);
+    err.value = humanizeMsg(e);
   } finally {
     loading.value = false;
   }
@@ -108,7 +110,7 @@ async function loadExplain() {
   } catch (e) {
     // 弹层关闭会调 abortAi()：主动取消不算失败，静默收尾（busy 由 finally 复位）
     if (isAbortError(e)) return;
-    explainErr.value = String(e).replace(/^Error: /, "");
+    explainErr.value = humanizeMsg(e);
   } finally {
     explainBusy.value = false;
   }
@@ -134,18 +136,19 @@ async function exportPatch() {
   const base = props.commit
     ? `patch-${props.commit.hash.slice(0, 8)}`
     : `patch-${props.file!.path.split(/[\\/]/).pop()}`;
-  const target = await saveDialog({
-    title: "导出 patch",
-    defaultPath: `${base}.patch`,
-    filters: [{ name: "Patch", extensions: ["patch", "diff"] }],
-  });
-  if (!target) return;
+  // 同上
   try {
+    const target = await saveDialog({
+      title: "导出 patch",
+      defaultPath: `${base}.patch`,
+      filters: [{ name: "Patch", extensions: ["patch", "diff"] }],
+    });
+    if (!target) return;
     await api.writeTextFile(target, text.value);
     savedPatchTip.value = true;
     setTimeout(() => (savedPatchTip.value = false), 2000);
   } catch (e) {
-    err.value = String(e);
+    err.value = humanizeMsg(e);
   }
 }
 

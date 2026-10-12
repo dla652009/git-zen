@@ -22,6 +22,7 @@ import type { Status, StatusFile, StashEntry } from "../gitApi";
 import type { DiffTarget } from "./DiffViewer.vue";
 import { AI_PROMPTS, aiComplete, clipForAI } from "../ai";
 import { settings } from "../settings";
+import { humanizeMsg } from "../lib/errors";
 import {
   Button,
   Textarea,
@@ -103,7 +104,7 @@ async function toggleStashMenu(ev: MouseEvent) {
   try {
     stashEntries.value = await api.stashList(props.repo);
   } catch (e) {
-    stashErr.value = String(e).replace(/^Error: /, "");
+    stashErr.value = humanizeMsg(e);
   }
 }
 // 恢复：pop=true 恢复并删除记录（冲突时 git 自动保留），pop=false 仅恢复
@@ -301,7 +302,7 @@ async function genCommitMsg() {
       await aiComplete(AI_PROMPTS.commitMessage.system(settings.aiCommitLang), user),
     );
   } catch (e) {
-    aiErr.value = String(e).replace(/^Error: /, "");
+    aiErr.value = humanizeMsg(e);
   } finally {
     aiBusy.value = false;
   }

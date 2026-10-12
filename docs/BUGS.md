@@ -399,3 +399,86 @@
       **实测（同源 clean build 四组对照）**：拆包本身**不增加**体积（仅拆包 499.96 kB vs 改前 499.99 kB），
       标记扫描确认四个 chunk 无模块重复；非 Windows 兜底 `safari13` 会让总量 +1.53 kB（全是 target
       下调带来的转译），而 Windows 真实发版路径（`chrome105`）是 **496.00 kB，比改前小 3.99 kB**。
+
+### 收尾：复核审查报告时又抓到的四条
+
+清完前三批后再把 `docs/review/*.md` 的每条 P1/P2 重读一遍逐条核对，四条当时漏掉的：
+
+- [x] **`git_diff_untracked` 的「上限」全在读完之后才生效**（`src-tauri/src/git.rs:502`）：
+  原实现 `std::fs::read(&p)` 一次性把整个文件读进内存，**然后**才判二进制（`bytes.contains(&0)`）、
+  才 `lines().take(2000)`——注释里写着「上限 2000 行，二进制文件提示」，实际内存上限为零。
+  一个 GB 级的未跟踪文件（镜像、数据库转储）足以把内存打满。
+  修复：抽出 `read_preview()`，`File::open` + `by_ref().take(MAX_PREVIEW=1 MiB)` + `read_to_end`，
+  只读前 1 MiB 再判二进制/截行。**新增 Rust 单测 `read_preview_caps_bytes_read`**
+  （5 MiB 文件只读到 1 MiB；小文件完整读到）。
+- [x] **`git_get_user` 把「没配过」和「真失败」一起吞成空串**（`src-tauri/src/git.rs:535`）：
+  原来是 `run(&repo, &["config", "user.name"]).unwrap_or_default()`。实测（Node 如实传 argv
+  才测得准，PowerShell 会吞掉空串）：
+  `git config user.name` 在**未配置**时 exit 1 / stdout 空 / **stderr 空**；
+  而 `git config --default "" user.name` 对「未配置」是 **exit 0 + 空输出**，对真正的失败
+  （目录不存在）仍然是 Err。改用 `--default ""` 后 `?` 传播真错误。
+  前端 `SettingsModal.vue` 的 `catch {}` 同步补日志（原来注释写「非 git 目录时静默」，
+  现在后端能区分了，真失败不该无声无息）。**新增 Rust 单测
+  `git_get_user_distinguishes_unset_from_failure`**（配过→真实值；`--unset` 且屏蔽
+  `GIT_CONFIG_GLOBAL`→空串不报错；目录不存在→必须 Err）。
+- [x] **4 处 `await saveDialog(...)` 写在 try 外面**（`src/App.vue` 保存 AI Review / Release Notes、
+  `src/components/DiffViewer.vue` 保存 AI 解释 / 导出 patch）：保存对话框是插件调用，
+  ACL 未授权或后端异常时会 reject，而它恰好在 try 之外 → 用户「点了保存、什么都没发生、
+  也没有任何提示」，只有一条没人接的未处理 rejection。修复：四处的 `saveDialog` 全部移进 try。
+- [x] **`humanize()` 对 non-fast-forward 只给「先 Pull 再 Push」**（`src/App.vue:87`）：
+  这条文案与「amend / 撤销提交」是**互相打架**的——用户刚 amend 完，正确的动作是用
+  `--force-with-lease` 覆盖自己那一条，而旧文案会把他引去把远程旧提交合回来、造出多余的合并提交
+  （正是 R4 点出的「断头路」）。修复：文案改为按情形分岔，并指向顶部 ↑N 里的「强制推送」。
+
+**判定为不是缺陷、刻意保留的 `unwrap_or_default()`**（以免下一轮重复排查）：
+
+- `git_remote_url`（`src-tauri/src/git.rs:687`）：空串就是「没有 origin」的正常答案。
+  真失败（仓库读不了）也退化成空串，但 UI 只是「不显示网页链接」，无破坏、无错误动作。
+- `git_latest_tag`（`src-tauri/src/git.rs:1319`）：空串 =「没有 tag」，而前端
+  `src/App.vue:998` 本来就是 `await api.latestTag(...).catch(() => "")` + `notesLatest.value || "__all__"`，
+  两边语义一致。真要区分「无 tag」与「真失败」，只能去匹配 git 的英文 stderr
+  （`fatal: No names found`）——那正是本项目在别处刻意避免的脆弱做法，不值得。
+- `git_check_repo`（`src-tauri/src/git.rs:1331`）：它是**谓词**，`false` =「不是一个可用的工作树」，
+  对任何非 yes（非仓库、目录不存在、git 起不来）都是正确答案，调用方也只据此拒绝添加选项卡。
+- 唯一真正会误导用户的是 `git_get_user`——它的返回值会填进**可编辑表单**，用户看到空框会以为
+  是自己没配，然后去保存覆盖一遍。所以只改它一个。
+
+### 交互与反馈（R3 审查的最后三条）
+
+#### `onGlobalKeydown` 不判焦点，输入框里也在抢键
+
+**根因**：`src/App.vue` 的全局快捷键处理器只挡了 `e.isComposing`（IME 组合态），
+没有判断 `document.activeElement` 是不是输入框。于是 `Ctrl+1..9` / `Ctrl+P` / `Ctrl+B` /
+`Ctrl+Shift+L` / `Ctrl+Shift+R` / `F5` 在**任何**输入框里都生效。
+最难受的一例：在设置弹窗的输入框里按 `Ctrl+B`，分支切换器（`z-50`）直接盖在设置弹窗
+（`z-30`）之上，层级瞬间错乱。次要问题是按键吞噬——`preventDefault()` 写在各分支最前面，
+一个仓库都没有时按 `Ctrl+P` / `Ctrl+1` 也被吃掉，用户毫无反馈。
+
+**修复**：先算 `typing`（`INPUT` / `TEXTAREA` / `isContentEditable`），输入框内只放行
+`Esc`、`Ctrl+Tab`，以及「关掉自己正待着的那个切换器」（在切换器搜索框里按 `Ctrl+P`/`Ctrl+B`
+得能关）；`preventDefault()` 全部挪到「确认确实有可做的事」之后。
+
+#### 危险确认框与错误框共用「确认」二字，语义相反
+
+**根因**：`ConfirmState` 没有按钮文案字段，危险框与错误框都渲染「确认」。
+危险框里它的意思是「执行这个不可逆操作」，错误框里是「我知道了，关掉」——
+用户建立起的直觉在另一个框里恰好是错的，两边都会犹豫或误点。
+另外「确定 / 确认」在中文里没有可感知差异，却在不同弹窗里随机使用。
+
+**修复**：`ConfirmState` 增加 `okText?: string`，默认「确认执行」；11 处危险确认框
+（删除分支/远程分支/标签/分组/stash 记录、强制删除、丢弃未推送提交、放弃合并、强制推送、
+关闭选项卡、关闭其他）改成把后果写在按钮上；错误框按钮改为「知道了」。
+
+#### 分页与内联错误没有任何反馈
+
+**根因**：① `loadingMore` / `canLoadMore` 两个 ref 只参与脚本逻辑，模板里没有任何渲染——
+用户滚到 300 条底部时页面完全静止，无法分辨「到底了」「正在加载」「卡住了」。
+② `humanize()` 定义在 `App.vue` 内部，只覆盖 `run()` / `showError()` 一条路径；
+AI 生成、diff 加载、文件历史、stash 列表这 6 处都是 `String(e).replace(/^Error: /, "")`
+直出，用户会看到 `fatal: not a git repository` 这类英文原文。
+
+**修复**：`humanize` 搬到 `src/lib/errors.ts`（新增一行版 `humanizeMsg`），6 处内联错误改走它；
+`HistoryGraph` 增加 `loadingMore` / `canLoadMore` props 并在列表末尾渲染
+「正在加载更多…」/「已到底部」。
+
+

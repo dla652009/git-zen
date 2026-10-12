@@ -77,30 +77,30 @@ function showError(msg: string) {
   const h = humanize(msg);
   error.value = h.msg;
   errDetail.value = h.detail ?? "";
+  retryFn.value = null; // 默认没有重试入口，只有 run() 失败时才挂上
 }
 
-// git stderr -> 人话；匹配不到就原文展示
-function humanize(raw: string): { msg: string; detail?: string } {
-  const s = String(raw);
-  const rules: [RegExp, string][] = [
-    [/has no upstream|no tracking information/i, "当前分支没有上游，先在终端执行一次：git push -u origin <分支名>"],
-    [/rejected.*fetch first|non-fast-forward/i, "远程有新提交，先 Pull 再 Push"],
-    [/nothing to commit/i, "没有可提交的内容：先暂存文件"],
-    [/cherry-pick is now empty|previous cherry-pick/i, "该提交的改动已在当前分支上（空拣选），无需重复 cherry-pick"],
-    [/already exists and is not an empty directory/i, "目标目录已存在且非空：换一个目录名或位置"],
-    [/could not read from remote repository/i, "无法读取远程仓库：URL 错误、无权访问或认证失败"],
-    [/repository .* does not exist/i, "仓库不存在：检查 URL 拼写与访问权限"],
-    [/authentication|permission denied|could not read Username|403/i, "认证失败：请检查系统 git 凭据（credential helper / ssh key）"],
-    [/does not appear to be a git repository|No configured push destination/i, "远程不可用：没有配置 origin（先在终端 git remote add origin <url>）或地址失效"],
-    [/not a git repository/i, "所选目录不是 Git 仓库"],
-    [/does not have any commits yet/i, "空仓库：还没有任何提交"],
-    [/conflict/i, "产生合并冲突：在左侧解决冲突文件后暂存并提交，或用「放弃合并」退出"],
-    [/failed to connect|connection timed out|could not resolve host/i, "网络不通：无法连接远程仓库"],
-    [/not fully merged|used as worktree/i, "该分支尚未合并或有其他占用，为防误删请到终端确认处理"],
-  ];
-  const hit = rules.find(([re]) => re.test(s));
-  return hit ? { msg: hit[1], detail: s } : { msg: s };
+// 失败后能就地重试：过去错误框只有一个「确认」，网络抖动导致 fetch 失败也得先关窗、
+// 再自己找回原来的入口重来一遍。只有 run() 包的操作用它——那是「重放一次同样的调用」，
+// 而 showError 直调的地方（校验失败等）重试没有意义。
+const retryFn = ref<null | (() => Promise<unknown>)>(null);
+const retryName = ref("");
+
+function dismissError() {
+  error.value = "";
+  errDetail.value = "";
+  retryFn.value = null;
 }
+
+function retryLast() {
+  const fn = retryFn.value;
+  const name = retryName.value;
+  dismissError();
+  if (fn) run(fn, name);
+}
+
+// git stderr -> 人话；实现放在 src/lib/errors.ts，组件内联错误提示也用同一份规则
+import { humanize, humanizeMsg } from "./lib/errors";
 
 // 刷新按钮动画 + 整页刷新遮罩
 const refreshing = ref(false);
@@ -314,6 +314,9 @@ async function run(fn: () => Promise<unknown>, name = "") {
     if (name === "push") aiCacheDelete(REVIEW_BUCKET, reviewKey());
   } catch (e) {
     showError(String(e));
+    // 挂上重试入口（放在 showError 之后，showError 会把它清掉）
+    retryFn.value = fn;
+    retryName.value = name;
   } finally {
     busy.value = false;
     runningAction.value = "";
@@ -630,6 +633,7 @@ function openFromFolder(path: string) {
 function askDeleteGroup(g: string) {
   openConfirm({
     title: "删除分组",
+    okText: "删除分组",
     body: `确认删除分组「${g}」？组内 ${groupCount(g)} 个仓库将回到选项卡栏（不会关闭任何仓库）。`,
     ok: async () => {
       deleteGroup(g);
@@ -778,6 +782,7 @@ function askCloseTab(path: string) {
   if (!r) return;
   openConfirm({
     title: "关闭仓库选项卡",
+    okText: "关闭选项卡",
     body: `将从选项卡列表里移除「${r.name}」，重新打开需要再选一次目录。磁盘上的仓库不受影响。`,
     ok: async () => doCloseTab(path),
   });
@@ -810,9 +815,18 @@ function doCloseTab(path: string) {
         }
       });
     } else {
+      // 关掉最后一个仓库：把 per-repo 状态全部清干净（对齐 activate() 的重置清单）。
+      // 只清 status/commits/branchList 会留下上一仓库的标签、远程链接、文件历史弹窗和
+      // 「还能翻页」的标志位，空态下这些脏数据仍会渲染出来。
       status.value = null;
       commits.value = [];
       branchList.value = [];
+      tags.value = [];
+      canLoadMore.value = false;
+      fileHistoryModal.value = null;
+      historyFilePath.value = null;
+      remoteRaw.value = "";
+      remoteLink.value = "";
     }
   }
 }
@@ -849,6 +863,7 @@ function askCloseOthers(path: string) {
   }
   openConfirm({
     title: "关闭其他选项卡",
+    okText: "关闭其他选项卡",
     body: `将关闭 ${n} 个仓库选项卡（收在分组里的仓库不受影响）。重新打开需要再选一次目录。`,
     ok: async () => doCloseOthers(path),
   });
@@ -934,7 +949,7 @@ async function startReview(regen: boolean | Event = false) {
   } catch (e) {
     // 关弹窗触发的取消是正常操作，不是错误
     if (isAbortError(e)) return;
-    reviewErr.value = String(e).replace(/^Error: /, "");
+    reviewErr.value = humanizeMsg(e);
   } finally {
     reviewBusy.value = false;
   }
@@ -943,13 +958,15 @@ async function startReview(regen: boolean | Event = false) {
 const reviewSaved = ref(false);
 async function saveReviewToFile() {
   if (!reviewText.value) return;
-  const target = await saveDialog({
-    title: "保存 AI Review 报告",
-    defaultPath: `AI-review-${status.value?.branch ?? "branch"}-${new Date().toISOString().slice(0, 10)}.md`,
-    filters: [{ name: "Markdown", extensions: ["md"] }],
-  });
-  if (!target) return;
   try {
+    // saveDialog 也要放进 try：插件调用失败（ACL 未授权 / 后端异常）时它会 reject，
+    // 放在 try 外面就成了一次「点了保存、什么都没发生、也没有提示」的未处理 rejection
+    const target = await saveDialog({
+      title: "保存 AI Review 报告",
+      defaultPath: `AI-review-${status.value?.branch ?? "branch"}-${new Date().toISOString().slice(0, 10)}.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (!target) return;
     await api.writeTextFile(target, reviewText.value);
     reviewSaved.value = true;
     setTimeout(() => (reviewSaved.value = false), 2000);
@@ -1010,20 +1027,21 @@ async function genReleaseNotes() {
     notesText.value = await aiComplete(AI_PROMPTS.releaseNotes.system, clipForAI(user));
   } catch (e) {
     if (isAbortError(e)) return; // 关弹窗取消，不是失败
-    notesErr.value = String(e).replace(/^Error: /, "");
+    notesErr.value = humanizeMsg(e);
   } finally {
     notesBusy.value = false;
   }
 }
 async function saveNotesToFile() {
   if (!notesText.value) return;
-  const target = await saveDialog({
-    title: "保存 Release Notes",
-    defaultPath: `Release-notes-${new Date().toISOString().slice(0, 10)}.md`,
-    filters: [{ name: "Markdown", extensions: ["md"] }],
-  });
-  if (!target) return;
   try {
+    // 同上：saveDialog 的 rejection 也要落到错误提示里
+    const target = await saveDialog({
+      title: "保存 Release Notes",
+      defaultPath: `Release-notes-${new Date().toISOString().slice(0, 10)}.md`,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (!target) return;
     await api.writeTextFile(target, notesText.value);
     notesSaved.value = true;
     setTimeout(() => (notesSaved.value = false), 2000);
@@ -1126,6 +1144,7 @@ function confirmCreateTag() {
 function askDeleteTag(name: string) {
   openConfirm({
     title: "删除标签",
+    okText: "删除标签",
     body: `确认删除标签 ${name}？若它已推送过远程，远程上的同名标签不会被删除。`,
     ok: () => api.tagDelete(repo.value, name),
   });
@@ -1163,6 +1182,7 @@ function branchMenuItems(b: Branch): MenuItem[] {
       fn: () =>
         openConfirm({
           title: "强制删除分支",
+          okText: "强制删除",
           body: `确认强制删除本地分支 ${b.name}？未合并的提交将丢失，界面不可撤销。`,
           ok: () => api.branchDelete(repo.value, b.name, true),
         }),
@@ -1523,6 +1543,9 @@ interface ConfirmState {
   title: string;
   body: string;
   checkbox?: string;
+  // 按钮上直接写后果（「删除分支」而不是「确认」）：用户无法从「确认」预判会发生什么，
+  // 而错误框里同一个「确认」意思是「我知道了」——同一个词两种相反语义最容易点错
+  okText?: string;
   ok: (checked: boolean) => Promise<unknown>;
 }
 const confirmState = ref<ConfirmState | null>(null);
@@ -1544,6 +1567,7 @@ function askDelete(b: Branch) {
     const short = full.replace(/^[^/]+\//, "");
     openConfirm({
       title: "删除远程分支",
+      okText: "删除远程分支",
       body: `确认删除远程分支 ${full}？该操作直接作用于远程仓库。`,
       ok: () => api.pushDelete(repo.value, remote, short),
     });
@@ -1551,6 +1575,7 @@ function askDelete(b: Branch) {
   }
   openConfirm({
     title: "删除分支",
+    okText: "删除分支",
     body: `确认删除本地分支 ${b.name}？`,
     checkbox: "强制删除（-D，未合并的提交将丢失）",
     ok: (force) => api.branchDelete(repo.value, b.name, force),
@@ -1575,6 +1600,7 @@ function askDiscardUnpushed() {
   const dirty = status.value?.files.length ?? 0;
   openConfirm({
     title: "放弃未推送的提交",
+    okText: "丢弃这些提交",
     body:
       `将丢弃这 ${ahead} 个未推送的提交，把 ${status.value?.branch} 重置回 ${upstream}。` +
       (dirty ? `工作区 ${dirty} 个未提交的文件改动也会一并丢弃。` : "") +
@@ -1611,6 +1637,7 @@ function askForcePush() {
   }
   openConfirm({
     title: "强制推送 (--force-with-lease)",
+    okText: "强制推送",
     body:
       `将用本地 ${status.value?.branch ?? "当前分支"} 覆盖远程 ${upstream}，改写远程提交历史。` +
       "若期间他人推送过新提交，本次推送会失败而不会覆盖他们的工作。",
@@ -1624,6 +1651,7 @@ function askForcePush() {
 function askAbortMerge() {
   openConfirm({
     title: "放弃合并 (merge --abort)",
+    okText: "放弃合并",
     body: "将中止本次合并，工作区与 HEAD 回到合并开始前的状态。合并过程中已手动解决的冲突内容会一并丢弃。",
     ok: () => api.mergeAbort(repo.value),
   });
@@ -1668,6 +1696,7 @@ function askUndoCommit() {
 function askStashDrop(index: number, subject: string) {
   openConfirm({
     title: "删除 Stash 记录",
+    okText: "删除记录",
     body: `确认删除「${subject}」？这条记录收纳的改动将无法恢复。`,
     ok: () => api.stashDrop(repo.value, index),
   });
@@ -1683,7 +1712,7 @@ function askStashDrop(index: number, subject: string) {
 // 如果忘了在这里补对应的层，vue-tsc 会直接报缺键 —— 不再靠「记得改 if 链」。
 const overlayLayers: Record<OverlayName, OverlayLayer> = {
   folderDd: { open: () => !!folderDd.value, close: () => (folderDd.value = null) },
-  error: { open: () => !!error.value, close: () => (error.value = "") },
+  error: { open: () => !!error.value, close: () => dismissError() },
   confirm: { open: () => !!confirmState.value, close: () => (confirmState.value = null) },
   repoSwitcher: { open: () => showSwitcher.value, close: () => (showSwitcher.value = false) },
   branchSwitcher: {
@@ -1731,25 +1760,45 @@ watch(
 
 function onGlobalKeydown(e: KeyboardEvent) {
   if (e.isComposing) return; // 中文输入法组合中：Esc/Enter 是候选词操作，不碰任何快捷键/浮层
+
+  // 输入框里不抢键。Ctrl+1..9 / Ctrl+B / Ctrl+Shift+L/R / F5 在输入法与编辑器里都有别的含义；
+  // 更糟的是 Ctrl+B 会把分支切换器（z-50）盖到设置弹窗（z-30）之上，层级瞬间混乱。
+  // 只放行三件事：Esc（仍要能关弹层）、Ctrl+Tab（切标签是全局导航）、
+  // 以及「关掉自己正待着的那个切换器」——在切换器搜索框里按 Ctrl+P / Ctrl+B 得能关掉它。
+  const el = document.activeElement as HTMLElement | null;
+  const typing =
+    !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+  if (typing) {
+    const toggleSelf =
+      (e.ctrlKey && (e.key === "p" || e.key === "P") && showSwitcher.value) ||
+      (e.ctrlKey && (e.key === "b" || e.key === "B") && showBranchSwitcher.value);
+    if (e.key !== "Escape" && !(e.ctrlKey && e.key === "Tab") && !toggleSelf) return;
+  }
+
+  // 下面每条都先确认「确实有可做的事」再 preventDefault——否则就是纯按键吞噬
+  // （过去在最前面 preventDefault，没有仓库时 Ctrl+P / Ctrl+1 也被吃掉，用户毫无反馈）。
   if (e.ctrlKey && e.key === "Tab") {
-    e.preventDefault();
     // 在标签栏可见仓库间循环（文件夹不参与）
     const vis = barOrder.value.filter((x): x is BarRepo => x.kind === "repo");
     const n = vis.length;
     if (!n) return;
+    e.preventDefault();
     const i = vis.findIndex((x) => x.path === repo.value);
     const d = e.shiftKey ? -1 : 1;
     activate(vis[(i + d + n) % n].path);
   } else if (e.ctrlKey && /^[1-9]$/.test(e.key)) {
-    e.preventDefault();
     // 第 N 个可见仓库选项卡，分组内的仓库不占号
     const t = barOrder.value.filter((x): x is BarRepo => x.kind === "repo")[Number(e.key) - 1];
-    if (t) activate(t.path);
+    if (!t) return;
+    e.preventDefault();
+    activate(t.path);
   } else if (e.ctrlKey && (e.key === "p" || e.key === "P")) {
+    if (!showSwitcher.value && !repos.value.length) return; // 一个仓库都没有：切换器没内容，别吞按键
     e.preventDefault();
     if (showSwitcher.value) showSwitcher.value = false;
     else openSwitcher();
   } else if (e.ctrlKey && (e.key === "b" || e.key === "B")) {
+    if (!showBranchSwitcher.value && !repo.value) return;
     e.preventDefault();
     if (showBranchSwitcher.value) showBranchSwitcher.value = false;
     else openBranchSwitcher();
@@ -2166,6 +2215,8 @@ onUnmounted(() => {
             v-if="commits.length"
             :commits="commits"
             :filter="filter"
+            :loading-more="loadingMore"
+            :can-load-more="canLoadMore"
             @open-commit="(c: LogEntry) => (diffState = { kind: 'commit', target: c })"
             @commit-menu="onCommitMenu"
             @load-more="loadMorePage"
@@ -2244,6 +2295,7 @@ onUnmounted(() => {
           @discard="(t: DiffTarget) =>
             openConfirm({
               title: t.untracked ? '删除未跟踪文件' : '丢弃更改',
+              okText: t.untracked ? '删除文件' : '丢弃更改',
               body: `确认${t.untracked ? '删除' : '丢弃'} ${t.path}？此操作不可恢复。`,
               ok: () => api.discard(repo, t.path, t.untracked),
             })"
@@ -3058,7 +3110,7 @@ onUnmounted(() => {
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-error-title"
-      @click.self="error = ''"
+      @click.self="dismissError()"
     >
       <div class="w-[460px] rounded-lg border border-destructive/50 bg-card p-4 shadow-xl">
         <div id="dlg-error-title" class="mb-1.5 font-medium text-destructive">操作失败</div>
@@ -3067,8 +3119,10 @@ onUnmounted(() => {
           <summary class="cursor-pointer text-xs text-muted-foreground">详细信息</summary>
           <pre class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-[11px] text-muted-foreground">{{ errDetail }}</pre>
         </details>
-        <div class="mt-3 flex justify-end">
-          <Button variant="secondary" size="sm" @click="error = ''">确认</Button>
+        <div class="mt-3 flex justify-end gap-2">
+          <!-- 只对 run() 包起来的操作给重试：那是「重放一次同样的调用」，校验类错误重试没意义 -->
+          <Button v-if="retryFn" variant="secondary" size="sm" @click="retryLast()">重试</Button>
+          <Button variant="secondary" size="sm" @click="dismissError()">知道了</Button>
         </div>
       </div>
     </div>
@@ -3103,7 +3157,7 @@ onUnmounted(() => {
               }
             "
           >
-            确认
+            {{ confirmState.okText ?? "确认执行" }}
           </Button>
         </div>
       </div>

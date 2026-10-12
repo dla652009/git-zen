@@ -485,7 +485,43 @@
       `TAURI_ENV_PLATFORM` 选 `chrome105` / `safari13`）+ `sourcemap` 说明；
       顺带 `server.watch.ignored: ["**/src-tauri/**"]`
 - [x] `package.json` 加 `check:contract` 与 `verify`（契约检查 + 类型检查 + 5 个自检串起来）
-- [x] 前端自检脚本从 1 个涨到 5 个，Rust 单测 10 个（`cargo test --lib`）
+- [x] 前端自检脚本从 1 个涨到 5 个，Rust 单测 **12** 个（`cargo test --lib`）
+
+#### 收尾复核（又抓到四条）
+
+把 `docs/review/*.md` 的 P1/P2 再逐条重读核对时发现的漏项，根因见 `docs/BUGS.md` 同名小节：
+
+- [x] `git_diff_untracked` 的「上限」全在读完之后才生效（`std::fs::read` 整个读进内存）→
+      抽 `read_preview()`，只读前 1 MiB 再判二进制/截行；新增单测 `read_preview_caps_bytes_read`
+- [x] `git_get_user` 用 `unwrap_or_default()` 把「没配过」和「真失败」一起吞成空串 →
+      改 `git config --default ""` + `?` 传播真错误；前端 `SettingsModal.vue` 的静默 catch 补日志；
+      新增单测 `git_get_user_distinguishes_unset_from_failure`
+- [x] 4 处 `await saveDialog(...)` 写在 `try` 外面（App.vue ×2 / DiffViewer.vue ×2）→
+      全部移进 `try`，插件失败不再是一次「点了保存但没反应」的静默 rejection
+- [x] `humanize()` 对 non-fast-forward 只给「先 Pull 再 Push」→ 改为按情形分岔并指向
+      应用内的「强制推送（--force-with-lease）」，不再与 amend 互相打架
+- [x] 全局快捷键不判焦点（`onGlobalKeydown` 只挡 `isComposing`）→ 加 `typing` 判断，
+      输入框内只放行 `Esc` / `Ctrl+Tab` / 关掉自己正待着的切换器；`preventDefault()` 挪到确认有事可做之后
+- [x] 危险确认框与错误框共用「确认」二字 → `ConfirmState.okText`，11 处危险框把后果写在按钮上，
+      错误框改「知道了」
+- [x] 分页无任何指示（`loadingMore` / `canLoadMore` 不进模板）→ `HistoryGraph` 增加两个 props，
+      列表末尾渲染「正在加载更多…」/「已到底部」
+- [x] 6 处组件内联错误直出英文 stderr → `humanize` 搬到 `src/lib/errors.ts`（加一行版 `humanizeMsg`），
+      组件统一走它
+- [x] 四套反馈机制无明确分工 → 写进 `docs/NOTES.md`「反馈机制的分工」，并把「不加确认也算对」的判据
+      （可逆性）落成规则
+
+### 13.7 交互收口（R3 的最后一段）
+
+- [x] AI 输出里的链接会把 WebView 导航走（桌面应用没有后退键，点一下就被困住）→
+      `ui/Md.vue` 拦截 `<a>` 点击改走系统浏览器 `openUrl`，只放行 http(s)
+- [x] 关掉最后一个仓库时只清了 3 个状态 → 对齐 `activate()` 的完整重置清单
+      （tags / canLoadMore / fileHistoryModal / historyFilePath / remoteRaw / remoteLink）
+- [x] 错误框只有「确认」一个按钮，网络抖动失败也只能关窗重来 → `run()` 失败时挂 `retryFn`，
+      错误框出现「重试」；`showError` 直调处不挂（校验类错误重试没意义）
+- [x] `clipForAI()` 按 UTF-16 硬切 16KB，会切在 hunk 中间、可能劈开代理对 →
+      退到最近的换行（整段无换行才硬切），并避免切在代理对中间
+- [x] `humanize()` 兜底分支不剥 `Error: ` 前缀（用户会看到「Error: 磁盘已满」）→ 统一剥掉
 
 ### 明确不做（本轮）
 
@@ -494,6 +530,23 @@
 - git 调用超时、弹层 `role="dialog"` + focus trap：已完成（见 13.1 / 13.4）
 - 弹窗宽度 10 档、字号 8 档的统一尺度：属设计系统重构，改动面覆盖全部弹层
 - `bg-black/50` 遮罩（19 处）不随主题：当前观感可接受，改要动全部弹层
+- 骨架屏：现有「整块半透明遮罩 + Spinner」在历史区尺寸不变、内容跳变的抖动确实存在，
+  但换骨架屏要重做 `HistoryGraph` 的空态分支，收益与风险不成比例；已用分页指示条
+  缓解「不知道在不在加载」的核心问题
+- `tauri.conf.json` 的 `csp: null`：收紧 CSP 会牵动 Vite dev 的 HMR（ws 与内联脚本），
+  而唯一渲染外部文本的 `ui/Md.vue` 已经 `html: false` + `markdown-it` 默认 `validateLink`
+  挡掉 `javascript:`/`data:`，本轮改为「链接一律走系统浏览器」后风险面已收窄；
+  真要上 CSP 必须能把 `pnpm tauri dev` 跑起来验证，属于需要人工回归的改动
+- `-c alias.X=X` 别名劫持防护覆盖不全：实测 `git config alias.log '!echo HIJACKED'` 后
+  `git log` 仍走内置实现（`GIT_TRACE=1` 确认），**别名无法影子内置命令**，
+  现有覆盖属纵深防御而非必需，不补齐
+- `git_commits_range` 的 `from`/`to` 只拦 `-` 开头：rev 语法（`^`、`~`、`..`）是合法用法，
+  真正的边界由 git 自己校验，加白名单反而会拦住正常用法
+- `humanize()` 漏覆盖 git.rs 自造的中文错误（如「非法的 commit hash」）：那本来就已经是人话，
+  再映射一层没有收益
+- 4 个 `busy` 守卫缺口（`activate()` / `closeTab()` 可绕过）：刻意保持「仓库切换永远可响应」，
+  安全性由 `refresh()` / `loadMorePage()` / 历史 watcher 的**仓库身份守卫 + seq 守卫**保证
+  ——守卫加在「写入时」，而不是「入口处」，这样慢操作不会让界面失去响应
 
 ## 需求池（无需关注，后面排期）
 

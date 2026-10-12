@@ -87,7 +87,13 @@ async function aiFetch(
 // diff 过长截断：模型上下文有限，二进制段已在后端剔除
 export function clipForAI(text: string, maxChars = 16_000): string {
   if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n…（diff 过长已截断，原文共 ${text.length} 字符）`;
+  // 往回退到最近的换行：硬切会切在 hunk 中间，模型看到半行 diff 容易编出并不存在的改动；
+  // 退到行边界最多损失一行。同时别把代理对（emoji 等）劈成两半，那会渲染成 U+FFFD。
+  let cut = text.lastIndexOf("\n", maxChars);
+  if (cut < maxChars - 2000) cut = maxChars; // 整段没有换行（超长单行）：只能硬切
+  const head = text.slice(0, cut);
+  const safe = /[\uD800-\uDBFF]$/.test(head) ? head.slice(0, -1) : head;
+  return `${safe}\n…（diff 过长已截断，原文共 ${text.length} 字符）`;
 }
 
 function statusToText(status: number): string {

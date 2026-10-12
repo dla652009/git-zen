@@ -2,12 +2,18 @@
 import { ref, computed } from "vue";
 import { layout, LANE_COLORS } from "../graph";
 import type { LogEntry } from "../gitApi";
-import { Badge } from "@/components/ui";
+import { Badge, Spinner } from "@/components/ui";
 
 // 泳道历史图：虚拟滚动——几千提交时只渲染可视区 ± BUFFER 行的内容与连线，
 // 全量高度用空占位撑起（行高固定 26px，窗口换算无需测量）。
 // 滚动容器内聚在本组件（App 只接 loadMore 事件），搜索过滤仍只决定哪些行可见
-const props = defineProps<{ commits: LogEntry[]; head?: string; filter?: string }>();
+const props = defineProps<{
+  commits: LogEntry[];
+  head?: string;
+  filter?: string;
+  loadingMore: boolean; // 下一页正在拉取（App 的 loadMorePage 在飞）
+  canLoadMore: boolean; // 还有下一页可拉；为假且不在加载 = 已到底
+}>();
 const emit = defineEmits<{
   openCommit: [c: LogEntry];
   commitMenu: [p: { x: number; y: number; c: LogEntry }];
@@ -98,6 +104,13 @@ const winEnd = computed(() =>
   Math.min(shown.value.length, Math.ceil((scrollTop.value + viewportH.value) / ROW_H) + BUFFER),
 );
 const visible = computed(() => shown.value.slice(winStart.value, winEnd.value));
+
+// 列表末尾的分页指示：只对非空列表渲染（空列表由「无匹配提交」承担）。
+// 它是普通块级元素，只给 scrollHeight 增加固定的 24px；行与连线全部绝对定位在定高占位块里，
+// scrollTop / viewportH 又都取自容器，因此可视区间与连线窗口的换算不受影响
+const showTailHint = computed(
+  () => shown.value.length > 0 && (props.loadingMore || !props.canLoadMore)
+);
 
 // SVG 连线：child -> 最近可见祖先，竖向贝塞尔；窗口外的连线不画
 // （跨窗口的长边在滚动中短暂消失，换来的常数级 DOM 是值得的）
@@ -219,6 +232,15 @@ const hitSegments = computed(() => {
           >{{ c.author }} · {{ c.date }}</span
         >
       </div>
+    </div>
+    <!-- 末尾指示条：滚到分页边界时给出「正在加载 / 已到底」的反馈，不然页面完全静止 -->
+    <div
+      v-if="showTailHint"
+      aria-live="polite"
+      class="flex h-6 items-center justify-center text-[11px] text-muted-foreground"
+    >
+      <Spinner v-if="loadingMore" :size="12" label="正在加载更多…" />
+      <span v-else>已到底部</span>
     </div>
   </div>
 </template>

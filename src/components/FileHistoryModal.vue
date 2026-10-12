@@ -5,6 +5,7 @@ import { X } from "@lucide/vue";
 import * as api from "../gitApi";
 import type { LogEntry } from "../gitApi";
 import { patchLines } from "../lib/patch";
+import { humanizeMsg } from "../lib/errors";
 import { Button, Spinner } from "@/components/ui";
 
 const props = defineProps<{ repo: string; path: string }>();
@@ -25,7 +26,7 @@ onMounted(async () => {
     commits.value = await api.log(props.repo, 0, false, props.path);
     if (commits.value.length) await select(commits.value[0].hash);
   } catch (e) {
-    err.value = String(e).replace(/^Error: /, "");
+    err.value = humanizeMsg(e);
   } finally {
     loading.value = false;
   }
@@ -46,7 +47,7 @@ async function select(hash: string) {
   try {
     diffText.value = await api.showFile(props.repo, hash, props.path);
   } catch (e) {
-    diffErr.value = String(e).replace(/^Error: /, "");
+    diffErr.value = humanizeMsg(e);
   } finally {
     diffLoading.value = false;
   }

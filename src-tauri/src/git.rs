@@ -499,6 +499,21 @@ pub async fn git_show(repo: String, hash: String) -> Result<String, String> {
     .await
 }
 
+/// 预览读取上限。这个命令只用于「看一眼」，却一度用 std::fs::read 把整个文件读进内存，
+/// 再判二进制、再截 2000 行——一个 GB 级的未跟踪文件（镜像、数据库转储）足以把内存打满。
+const MAX_PREVIEW: u64 = 1024 * 1024;
+
+/// 只读文件前 MAX_PREVIEW 字节；调用方据此预览。
+fn read_preview(p: &std::path::Path) -> Result<Vec<u8>, String> {
+    let mut f = std::fs::File::open(p).map_err(|e| format!("读取文件失败: {e}"))?;
+    let mut bytes = Vec::new();
+    f.by_ref()
+        .take(MAX_PREVIEW)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("读取文件失败: {e}"))?;
+    Ok(bytes)
+}
+
 /// 未跟踪文件的合成 diff：读文件内容，每行当新增行展示（上限 2000 行，二进制文件提示）
 #[tauri::command]
 pub async fn git_diff_untracked(repo: String, path: String) -> Result<String, String> {
@@ -506,7 +521,7 @@ pub async fn git_diff_untracked(repo: String, path: String) -> Result<String, St
         check_repo_path(&path)?;
         use std::path::Path;
         let p = Path::new(&repo).join(&path);
-        let bytes = std::fs::read(&p).map_err(|e| format!("读取文件失败: {e}"))?;
+        let bytes = read_preview(&p)?;
         if bytes.contains(&0) {
             return Ok(format!(
                 "diff --git a/{path} b/{path}\n（二进制文件，无法预览内容）"
@@ -524,12 +539,15 @@ pub async fn git_diff_untracked(repo: String, path: String) -> Result<String, St
     .await
 }
 
-/// 读取/保存当前仓库的提交者信息（仓库级 git config）
+/// 读取当前仓库的提交者信息（仓库级 + 全局 git config）
 #[tauri::command]
 pub async fn git_get_user(repo: String) -> Result<(String, String), String> {
     offload(move || {
-        let n = run(&repo, &["config", "user.name"]).unwrap_or_default();
-        let e = run(&repo, &["config", "user.email"]).unwrap_or_default();
+        // --default "" 让「没配过」变成 exit 0 + 空输出，与真正的失败（找不到 git、
+        // 目录不存在）区分开。原来用 unwrap_or_default() 把两种都吞成空串，
+        // 于是仓库打不开时设置页只显示两个空框，用户以为是自己没配。
+        let n = run(&repo, &["config", "--default", "", "user.name"])?;
+        let e = run(&repo, &["config", "--default", "", "user.email"])?;
         Ok((n.trim().to_string(), e.trim().to_string()))
     })
     .await
@@ -1551,6 +1569,61 @@ mod tests {
             text.contains("hello-partial"),
             "孙进程持有管道时丢了已产生的输出，实际: {text:?}"
         );
+    }
+
+    /// 预览必须有读取上限：原来用 std::fs::read 整个读进来，几个 GB 的未跟踪文件会打满内存。
+    #[test]
+    fn read_preview_caps_bytes_read() {
+        let repo = TempRepo::new("preview");
+        let big = repo.0.join("big.txt");
+        // 5 MiB，超过 1 MiB 的上限；内容全 'a' 便于断言
+        std::fs::write(&big, vec![b'a'; 5 * 1024 * 1024]).unwrap();
+
+        let got = read_preview(&big).unwrap();
+        assert_eq!(
+            got.len() as u64,
+            MAX_PREVIEW,
+            "应只读上限内的字节，实际读了 {}",
+            got.len()
+        );
+
+        // 小文件要完整读到，不能被上限截断
+        let small = repo.0.join("small.txt");
+        std::fs::write(&small, b"hello").unwrap();
+        assert_eq!(read_preview(&small).unwrap(), b"hello");
+    }
+
+    /// git_get_user 必须区分「没配过」与「真失败」：前者返回空串，后者要把错误抛出来。
+    /// 原来两边都用 unwrap_or_default()，仓库打不开时设置页只显示两个空框。
+    #[test]
+    fn git_get_user_distinguishes_unset_from_failure() {
+        // 仓库有效且配过：读到真实值
+        let repo = TempRepo::new("getuser");
+        let (n, e) = tauri::async_runtime::block_on(git_get_user(repo.path().to_string()))
+            .expect("正常仓库应成功");
+        assert_eq!((n.as_str(), e.as_str()), ("t", "t@t"));
+
+        // 清掉配置：应返回空串而不是报错
+        run(repo.path(), &["config", "--unset", "user.name"]).unwrap();
+        // 同时屏蔽全局配置，避免开发机自己的 user.name 干扰
+        let empty_cfg = repo.0.join("no-such-global-config");
+        let saved = std::env::var("GIT_CONFIG_GLOBAL").ok();
+        std::env::set_var("GIT_CONFIG_GLOBAL", &empty_cfg);
+        let (n2, _) = tauri::async_runtime::block_on(git_get_user(repo.path().to_string()))
+            .expect("未配置不应报错");
+        match saved {
+            Some(v) => std::env::set_var("GIT_CONFIG_GLOBAL", v),
+            None => std::env::remove_var("GIT_CONFIG_GLOBAL"),
+        }
+        assert_eq!(n2, "", "未配置时应为空串，实际: {n2:?}");
+
+        // 目录不存在（真失败）：必须报错，不能吞成空串
+        let missing = repo.0.join("does-not-exist");
+        let err = tauri::async_runtime::block_on(git_get_user(
+            missing.to_str().unwrap().to_string(),
+        ))
+        .expect_err("无效目录应报错");
+        assert!(!err.trim().is_empty(), "错误信息不应为空");
     }
 }
 
