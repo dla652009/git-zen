@@ -727,6 +727,23 @@
 - [x] `clampFontSize` 同时用在 `applySettings()` 上做兜底：手改 localStorage 写进越界值时，
       渲染仍然正常（数字框的 `min`/`max` 只约束箭头，手输照样能提交）。
 
+### 14.12 Diff 面板支持全屏查看（用户需求）
+
+用户提出「diff 框增加一个全屏查看的按钮」。
+
+- [x] `src/components/DiffViewer.vue` 新增 `fullscreen` ref（纯展示状态，关掉弹层即恢复默认尺寸、不持久化），
+      header 在「折行」之后加一个图标按钮，`Maximize2` / `Minimize2` 随状态互换，带 `aria-pressed` 与跟随状态的 tooltip。
+- [x] 尺寸切换走 **`:class` 整组替换**，而不是「静态类 + 动态覆盖类」：
+      `fullscreen ? 'h-full w-full' : 'h-[80vh] w-[80vw] rounded-lg'`。
+      若写成静态 `rounded-lg` + 动态 `rounded-none`，两个类会同时留在元素上，谁赢由产物 CSS 顺序决定 ——
+      这正是 `docs/NOTES.md` 里「`@utility` 定义的类排在核心工具类之后」踩过的那个坑。
+- [x] 用 `h-full w-full` 而不是 `h-screen w-screen`：外层遮罩是 `fixed inset-0`，百分比有确定的参照，
+      不必依赖 `100vh`（WebView 里 `vh` 与可视区在特定情况下并不一致）。
+- [x] **刻意没让 Esc 先退出全屏**：Esc 走全局浮层链（`closeTopOverlay()`）关闭整个弹层，
+      这是本应用所有浮层的一致行为。在组件内拦 keydown 会和全局链打架，
+      而且焦点不在弹层内时（比如刚点过可选中的 diff 文本）事件根本不经过组件，拦不可靠。
+- [x] `pnpm verify` exit 0；clean build（删 `dist` 后）exit 0；产物里 `h-full` / `w-full` / `h-[80vh]` / `w-[80vw]` / `rounded-lg` 均已生成。
+
 ## M15 工作区操作补全
 
 ### 15.1 丢弃暂存区的全部改动（用户需求）

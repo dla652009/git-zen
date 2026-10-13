@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
-import { X, Bot, WrapText } from "@lucide/vue";
+import { X, Bot, WrapText, Maximize2, Minimize2 } from "@lucide/vue";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, isAbortError } from "../ai";
@@ -56,6 +56,9 @@ const emit = defineEmits<{ close: [] }>();
 const text = ref("");
 const loading = ref(true);
 const err = ref("");
+// 全屏查看：diff 经常又长又宽，80vw/80vh 在看单个文件时偏窄。
+// 与「折行」一样是纯展示状态，关掉弹层即恢复默认尺寸，不持久化
+const fullscreen = ref(false);
 
 onMounted(async () => {
   try {
@@ -274,7 +277,12 @@ onUnmounted(() => {
     aria-labelledby="dlg-diff-title"
     @click.self="emit('close')"
   >
-    <div class="pop-in surface flex h-[80vh] w-[80vw] flex-col rounded-lg">
+    <!-- 尺寸走 :class 而不是叠一个 class：rounded-lg 与 h/w 必须整组切换，
+         否则两个 rounded 会同时留在 class 上、由产物 CSS 顺序决定谁赢 -->
+    <div
+      class="pop-in surface flex flex-col"
+      :class="fullscreen ? 'h-full w-full' : 'h-[80vh] w-[80vw] rounded-lg'"
+    >
       <header class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
         <span id="dlg-diff-title" class="truncate font-medium">
           {{ commit ? commit.subject : file?.path }}
@@ -287,6 +295,19 @@ onUnmounted(() => {
         <Tooltip text="切换折行">
           <Button variant="ghost" size="icon" class="h-6 w-6" aria-label="切换折行" @click="toggleWrap">
             <WrapText class="size-3.5" :class="!wrap && 'opacity-40'" />
+          </Button>
+        </Tooltip>
+        <Tooltip :text="fullscreen ? '退出全屏' : '全屏查看'">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6"
+            :aria-label="fullscreen ? '退出全屏' : '全屏查看'"
+            :aria-pressed="fullscreen"
+            @click="fullscreen = !fullscreen"
+          >
+            <Minimize2 v-if="fullscreen" class="size-3.5" />
+            <Maximize2 v-else class="size-3.5" />
           </Button>
         </Tooltip>
         <Tooltip :text="savedPatchTip ? '已导出 ✓' : '导出 .patch'">
