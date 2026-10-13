@@ -648,5 +648,59 @@ Windows(WebView2) / macOS(WKWebView) / Linux(WebKitGTK) 三端。
 `merge_conflict_fails_but_state_changes` 断言「命令返回 Err」与「status 出现冲突文件」同时成立，
 把「失败即无变化」这个错误假设从根上否掉。**前端逻辑越是长在组件里，越容易整类漏测。**
 
+### 别让「关闭弹窗」顺手清掉业务状态
+
+工作流进度弹窗原来用一个 `wfRun` ref 同时承担两件事：**执行的进度数据**，以及**这个弹窗开着吗**。
+于是 `@click.self="wfRun = null"` 关掉弹窗，等于把执行进度也抹掉了——而循环下一步就要读它。
+更糟的是崩得悄无声息：`const st = wfRun.value.states[i]!` 写在 `try` 之外（内层 try 只包住
+`execStep` 那一次调用），抛出的 TypeError 直接穿透，`busy` 在 `finally` 里照常复位，
+用户看到的现象只是「弹窗没了，流程也不动了」。
+
+修法是把两件事拆开：`wfRun`（状态，执行期间不清空）+ `wfRunOpen`（可见性）。关闭只是
+`wfRunOpen = false`；失败时如果弹窗已被关掉，再把它重新打开，让用户看见原因。
+
+推广一句：**只要一个 ref 既表示「数据」又表示「界面可见性」，它的关闭路径就具备了清空业务状态的能力。**
+多步操作、上传、长任务这类「关掉窗口但事情还在跑」的场景都会踩到。
+
+### 重试要从失败处续跑，起点必须沿用第一次记录的
+
+按顺序跑的流程失败后，前面的步骤（checkout / merge / 暂存）**已经生效了**，从头重跑不但慢，
+还会把已经切走的分支再切一遍。所以重试要带 `fromIndex = 失败下标`，并保留已完成步骤的状态。
+
+一个反直觉的点：**续跑时的「起始分支」不能重新记录**。`executeFlow` 一开始会记下
+`status.branch` 作为「最后切回哪里」的依据，但失败的流程很可能已经切到别的分支上了——
+重试时重新记录，就把「切回起始分支」指到了错误的目标。做法是让 `executeFlow` 接一个
+`resume?: { fromIndex, startBranch }`，续跑时把第一次的值原样传回去。
+
+配套的：**「因切走仓库而中止」这种失败不该给重试按钮**。起点分支属于另一个仓库，重试没有意义。
+用一个 `repoChanged` 标记区分开，比让用户点了按钮再看到一条莫名其妙的错误要好。
+
+### 一个「全部为否」的检查结果，先怀疑检查本身
+
+我核对构建产物里有没有新生成的工具类时，用 PowerShell 写成
+`(Select-String -Path $css -Pattern $k -SimpleMatch -AllMatches).Matches.Count`，
+结果**连 `.truncate` 这种满屏都在用的类都报 0**。差点据此判定「新类没生成」而去改样式文件。
+
+换成 `Get-Content -Raw` + `.Contains('.w-28{')` 立刻全为 true；再用 node 打印上下文，
+能直接看到 `.max-w-\[7rem\]{max-width:7rem}` 就在产物里。
+
+规则：**当一个检查对「你知道必然存在」的样本也返回否，先验证检查本身**。
+尤其是一次性验证脚本——它没被任何人 review 过，出错时你怀疑的却是被它检查的代码。
+（同一个道理在 `docs/NOTES.md` 的「PowerShell 的 `.Split()` 是按字符切」那条里已经出现过一次。）
+
+### `vue-tsc` 不检查模板结构，只有构建会
+
+「TypeScript 类型检查」很容易被当成「语法检查」，它不是：组件**少写一个结束标签**，
+`vue-tsc --noEmit` 照样 exit 0 —— 它检查模板里**表达式**的类型，不检查元素是否配对。
+
+写工作流拖拽时漏了一个 `</VueDraggable>`，`vue-tsc` 全程绿灯，是 `vite build` 报
+`[vite:vue] Element is missing end tag` 才暴露的。实测复现（临时探针组件 + 临时 import）：
+`vue-tsc` exit 0、`vite build` **exit 1**。
+
+规则：**`pnpm verify` 末尾必须有一步 `vite build`**。它是目前唯一能拦住模板结构错误的关卡，
+而这类错误的后果恰好最严重——SFC 编译失败是白屏，不是「某个功能不好用」。
+代价只有约 7 秒。
+
+
 
 

@@ -387,7 +387,7 @@ async function genCommitMsg() {
         @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: true }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
-        <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（单击选中 · 双击查看变更）`">
+        <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（单击选中 · 再单击查看变更）`">
           <span class="truncate text-sm">
             <template v-if="renameParts(f.path)">
               <span class="text-muted-foreground line-through">{{ renameParts(f.path)![0] }}</span>
@@ -452,7 +452,7 @@ async function genCommitMsg() {
         @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: false }"
       >
         <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
-        <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（单击选中 · 双击查看变更）`">
+        <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（单击选中 · 再单击查看变更）`">
           <span class="truncate text-sm">
             <template v-if="renameParts(f.path)">
               <span class="text-muted-foreground line-through">{{ renameParts(f.path)![0] }}</span>

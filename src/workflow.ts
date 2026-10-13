@@ -7,6 +7,8 @@ export type BranchRefMode = "fixed" | "start" | "ask";
 export interface BranchRef {
   mode: BranchRefMode;
   name?: string; // 仅 mode === "fixed" 需要
+  /** 仅 mode === "ask"：填给用户看的说明，用作输入框的标签与占位符 */
+  label?: string;
 }
 
 // 步骤原语（全部复用现有 git 命令，零新增 Rust）
@@ -25,6 +27,8 @@ export interface Workflow {
   id: string;
   name: string;
   steps: WorkflowStep[];
+  /** 钉在工具栏上：常用流程不必每次展开下拉（最多 3 个，见 App.vue 的 pinnedFlows） */
+  pinned?: boolean;
 }
 
 export function newFlowId(): string {
@@ -38,7 +42,7 @@ export function describeStep(s: WorkflowStep, startBranch?: string): string {
       ? r.name || "（未填分支名）"
       : r.mode === "start"
         ? `起始分支${startBranch ? `（${startBranch}）` : ""}`
-        : "运行时输入的分支";
+        : r.label?.trim() || "运行时输入的分支";
   switch (s.kind) {
     case "checkout":
       return `切换到 ${refLabel(s.ref)}`;
@@ -59,13 +63,38 @@ export function describeStep(s: WorkflowStep, startBranch?: string): string {
   }
 }
 
-// 是否需要运行时输入（任一 ask 引用或新建分支）
+// 运行时输入的槽位：每个需要输入的步骤一个，按步骤下标定位。
+// 早期版本只有一个共享输入值，于是「切到 X 分支 → 合并 Y 分支」这种流程配不出来
+// （两个 ask 引用只能填同一个名字），只能把其中一个改成写死的分支名。
+export interface InputSlot {
+  /** 步骤下标，执行时用它把填的值取回来 */
+  index: number;
+  /** 输入框的短标签 */
+  label: string;
+  placeholder: string;
+}
+
+export function flowInputSlots(wf: Workflow): InputSlot[] {
+  const slots: InputSlot[] = [];
+  wf.steps.forEach((s, index) => {
+    const at = `第 ${index + 1} 步`;
+    if (s.kind === "createBranch") {
+      const prefix = s.prefix?.trim() ?? "";
+      slots.push({ index, label: `${at} 新建分支名`, placeholder: `${prefix}分支名` });
+    } else if ((s.kind === "checkout" || s.kind === "merge") && s.ref.mode === "ask") {
+      slots.push({
+        index,
+        label: `${at} ${s.kind === "checkout" ? "切换到" : "合并到当前分支"}`,
+        placeholder: s.ref.label?.trim() || "分支名",
+      });
+    }
+  });
+  return slots;
+}
+
+// 是否需要运行时输入
 export function flowNeedsInput(wf: Workflow): boolean {
-  return wf.steps.some(
-    (s) =>
-      s.kind === "createBranch" ||
-      ((s.kind === "checkout" || s.kind === "merge") && s.ref.mode === "ask"),
-  );
+  return flowInputSlots(wf).length > 0;
 }
 
 // 首次启动种子模板（深拷贝：用户编辑不能改到种子常量）

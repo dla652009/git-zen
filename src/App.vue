@@ -34,9 +34,9 @@ import * as api from "./gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, aiCacheDelete, abortAi, isAbortError } from "./ai";
 import type { Status, LogEntry, Branch, TagEntry } from "./gitApi";
 import { settings } from "./settings";
-import { describeStep, flowNeedsInput } from "./workflow";
+import { describeStep, flowInputSlots } from "./workflow";
 import { workflows } from "./workflowStore";
-import type { BranchRef, Workflow, WorkflowStep } from "./workflow";
+import type { BranchRef, InputSlot, Workflow, WorkflowStep } from "./workflow";
 import {
   Button,
   Input,
@@ -1357,63 +1357,100 @@ function flowMenuItems(): MenuItem[] {
   ];
 }
 
-// 执行确认：解析步骤预览 + 运行时输入当场填；起始分支在执行开始时记录
-const wfConfirm = ref<{ wf: Workflow; needInput: boolean } | null>(null);
-const wfInput = ref("");
+// 钉在工具栏上的工作流（最多 3 个，在设置页勾）：常用流程不必每次展开下拉
+const pinnedFlows = computed(() => workflows.filter((w) => w.pinned).slice(0, 3));
+
+// 执行确认：解析步骤预览 + 运行时输入当场填；起始分支在执行开始时记录。
+// 每个需要输入的步骤各占一个输入框 —— 早前所有步骤共用同一个值，
+// 「先切到 A、再合并 B」这种流程根本配不出来
+const wfConfirm = ref<{ wf: Workflow; slots: InputSlot[] } | null>(null);
+const wfInputs = ref<Record<number, string>>({});
 function runFlow(wf: Workflow) {
   if (!repo.value || busy.value) return;
-  wfInput.value = "";
-  wfConfirm.value = { wf, needInput: flowNeedsInput(wf) };
+  wfInputs.value = {};
+  wfConfirm.value = { wf, slots: flowInputSlots(wf) };
+}
+// 有任一必填槽为空就不放行（按钮同时置灰，这里是回车路径的兜底）
+function flowInputsReady(): boolean {
+  return (wfConfirm.value?.slots ?? []).every((s) => (wfInputs.value[s.index] ?? "").trim());
 }
 function confirmFlow() {
   const c = wfConfirm.value;
   if (!c) return;
-  if (c.needInput && !wfInput.value.trim()) return;
+  if (!flowInputsReady()) return;
   wfConfirm.value = null;
-  void executeFlow(c.wf, wfInput.value.trim());
+  void executeFlow(c.wf, { ...wfInputs.value });
 }
 
 // 进度：pending/running/done/skip/fail；失败标红停住保留弹窗，成功自动关
+type WfStepState = { state: "pending" | "running" | "done" | "skip" | "fail"; note: string };
 const wfRun = ref<{
   wf: Workflow;
   start: string;
-  states: { state: "pending" | "running" | "done" | "skip" | "fail"; note: string }[];
+  states: WfStepState[];
   error: string;
+  /** 失败步骤的下标；-1 = 没失败 */
+  failIndex: number;
+  /** 因切走仓库而中止：不给「重试」，起点分支属于另一个仓库，重试没有意义 */
+  repoChanged: boolean;
+  /** 本次执行用的运行时输入，重试时原样复用 */
+  inputs: Record<number, string>;
 } | null>(null);
+// 进度弹窗是否可见。执行期间允许把它关掉（多步操作可能跑很久），
+// 状态本身留在 wfRun 里继续更新 —— 早前直接把 wfRun 置空，下一步循环就会读到 null 崩掉
+const wfRunOpen = ref(false);
 
-async function executeFlow(wf: Workflow, inputBranch: string) {
+// resume：从失败的那一步接着跑。startBranch 必须沿用第一次的 —— 流程可能已经切走了分支，
+// 重新记录会把「切回起始分支」指到错误的目标上
+async function executeFlow(
+  wf: Workflow,
+  inputs: Record<number, string>,
+  resume?: { fromIndex: number; startBranch: string },
+) {
   if (busy.value || !repo.value) return;
   // 锁定仓库：多步执行期间用户可能切走（Ctrl+Tab / 关标签都不看 busy）
   const path = repo.value;
-  const startBranch = status.value?.branch ?? "";
+  const startBranch = resume?.startBranch ?? status.value?.branch ?? "";
+  const fromIndex = resume?.fromIndex ?? 0;
   busy.value = true;
   runningAction.value = "workflow";
+  const prev = wfRun.value;
   wfRun.value = {
     wf,
     start: startBranch,
-    states: wf.steps.map(() => ({ state: "pending", note: "" })),
+    // 重试时保留已完成的步骤，只把它们之后的重置为 pending
+    states:
+      resume && prev
+        ? prev.states.map((s, i) => (i >= fromIndex ? { state: "pending" as const, note: "" } : s))
+        : wf.steps.map(() => ({ state: "pending" as const, note: "" })),
     error: "",
+    failIndex: -1,
+    repoChanged: false,
+    inputs: { ...inputs },
   };
+  wfRunOpen.value = true;
   let ok = true;
   try {
-    for (let i = 0; i < wf.steps.length; i++) {
+    for (let i = fromIndex; i < wf.steps.length; i++) {
       const st = wfRun.value.states[i]!;
       // 每步开始前校验仓库身份：切走即中止，否则后续步骤会在别的仓库上 commit/push
       if (repo.value !== path) {
         st.state = "fail";
         wfRun.value.error = "执行期间切换了仓库，工作流已中止";
+        wfRun.value.repoChanged = true;
         ok = false;
         break;
       }
       st.state = "running";
       try {
-        const note = await execStep(path, wf.steps[i]!, inputBranch, startBranch);
+        const note = await execStep(path, wf.steps[i]!, inputs[i] ?? "", startBranch);
         st.note = note ?? "";
         st.state = note ? "skip" : "done";
       } catch (e) {
         st.state = "fail";
         const h = humanize(String(e));
         wfRun.value.error = h.msg + (h.detail ? `\n${h.detail}` : "");
+        wfRun.value.failIndex = i;
         ok = false;
         break; // 出错即停：后续保持 pending；merge 冲突正好停在目标分支待处理
       }
@@ -1425,8 +1462,25 @@ async function executeFlow(wf: Workflow, inputBranch: string) {
   }
   if (ok) {
     wfRun.value = null;
+    wfRunOpen.value = false;
     toast("工作流已完成");
+  } else if (!wfRunOpen.value) {
+    // 执行期间被关掉了，但失败了得让用户看见
+    wfRunOpen.value = true;
   }
+}
+
+// 关掉进度弹窗：执行中只是把它藏起来（状态继续更新），空闲时才真的清掉
+function closeWfRun() {
+  wfRunOpen.value = false;
+  if (!busy.value) wfRun.value = null;
+}
+
+// 从失败的那一步接着跑：前面的 checkout/merge 已经生效，不必重做
+function retryFlow() {
+  const r = wfRun.value;
+  if (!r || r.failIndex < 0 || busy.value) return;
+  void executeFlow(r.wf, r.inputs, { fromIndex: r.failIndex, startBranch: r.start });
 }
 
 // path = 流程启动时锁定的仓库：每步都用它，而不是现读 repo.value，
@@ -1930,7 +1984,12 @@ function endResize() {
 }
 
 // v-focus：选项卡重命名输入框自动聚焦
-const vFocus = { mounted: (el: HTMLElement) => el.focus() };
+// 值给 false 就不抢焦点：一个弹层里有多个输入框时，只该让第一个自动聚焦
+const vFocus = {
+  mounted: (el: HTMLElement, b: { value?: unknown }) => {
+    if (b.value !== false) el.focus();
+  },
+};
 
 // ---- IME 守卫：输入法组词期间 Enter/Esc 属于输入法，不触发弹窗动作 ----
 // 关键：必须监听 keydown。Chromium 里确认候选词那次 keyup 的 e.isComposing 已变回 false，
@@ -2055,7 +2114,14 @@ onUnmounted(() => {
         </Button>
       </Tooltip>
       <span class="mx-1 h-4 w-px bg-border" />
-      <Tooltip text="工作流：多步 git 操作一键执行">
+      <!-- 钉住的工作流（最多 3 个，在设置页勾）：常用流程不必每次展开下拉再点一次 -->
+      <Tooltip v-for="w in pinnedFlows" :key="w.id" :text="`执行工作流：${w.name}`">
+        <Button :disabled="!repo || busy" @click="runFlow(w)">
+          <WorkflowIcon class="size-3.5 shrink-0" />
+          <span class="max-w-[7rem] truncate">{{ w.name }}</span>
+        </Button>
+      </Tooltip>
+      <Tooltip text="工作流">
         <Button
           variant="ghost"
           size="icon"
@@ -2066,7 +2132,7 @@ onUnmounted(() => {
           <WorkflowIcon class="size-4" />
         </Button>
       </Tooltip>
-      <Tooltip text="刷新（含 fetch，离线仅本地）">
+      <Tooltip text="刷新">
         <Button
           variant="ghost"
           size="icon"
@@ -2153,7 +2219,7 @@ onUnmounted(() => {
           </div>
         </template>
       </VueDraggable>
-      <Tooltip text="管理分组（新建 / 重命名 / 删除 / 分配仓库）">
+      <Tooltip text="管理分组">
         <Button variant="ghost" size="icon" class="mr-1 mb-0.5 h-6 w-6 shrink-0" @click="openGroupMgr">
           <FolderPlus class="size-4" />
         </Button>
@@ -2745,7 +2811,7 @@ onUnmounted(() => {
       <span class="font-medium text-foreground">{{ status?.branch ?? "—" }}</span>
       <span class="flex-1" />
       <span v-if="status">{{ status.files.length }} 个变更文件</span>
-      <Tooltip v-if="remoteWebUrl" :text="`打开远程仓库网页：${remoteWebUrl}`">
+      <Tooltip v-if="remoteWebUrl" text="打开远程仓库网页">
         <Button
           variant="ghost"
           size="sm"
@@ -3116,14 +3182,22 @@ onUnmounted(() => {
     >
       <div class="w-dlg-md surface rounded-lg p-5 pop-in">
         <div id="dlg-wf-confirm-title" class="mb-3 text-base font-semibold">执行工作流：{{ wfConfirm.wf.name }}</div>
-        <Input
-          v-if="wfConfirm.needInput"
-          v-model="wfInput"
-          v-focus
-          class="mb-2"
-          placeholder="运行时输入的分支名（新建分支 / 运行时输入的切换与合并用）"
-          @keydown.enter.prevent="imeConfirmFlow"
-        />
+        <div v-if="wfConfirm.slots.length" class="mb-2 space-y-1.5">
+          <label
+            v-for="(slot, k) in wfConfirm.slots"
+            :key="slot.index"
+            class="flex items-center gap-2"
+          >
+            <span class="w-28 shrink-0 truncate text-xs text-muted-foreground">{{ slot.label }}</span>
+            <Input
+              v-model="wfInputs[slot.index]"
+              v-focus="k === 0"
+              class="h-7 text-xs"
+              :placeholder="slot.placeholder"
+              @keydown.enter.prevent="imeConfirmFlow"
+            />
+          </label>
+        </div>
         <ol class="space-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
           <li v-for="(s, i) in wfConfirm.wf.steps" :key="i">
             {{ i + 1 }}. {{ describeStep(s, status?.branch) }}
@@ -3139,7 +3213,7 @@ onUnmounted(() => {
           <Button
             variant="default"
             size="sm"
-            :disabled="!!wfConfirm.needInput && !wfInput.trim()"
+            :disabled="!flowInputsReady()"
             @click="confirmFlow"
           >
             执行
@@ -3150,13 +3224,13 @@ onUnmounted(() => {
 
     <!-- 工作流执行进度：逐步打勾，失败标红停住 -->
     <div
-      v-if="wfRun"
+      v-if="wfRun && wfRunOpen"
       v-trap
       class="fixed inset-0 z-30 grid place-items-center bg-scrim"
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-wf-run-title"
-      @click.self="wfRun = null"
+      @click.self="closeWfRun()"
     >
       <div class="w-dlg-md surface rounded-lg p-5 pop-in">
         <div id="dlg-wf-run-title" class="mb-3 flex items-center gap-2 text-base font-semibold">
@@ -3185,8 +3259,18 @@ onUnmounted(() => {
           v-if="wfRun.error"
           class="mt-3 whitespace-pre-wrap rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
         >{{ wfRun.error }}</div>
-        <div class="mt-3 flex justify-end">
-          <Button variant="secondary" size="sm" @click="wfRun = null">关闭</Button>
+        <div class="mt-3 flex justify-end gap-2">
+          <!-- 只在「某一步失败」时给重试：切走仓库导致的中止，重试没有意义 -->
+          <Button
+            v-if="wfRun.failIndex >= 0 && !wfRun.repoChanged"
+            variant="default"
+            size="sm"
+            :disabled="busy"
+            @click="retryFlow"
+          >
+            从失败处重试
+          </Button>
+          <Button variant="secondary" size="sm" @click="closeWfRun()">关闭</Button>
         </div>
       </div>
     </div>

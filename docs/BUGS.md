@@ -22,6 +22,15 @@
       改为刷新后 toast 提示冲突文件数，只有确实没有未合并文件时才当失败抛出。后端前提由 `src-tauri/src/git.rs`
       的 `merge_conflict_fails_but_state_changes` 钉住（断言命令返回 Err 的同时 status 里已出现冲突文件）。
 
+- [x] 工作流执行期间点背景关掉进度弹窗，整个流程会半路崩掉且没有任何提示 → **根因**：进度弹窗用
+      `@click.self="wfRun = null"` 关闭，而执行循环每一步都要读 `wfRun.value.states[i]`。弹窗一关
+      `wfRun.value` 就是 null，而 `const st = wfRun.value.states[i]!` 这句在 `try` **之外**（内层 try
+      只包住 `execStep` 那一次调用），于是抛出的 TypeError 直接穿透出去：`busy` 在 `finally` 里复位、
+      剩下的步骤一步都不跑，用户只看到弹窗消失。修复：把「执行状态」与「弹窗是否可见」拆成两个 ref ——
+      `wfRun`（状态，执行期间不清空）与 `wfRunOpen`（可见性）。关闭只是 `wfRunOpen = false`，
+      失败时若弹窗已被关掉会重新打开，让用户看见失败原因。
+      **教训**：拿同一个 ref 既当「数据」又当「这个弹窗开着吗」，就等于让关闭按钮具备清空业务状态的能力。
+
 ## T0 阻塞问题
 
 - [x] 刚进入/切换选项卡加载仓库概率卡死、窗口无响应 → **根因**：Tauri v2 同步 command 在主线程执行，

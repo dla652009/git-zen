@@ -837,6 +837,42 @@
       `ChangesPanel.genCommitMsg` 加「生成期间切走就丢弃」守卫。
 - [x] `pnpm verify` exit 0；clean build exit 0。（本轮无 Rust 改动，未跑 `cargo test --lib`。）
 
+### 15.5 工作流交互优化：每步独立输入、失败重试、钉住（用户反馈）
+
+用户提「优化工作流模块的交互方式，支持拖拽等，再帮我想想其他的」。动手前先把模块全貌摸了一遍
+（数据层 `src/workflow.ts` + `workflowStore.ts`、工具栏入口、管理 UI 在 `SettingsModal.vue` 的
+「工作流」页、执行入口在 `App.vue`），再把想到的候选列成问题问用户。用户选择：**不做导入导出 /
+不做分享链接 / 不做「执行前预检」**（预检会实打实走一遍 git，又慢又可能改状态）。
+
+**Lead 自己改的（`src/workflow.ts` + `src/App.vue`）**
+
+- [x] `src/workflow.ts` 新增 `pinned?: boolean`，以及 `InputSlot` 与 `flowInputSlots(wf)`：
+      把「哪些步骤需要运行时输入」的判定从单个布尔值升级成带标签和占位符的槽位列表。
+- [x] **每个需要输入的步骤各占一个输入框**（`wfInputs: Record<步骤下标, string>`）。原来所有步骤
+      共用同一个 `wfInput`，「先切到 A、再合并 B」这种流程根本配不出来。
+- [x] **工具栏直接显示钉住的工作流**（最多 3 个，走 `pinnedFlows` computed）：常用流程不必每次
+      展开下拉再点一次。
+- [x] **失败后「从失败处重试」**：`executeFlow(wf, inputs, resume?)` 支持从 `failIndex` 续跑，
+      保留已完成步骤的打勾状态。`resume.startBranch` **必须沿用第一次记录的那个** —— 失败的流程
+      可能已经切走了分支，重新记录会把「切回起始分支」指到错误的目标上。
+- [x] **因切走仓库而中止的不给重试**（`repoChanged` 标记）：起点分支属于另一个仓库，重试没有意义。
+- [x] `v-focus` 指令支持值：一个弹层里有多个输入框时只有第一个该自动聚焦。原来每个挂载的输入框
+      都调 `.focus()`，最后挂载的那个赢。
+- [x] 修掉连带发现的真 Bug：**执行期间点背景关掉进度弹窗，会让循环读到 `wfRun.value === null`
+      直接抛错**（`const st = wfRun.value.states[i]!` 在 try 之外），工作流半路崩掉且没有任何提示。
+      修法是把「状态」与「弹窗是否可见」拆成两个 ref：`wfRun`（执行期间不清）与 `wfRunOpen`。
+      失败时如果弹窗已被关掉会重新打开，让用户看见失败原因。
+- [x] `npx vue-tsc --noEmit` exit 0；`pnpm verify` exit 0；clean build exit 0（1889 modules）。
+
+**委派给 fix-components 的（只动 `src/components/SettingsModal.vue`，见共享任务 task-15）**
+
+- [ ] 步骤拖拽排序（用项目既有的 vue-draggable-plus，`force-fallback: true`；不用 HTML5 DnD API）
+- [ ] 工作流列表拖拽排序，重命名改双击 + Enter/Esc
+- [ ] 步骤参数行内编辑：`ask` 模式补「提示文字」（存 `BranchRef.label` 可选字段）
+- [ ] 复制工作流 / 复制步骤
+- [ ] 钉住按钮（`Pin` 图标 + `aria-pressed`；已钉满 3 个时其余置灰）
+- [ ] 添加步骤失败时给出提示（原来点「添加」毫无反应）
+
 ## 需求池（无需关注，后面排期）
 
 ### Git 核心补全

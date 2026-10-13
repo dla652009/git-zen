@@ -1,6 +1,11 @@
 <script setup lang="ts">
-import { computed, reactive, ref, nextTick, onMounted } from "vue";
-import { X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe, Workflow as WorkflowIcon, ChevronDown, ChevronUp } from "@lucide/vue";
+import { computed, reactive, ref, nextTick, onMounted, watch, type Component } from "vue";
+import {
+  X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe, Workflow as WorkflowIcon, ChevronDown,
+  GripVertical, Pin, Pencil, Trash2, TriangleAlert,
+  GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload,
+} from "@lucide/vue";
+import { VueDraggable } from "vue-draggable-plus";
 import {
   THEMES,
   settings,
@@ -15,7 +20,7 @@ import { readJsonObject } from "../lib/safeJson";
 import { humanizeMsg } from "../lib/errors";
 import { workflows } from "../workflowStore";
 import { newFlowId, type BranchRef, type Workflow, type WorkflowStep } from "../workflow";
-import { Button, Input, Spinner, Select, Switch } from "@/components/ui";
+import { Button, Input, Spinner, Select, Switch, Tooltip } from "@/components/ui";
 import CommitHeatmap from "./CommitHeatmap.vue";
 
 const props = defineProps<{ repo: string; initialTab?: string }>();
@@ -126,8 +131,16 @@ function addFlow() {
 }
 function renameFlow(w: Workflow) {
   wfRename.value = { id: w.id, draft: w.name };
+  // 打开即选中原名，改名不用先手动清空
+  nextTick(() => wfRenameInput.value?.$el.select());
 }
 const wfRename = ref<{ id: string; draft: string } | null>(null);
+const wfRenameInput = ref<{ $el: HTMLInputElement } | null>(null);
+// 输入法组词中的 Enter 是确认候选词，不该顺手提交半成品名称
+function onRenameEnter(e: KeyboardEvent) {
+  if (e.isComposing) return;
+  confirmFlowRename();
+}
 function confirmFlowRename() {
   const r = wfRename.value;
   const name = r?.draft.trim();
@@ -136,6 +149,42 @@ function confirmFlowRename() {
   const wf = workflows.find((x) => x.id === r.id);
   if (wf) wf.name = name;
 }
+// workflows 是 store 里的 reactive 数组，不能整体赋值（会切断 App.vue 持有的引用），
+// 拖拽的 v-model 赋值转成原地 splice
+const flowList = computed<Workflow[]>({
+  get: () => workflows,
+  set: (v) => workflows.splice(0, workflows.length, ...v),
+});
+
+// 钉住：工具栏只渲染前 3 个，超出的按钮置灰（见 App.vue 的 pinnedFlows）
+const PIN_LIMIT = 3;
+const pinnedCount = computed(() => workflows.filter((w) => w.pinned).length);
+function togglePin(w: Workflow) {
+  if (w.pinned) w.pinned = false;
+  else if (pinnedCount.value < PIN_LIMIT) w.pinned = true;
+}
+function pinHint(w: Workflow): string {
+  if (w.pinned) return "取消钉住";
+  return pinnedCount.value >= PIN_LIMIT ? `最多钉 ${PIN_LIMIT} 个` : "钉到工具栏";
+}
+
+// 步骤类型图标：流程骨架一眼可辨，不必读文字
+const STEP_ICONS: Record<WorkflowStep["kind"], Component> = {
+  checkout: GitBranch,
+  pull: ArrowDownToLine,
+  push: ArrowUpFromLine,
+  merge: GitMerge,
+  createBranch: GitBranchPlus,
+  switchBack: Undo2,
+  commitPush: Upload,
+};
+// 会动到工作区或可能中途卡住的步骤，执行前先给个交代
+const DANGER_HINTS: Partial<Record<WorkflowStep["kind"], string>> = {
+  merge: "合并可能产生冲突，冲突时流程会停在这一步",
+  commitPush: "有改动时会 git add -A 把工作区全部改动（含未跟踪文件）一起提交",
+};
+
+// 拖拽之外的键盘路径：Alt+↑/↓（拖拽对纯键盘用户不可达）
 function moveStep(w: Workflow, i: number, d: -1 | 1) {
   const j = i + d;
   if (j < 0 || j >= w.steps.length) return;
@@ -148,17 +197,45 @@ const newStepName = ref("");
 const newStepMsgSource = ref<"ai" | "fixed">("ai");
 const newStepMessage = ref("");
 const newStepPrefix = ref("");
+const newStepLabel = ref("");
+const addStepErr = ref("");
+// 静默失败会让人以为按钮坏了：说清缺哪一项
+function missingHint(): string {
+  const k = newStepKind.value;
+  if ((k === "checkout" || k === "merge") && newStepMode.value === "fixed")
+    return "请先填分支名，或把模式改成「起始分支」/「运行时输入」";
+  if (k === "commitPush" && newStepMsgSource.value === "fixed")
+    return "请先填固定提交信息，或把信息来源改成「AI 生成」";
+  return "当前配置不完整，请检查后再添加";
+}
 function addStep(w: Workflow) {
   const s = buildDraftStep();
-  if (!s) return;
+  if (!s) {
+    addStepErr.value = missingHint();
+    return;
+  }
+  addStepErr.value = "";
   w.steps.push(s);
 }
+// 开始补配置就把提示收起来
+watch(
+  [newStepKind, newStepMode, newStepName, newStepMsgSource, newStepMessage, newStepLabel],
+  () => (addStepErr.value = ""),
+);
 function buildDraftStep(): WorkflowStep | null {
   switch (newStepKind.value) {
     case "checkout":
     case "merge":
       if (newStepMode.value === "fixed" && !newStepName.value.trim()) return null;
-      return { kind: newStepKind.value, ref: { mode: newStepMode.value, name: newStepName.value.trim() } };
+      return {
+        kind: newStepKind.value,
+        ref: {
+          mode: newStepMode.value,
+          name: newStepName.value.trim(),
+          // label 只对「运行时输入」有意义（describeStep / flowInputSlots 会用它）
+          label: newStepMode.value === "ask" ? newStepLabel.value.trim() || undefined : undefined,
+        },
+      };
     case "pull":
       return { kind: "pull" };
     case "push":
@@ -486,100 +563,160 @@ const NAV = [
               <div v-if="!workflows.length" class="py-10 text-center text-xs text-muted-foreground">
                 还没有工作流。新建一个试试——先从「切 master → 拉取 → 新建分支」开始。
               </div>
-              <div v-for="w in workflows" :key="w.id" class="mb-3 rounded-md border border-border">
-                <div class="flex items-center gap-2 px-3 py-2">
-                  <button
-                    class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left text-base"
-                    @click="wfExpanded = wfExpanded === w.id ? '' : w.id"
-                  >
-                    <ChevronDown
-                      class="size-3 shrink-0 text-muted-foreground transition-transform duration-fast"
-                      :class="wfExpanded !== w.id && '-rotate-90'"
+              <VueDraggable
+                v-model="flowList"
+                :animation="150"
+                :force-fallback="true"
+                fallback-class="opacity-70"
+                handle=".flow-handle"
+                tag="div"
+              >
+                <div v-for="w in workflows" :key="w.id" class="mb-3 rounded-md border border-border">
+                  <div class="flex items-center gap-2 px-3 py-2">
+                    <GripVertical
+                      class="flow-handle size-3.5 shrink-0 cursor-grab text-muted-foreground"
+                      @click.stop
                     />
-                    <WorkflowIcon class="size-3.5 shrink-0 text-primary" />
-                    <span class="truncate font-medium">{{ w.name }}</span>
-                    <span class="shrink-0 text-xs text-muted-foreground">{{ w.steps.length }} 步</span>
-                  </button>
-                  <Button variant="ghost" size="sm" class="h-6 px-2 text-xs" @click="renameFlow(w)">重命名</Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    class="h-6 px-2 text-xs"
-                    @click="openDeleteFlow(w)"
-                  >
-                    删除
-                  </Button>
-                </div>
+                    <button
+                      class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left text-base"
+                      @click="wfExpanded = wfExpanded === w.id ? '' : w.id"
+                    >
+                      <ChevronDown
+                        class="size-3 shrink-0 text-muted-foreground transition-transform duration-fast"
+                        :class="wfExpanded !== w.id && '-rotate-90'"
+                      />
+                      <WorkflowIcon class="size-3.5 shrink-0 text-primary" />
+                      <span class="truncate font-medium">{{ w.name }}</span>
+                      <span class="shrink-0 text-xs text-muted-foreground">{{ w.steps.length }} 步</span>
+                    </button>
+                    <Tooltip :text="pinHint(w)">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="h-7 w-7"
+                        :class="w.pinned ? 'text-primary' : 'text-muted-foreground'"
+                        :disabled="!w.pinned && pinnedCount >= PIN_LIMIT"
+                        :aria-pressed="!!w.pinned"
+                        :aria-label="`${w.pinned ? '取消钉住' : '钉住'} ${w.name}`"
+                        @click="togglePin(w)"
+                      >
+                        <Pin class="size-3.5" :fill="w.pinned ? 'currentColor' : 'none'" />
+                      </Button>
+                    </Tooltip>
+                    <Tooltip text="重命名">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="h-7 w-7 text-muted-foreground hover:text-primary"
+                        :aria-label="`重命名 ${w.name}`"
+                        @click="renameFlow(w)"
+                      >
+                        <Pencil class="size-3.5" />
+                      </Button>
+                    </Tooltip>
+                    <Tooltip text="删除">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        :aria-label="`删除 ${w.name}`"
+                        @click="openDeleteFlow(w)"
+                      >
+                        <Trash2 class="size-3.5" />
+                      </Button>
+                    </Tooltip>
+                  </div>
                 <div v-if="wfExpanded === w.id" class="border-t border-border/60 px-3 py-2.5">
-                  <!-- 步骤卡：编号 + 类型 + 参数行内编辑 + 上移/下移/删除 -->
-                  <div
-                    v-for="(s, si) in w.steps"
-                    :key="si"
-                    class="mb-1.5 rounded-md border border-border/70 bg-muted/20 px-2.5 py-2"
+                  <!-- 步骤卡：拖拽排序（键盘走 Alt+↑/↓）+ 类型图标 + 参数行内编辑 -->
+                  <VueDraggable
+                    v-model="w.steps"
+                    :animation="150"
+                    :force-fallback="true"
+                    fallback-class="opacity-70"
+                    handle=".step-handle"
+                    tag="div"
                   >
-                    <div class="flex items-center gap-2">
-                      <span
-                        class="grid size-5 shrink-0 place-items-center rounded-xs bg-primary-soft text-2xs font-medium text-primary"
-                      >{{ si + 1 }}</span>
-                      <span class="w-16 shrink-0 text-xs font-medium">{{ KIND_LABELS[s.kind] }}</span>
-                      <div class="flex min-w-0 flex-1 items-center gap-1.5">
-                        <template v-if="refOf(s)">
-                          <Select
-                            :model-value="refOf(s)!.mode"
-                            class="h-7 w-28 shrink-0 text-xs"
-                            :options="REF_MODE_OPTIONS"
-                            @update:model-value="(m: string | number) => { const r = refOf(s); if (r) r.mode = m as BranchRef['mode']; }"
-                          />
-                          <Input
-                            v-if="refOf(s)!.mode === 'fixed'"
-                            :model-value="refOf(s)!.name ?? ''"
-                            class="h-7 min-w-0 flex-1 text-xs"
-                            placeholder="分支名"
-                            @update:model-value="(v: string | number) => { const r = refOf(s); if (r) r.name = String(v); }"
-                          />
-                          <span v-else class="min-w-0 flex-1 text-xs text-muted-foreground">
-                            {{ refOf(s)!.mode === "start" ? "使用执行开始时的当前分支" : "执行时填写分支名" }}
-                          </span>
-                        </template>
-                        <template v-else-if="s.kind === 'commitPush'">
-                          <Select
-                            :model-value="s.msgSource"
-                            class="h-7 w-28 shrink-0 text-xs"
-                            :options="MSG_SOURCE_OPTIONS"
-                            @update:model-value="(m: string | number) => (s.msgSource = m as 'ai' | 'fixed')"
-                          />
-                          <Input
-                            v-if="s.msgSource === 'fixed'"
-                            :model-value="s.message ?? ''"
-                            class="h-7 min-w-0 flex-1 text-xs"
-                            placeholder="固定提交信息"
-                            @update:model-value="(v: string | number) => (s.message = String(v))"
-                          />
-                          <span v-else class="min-w-0 flex-1 text-xs text-muted-foreground">执行时由 AI 读取暂存区 diff 生成</span>
-                        </template>
-                        <Input
-                          v-else-if="s.kind === 'createBranch'"
-                          :model-value="s.prefix ?? ''"
-                          class="h-7 min-w-0 flex-1 text-xs"
-                          placeholder="前缀（可选，如 feat/）；分支名执行时填写"
-                          @update:model-value="(v: string | number) => (s.prefix = String(v) || undefined)"
+                    <div
+                      v-for="(s, si) in w.steps"
+                      :key="si"
+                      tabindex="0"
+                      role="group"
+                      :aria-label="`第 ${si + 1} 步：${KIND_LABELS[s.kind]}，Alt+↑/↓ 可调整顺序`"
+                      class="mb-1.5 rounded-md border border-border/70 bg-muted/20 px-2.5 py-2 outline-none focus-visible:border-primary/60"
+                      @keydown.alt.up.prevent="moveStep(w, si, -1)"
+                      @keydown.alt.down.prevent="moveStep(w, si, 1)"
+                    >
+                      <div class="flex items-center gap-2">
+                        <GripVertical
+                          class="step-handle size-3.5 shrink-0 cursor-grab text-muted-foreground"
+                          @click.stop
                         />
                         <span
-                          v-else
-                          class="min-w-0 flex-1 text-xs text-muted-foreground"
-                        >{{ s.kind === "pull" ? "拉取并合并远程更新" : s.kind === "push" ? "推送当前分支（无上游自动 -u）" : "回到执行开始时所在的分支" }}</span>
-                      </div>
-                      <div class="ml-auto flex shrink-0 items-center gap-0.5">
-                        <Button variant="ghost" size="icon" class="h-7 w-7" :disabled="si === 0" aria-label="上移" @click="moveStep(w, si, -1)">
-                          <ChevronUp class="size-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" class="h-7 w-7" :disabled="si === w.steps.length - 1" aria-label="下移" @click="moveStep(w, si, 1)">
-                          <ChevronDown class="size-3.5" />
-                        </Button>
+                          class="grid size-5 shrink-0 place-items-center rounded-xs bg-primary-soft text-2xs font-medium text-primary"
+                        >{{ si + 1 }}</span>
+                        <component :is="STEP_ICONS[s.kind]" class="size-3.5 shrink-0 text-muted-foreground" />
+                        <span class="w-16 shrink-0 text-xs font-medium">{{ KIND_LABELS[s.kind] }}</span>
+                        <Tooltip v-if="DANGER_HINTS[s.kind]" :text="DANGER_HINTS[s.kind]!">
+                          <TriangleAlert class="size-3.5 shrink-0 text-[var(--c-mod)]" />
+                        </Tooltip>
+                        <div class="flex min-w-0 flex-1 items-center gap-1.5">
+                          <template v-if="refOf(s)">
+                            <Select
+                              :model-value="refOf(s)!.mode"
+                              class="h-7 w-28 shrink-0 text-xs"
+                              :options="REF_MODE_OPTIONS"
+                              @update:model-value="(m: string | number) => { const r = refOf(s); if (r) r.mode = m as BranchRef['mode']; }"
+                            />
+                            <Input
+                              v-if="refOf(s)!.mode === 'fixed'"
+                              :model-value="refOf(s)!.name ?? ''"
+                              class="h-7 min-w-0 flex-1 text-xs"
+                              placeholder="分支名"
+                              @update:model-value="(v: string | number) => { const r = refOf(s); if (r) r.name = String(v); }"
+                            />
+                            <Input
+                              v-else-if="refOf(s)!.mode === 'ask'"
+                              :model-value="refOf(s)!.label ?? ''"
+                              class="h-7 min-w-0 flex-1 text-xs"
+                              placeholder="提示文字（可选，如「发布分支」）"
+                              @update:model-value="(v: string | number) => { const r = refOf(s); if (r) r.label = String(v) || undefined; }"
+                            />
+                            <span v-else class="min-w-0 flex-1 text-xs text-muted-foreground">
+                              使用执行开始时的当前分支
+                            </span>
+                          </template>
+                          <template v-else-if="s.kind === 'commitPush'">
+                            <Select
+                              :model-value="s.msgSource"
+                              class="h-7 w-28 shrink-0 text-xs"
+                              :options="MSG_SOURCE_OPTIONS"
+                              @update:model-value="(m: string | number) => (s.msgSource = m as 'ai' | 'fixed')"
+                            />
+                            <Input
+                              v-if="s.msgSource === 'fixed'"
+                              :model-value="s.message ?? ''"
+                              class="h-7 min-w-0 flex-1 text-xs"
+                              placeholder="固定提交信息"
+                              @update:model-value="(v: string | number) => (s.message = String(v))"
+                            />
+                            <span v-else class="min-w-0 flex-1 text-xs text-muted-foreground">执行时由 AI 读取暂存区 diff 生成</span>
+                          </template>
+                          <Input
+                            v-else-if="s.kind === 'createBranch'"
+                            :model-value="s.prefix ?? ''"
+                            class="h-7 min-w-0 flex-1 text-xs"
+                            placeholder="前缀（可选，如 feat/）；分支名执行时填写"
+                            @update:model-value="(v: string | number) => (s.prefix = String(v) || undefined)"
+                          />
+                          <span
+                            v-else
+                            class="min-w-0 flex-1 text-xs text-muted-foreground"
+                          >{{ s.kind === "pull" ? "拉取并合并远程更新" : s.kind === "push" ? "推送当前分支（无上游自动 -u）" : "回到执行开始时所在的分支" }}</span>
+                        </div>
                         <Button
                           variant="ghost"
                           size="icon"
-                          class="h-7 w-7 text-muted-foreground hover:text-destructive"
+                          class="ml-auto h-7 w-7 text-muted-foreground hover:text-destructive"
                           aria-label="删除步骤"
                           @click="w.steps.splice(si, 1)"
                         >
@@ -587,7 +724,7 @@ const NAV = [
                         </Button>
                       </div>
                     </div>
-                  </div>
+                  </VueDraggable>
                   <div
                     v-if="!w.steps.length"
                     class="mb-2 rounded-md border border-dashed border-border px-3 py-3 text-center text-xs text-muted-foreground"
@@ -606,6 +743,12 @@ const NAV = [
                           v-model="newStepName"
                           class="h-8 min-w-0 flex-1 text-xs"
                           placeholder="分支名"
+                        />
+                        <Input
+                          v-else-if="newStepMode === 'ask'"
+                          v-model="newStepLabel"
+                          class="h-8 min-w-0 flex-1 text-xs"
+                          placeholder="提示文字（可选，如「发布分支」）"
                         />
                       </template>
                       <template v-else-if="newStepKind === 'commitPush'">
@@ -627,9 +770,11 @@ const NAV = [
                         <Plus class="size-3.5" /> 添加
                       </Button>
                     </div>
+                    <p v-if="addStepErr" class="mt-1.5 text-xs text-destructive">{{ addStepErr }}</p>
                   </div>
                 </div>
               </div>
+              </VueDraggable>
             </section>
           </template>
 
@@ -694,6 +839,33 @@ const NAV = [
         <div class="mt-3 flex justify-end gap-2">
           <Button ref="delCancelBtn" variant="ghost" size="sm" @click="delFlow = null">取消</Button>
           <Button variant="destructive" size="sm" @click="confirmDeleteFlow">确认删除</Button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 重命名工作流：pencil 按钮此前只写 wfRename、模板里没有对应 UI（点了没反应），这里补上输入框。
+         同样不进 overlayOrder，Esc 自己捕获（同上面的删除确认框）。 -->
+    <div
+      v-if="wfRename"
+      v-trap
+      class="fixed inset-0 z-50 grid place-items-center bg-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-wf-rename-title"
+      @click.self="wfRename = null"
+      @keydown.esc.stop="wfRename = null"
+    >
+      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
+        <div id="dlg-wf-rename-title" class="mb-2 font-medium">重命名工作流</div>
+        <Input
+          ref="wfRenameInput"
+          v-model="wfRename.draft"
+          placeholder="工作流名称"
+          @keydown.enter="onRenameEnter"
+        />
+        <div class="mt-3 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" @click="wfRename = null">取消</Button>
+          <Button variant="default" size="sm" :disabled="!wfRename.draft.trim()" @click="confirmFlowRename">保存</Button>
         </div>
       </div>
     </div>
