@@ -57,6 +57,10 @@ import type { DiffTarget, CommitTarget } from "./components/DiffViewer.vue";
 import SettingsModal from "./components/SettingsModal.vue";
 import FileHistoryModal from "./components/FileHistoryModal.vue";
 import BranchTree from "./components/BranchTree.vue";
+import CreateBranchDialog from "./components/CreateBranchDialog.vue";
+import CreateTagDialog from "./components/CreateTagDialog.vue";
+import TabRenameDialog from "./components/TabRenameDialog.vue";
+import BranchRenameDialog from "./components/BranchRenameDialog.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
@@ -805,6 +809,14 @@ function doCloseTab(path: string) {
 // 分组的增删改查集中在标签栏右侧按钮的弹窗里，选项卡右键只保留仓库自身操作
 const renameTarget = ref(""); // 目标仓库 path
 const renameDraft = ref("");
+// 弹窗 open 由 renameTarget 推导（打开时非空，关闭即清空）：
+// 状态留在 App.vue，overlayLayers.tabRename 与 Esc 分层关闭才不会失联
+const tabRenameOpen = computed({
+  get: () => !!renameTarget.value,
+  set: (v) => {
+    if (!v) renameTarget.value = "";
+  },
+});
 const tabCtx = ref<{ x: number; y: number; path: string } | null>(null);
 
 function openRenameModal() {
@@ -1038,6 +1050,20 @@ function branchMenuItems(b: Branch): MenuItem[] {
 }
 // 重命名：菜单触发 → 弹窗输入（替代原行内编辑）
 const branchRename = ref<{ b: Branch; draft: string } | null>(null);
+// 弹窗 open/draft 都由 branchRename 推导（状态留在 App.vue，
+// overlayLayers.branchRename 与 Esc 分层关闭才不会失联）
+const branchRenameOpen = computed({
+  get: () => !!branchRename.value,
+  set: (v) => {
+    if (!v) branchRename.value = null;
+  },
+});
+const branchRenameDraft = computed({
+  get: () => branchRename.value?.draft ?? "",
+  set: (v) => {
+    if (branchRename.value) branchRename.value.draft = v;
+  },
+});
 function confirmBranchRename() {
   const r = branchRename.value;
   const name = r?.draft.trim();
@@ -1575,29 +1601,17 @@ const { leftW, rightW, startResize, endResize, clampSidebars } = useSidebarResiz
 
 // ---- IME 守卫：输入法组词期间 Enter/Esc 属于输入法，不触发弹窗动作 ----
 // 守卫实现见 src/lib/imeGuard.ts。下面这些是给模板直接引用的处理器常量（不是函数调用），
-// 模板里写 @keydown.enter.prevent="imeConfirmRename" 这样的裸标识符，
+// 模板里写 @keydown.enter.prevent="imeConfirmGroupModal" 这样的裸标识符，
 // 避免内联表达式 imeGuard(fn) 把返回的函数当语句丢掉。
-const imeConfirmCreateBranch = imeGuard(confirmCreateBranch);
-const imeConfirmCreateTag = imeGuard(confirmCreateTag);
+// 已拆出去的弹窗（新建分支/新建标签/重命名选项卡/重命名分支）在各自模块里自带守卫。
 const imeConfirmGroupModal = imeGuard(confirmGroupModal);
-const imeConfirmRename = imeGuard(confirmRename);
-const imeConfirmBranchRename = imeGuard(confirmBranchRename);
 const imeConfirmFlow = imeGuard(confirmFlow);
 const imeDoClone = imeGuard(doClone);
 const imeCloseOpenModal = imeGuard(() => {
   openModal.value = null;
 });
-const imeCloseCreateTag = imeGuard(() => {
-  showCreateTag.value = false;
-});
 const imeCloseGroupModal = imeGuard(() => {
   groupModal.value = null;
-});
-const imeCloseRename = imeGuard(() => {
-  renameTarget.value = "";
-});
-const imeCloseBranchRename = imeGuard(() => {
-  branchRename.value = null;
 });
 
 // 窗口重新获得焦点时静默刷新（切回来看到的就是最新状态）
@@ -2051,39 +2065,15 @@ onUnmounted(() => {
     </div>
 
     <!-- 创建分支弹窗 -->
-    <div
-      v-if="showCreateBranch"
-      v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dlg-create-branch-title"
-      @click.self="showCreateBranch = false"
-    >
-      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
-        <div id="dlg-create-branch-title" class="mb-3 text-base font-semibold">新建分支</div>
-        <div class="flex gap-2">
-          <Select
-            v-model="newBranchPrefix"
-            class="w-32 shrink-0"
-            :options="[
-              { value: '', label: '无前缀' },
-              ...prefixes.map((p: string) => ({ value: p, label: p })),
-            ]"
-          />
-          <Input v-model="newBranchName" placeholder="分支名" @keydown.enter.prevent="imeConfirmCreateBranch" />
-        </div>
-        <p class="mt-2 text-xs text-muted-foreground">
-          基于当前分支 {{ status?.branch || "—" }} 创建并自动切换。
-        </p>
-        <div class="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" @click="showCreateBranch = false">取消</Button>
-          <Button variant="default" size="sm" :disabled="!newBranchName.trim() || busy" @click="confirmCreateBranch">
-            创建
-          </Button>
-        </div>
-      </div>
-    </div>
+    <CreateBranchDialog
+      v-model:open="showCreateBranch"
+      v-model:prefix="newBranchPrefix"
+      v-model:name="newBranchName"
+      :prefixes="prefixes"
+      :status="status"
+      :busy="busy"
+      @confirm="confirmCreateBranch()"
+    />
 
     <!-- 打开仓库：本地 / 从远程克隆 -->
     <div
@@ -2187,41 +2177,15 @@ onUnmounted(() => {
     </div>
 
     <!-- 新建标签弹窗（target 为空 = 打在当前 HEAD） -->
-    <div
-      v-if="showCreateTag"
-      v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dlg-create-tag-title"
-      @click.self="showCreateTag = false"
-    >
-      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
-        <div id="dlg-create-tag-title" class="mb-3 text-base font-semibold">新建标签</div>
-        <Input
-          v-model="newTagName"
-          v-focus
-          placeholder="标签名，如 v1.0.0"
-          @keydown.enter.prevent="imeConfirmCreateTag"
-          @keydown.esc="imeCloseCreateTag"
-        />
-        <Input
-          v-model="newTagMsg"
-          class="mt-2"
-          placeholder="附注信息（可选，填写即创建附注标签）"
-          @keydown.esc="imeCloseCreateTag"
-        />
-        <p class="mt-2 text-xs text-muted-foreground">
-          基于{{ tagTarget ? `提交 ${tagTarget.slice(0, 10)}` : `当前 HEAD（${status?.branch || "—"}）` }}创建。
-        </p>
-        <div class="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" @click="showCreateTag = false">取消</Button>
-          <Button variant="default" size="sm" :disabled="!newTagName.trim() || busy" @click="confirmCreateTag">
-            创建
-          </Button>
-        </div>
-      </div>
-    </div>
+    <CreateTagDialog
+      v-model:open="showCreateTag"
+      v-model:name="newTagName"
+      v-model:msg="newTagMsg"
+      :tag-target="tagTarget"
+      :status="status"
+      :busy="busy"
+      @confirm="confirmCreateTag()"
+    />
 
     <!-- 历史行右键菜单（ui/ContextMenu 统一渲染：Esc/键盘/外点关闭） -->
     <ContextMenu
@@ -2750,58 +2714,20 @@ onUnmounted(() => {
     </div>
 
     <!-- 选项卡重命名弹窗 -->
-    <div
-      v-if="renameTarget"
-      v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dlg-rename-tab-title"
-      @click.self="renameTarget = ''"
-    >
-      <div class="w-dlg-sm surface rounded-lg p-5 pop-in">
-        <div id="dlg-rename-tab-title" class="mb-3 text-base font-semibold">重命名仓库选项卡</div>
-        <Input
-          v-model="renameDraft"
-          v-focus
-          @keydown.enter.prevent="imeConfirmRename"
-          @keydown.esc="imeCloseRename"
-        />
-        <p class="mt-1.5 truncate text-xs text-muted-foreground">{{ renameTarget }}</p>
-        <div class="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" @click="renameTarget = ''">取消</Button>
-          <Button variant="default" size="sm" @click="confirmRename">确定</Button>
-        </div>
-      </div>
-    </div>
+    <TabRenameDialog
+      v-model:open="tabRenameOpen"
+      v-model:draft="renameDraft"
+      :path="renameTarget"
+      @confirm="confirmRename()"
+    />
 
     <!-- 分支重命名弹窗（右键菜单触发） -->
-    <div
-      v-if="branchRename"
-      v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dlg-rename-branch-title"
-      @click.self="branchRename = null"
-    >
-      <div class="w-dlg-sm surface rounded-lg p-5 pop-in">
-        <div id="dlg-rename-branch-title" class="mb-3 text-base font-semibold">重命名分支</div>
-        <Input
-          v-model="branchRename.draft"
-          v-focus
-          @keydown.enter.prevent="imeConfirmBranchRename"
-          @keydown.esc="imeCloseBranchRename"
-        />
-        <p class="mt-1.5 truncate text-xs text-muted-foreground">{{ branchRename.b.name }}</p>
-        <div class="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" @click="branchRename = null">取消</Button>
-          <Button variant="default" size="sm" :disabled="!branchRename.draft.trim()" @click="confirmBranchRename">
-            确定
-          </Button>
-        </div>
-      </div>
-    </div>
+    <BranchRenameDialog
+      v-model:open="branchRenameOpen"
+      v-model:draft="branchRenameDraft"
+      :branch-name="branchRename?.b.name ?? ''"
+      @confirm="confirmBranchRename()"
+    />
 
     <!-- 分支快速切换器（Ctrl+B） -->
     <div
