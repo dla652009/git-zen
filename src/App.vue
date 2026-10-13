@@ -29,6 +29,7 @@ import {
   X,
   Bot,
   ExternalLink,
+  GripVertical,
 } from "@lucide/vue";
 import * as api from "./gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, aiCacheDelete, abortAi, isAbortError } from "./ai";
@@ -505,6 +506,19 @@ watch([repos, groupList], syncBar, { deep: true });
 localStorage.removeItem("gz.tabGroupsCollapsed"); // 旧版折叠状态键，废弃
 syncBar();
 
+// 管理弹窗里拖完分组后，把 barOrder 里的文件夹条目按同一顺序原地回填。
+// 只改 groupList 是不够的：syncBar 会保留 barOrder 里已有的顺序，标签栏看不出任何变化。
+// 未分组仓库 tab 的位置不动，只有文件夹跟着新顺序排
+function syncGroupBarOrder(list: string[]) {
+  const order = new Map(list.map((n, i) => [n, i]));
+  const groups = barOrder.value
+    .filter((e): e is BarGroup => e.kind === "group")
+    .sort((a, b) => (order.get(a.name) ?? 0) - (order.get(b.name) ?? 0));
+  let k = 0;
+  const next = barOrder.value.map((e) => (e.kind === "group" ? groups[k++]! : e));
+  if (!sameBar(next, barOrder.value)) barOrder.value = next;
+}
+
 const repoByPath = computed(() => new Map(repos.value.map((r) => [r.path, r])));
 // 顶部只显示「父目录 › 仓库名」：整条路径太长会把右侧工具挤走，完整路径留给 tooltip
 const repoCrumb = computed(() => {
@@ -694,14 +708,23 @@ function removeMember(path: string) {
 const groupModal = ref<{ mode: "create" } | { mode: "rename"; from: string } | null>(null);
 const groupNameDraft = ref("");
 const groupModalErr = ref("");
+// 新建时顺带归组的仓库：默认一个不选，免得「建了个空组，东西怎么全进去了」
+const groupPicks = ref<string[]>([]);
+function toggleGroupPick(path: string) {
+  groupPicks.value = groupPicks.value.includes(path)
+    ? groupPicks.value.filter((p) => p !== path)
+    : [...groupPicks.value, path];
+}
 function openGroupCreate() {
   groupNameDraft.value = "";
   groupModalErr.value = "";
+  groupPicks.value = [];
   groupModal.value = { mode: "create" };
 }
 function openGroupRename(from: string) {
   groupNameDraft.value = from;
   groupModalErr.value = "";
+  groupPicks.value = [];
   groupModal.value = { mode: "rename", from };
 }
 function confirmGroupModal() {
@@ -713,13 +736,33 @@ function confirmGroupModal() {
     groupModalErr.value = "该分组名已存在";
     return;
   }
+  const picks = [...groupPicks.value];
   groupModal.value = null;
+  groupPicks.value = [];
+  // 建组后把勾选的仓库逐个搬进来：addMember 自己会 toast，也顺带处理「原先在别的组」
+  if (m.mode === "create") for (const p of picks) addMember(name, p);
 }
 
 // 分组管理弹窗 + 文件夹下拉
 const showGroupMgr = ref(false);
 const mgrExpanded = ref("");
 const folderDd = ref<{ x: number; y: number; group: string } | null>(null);
+const folderDdEl = ref<HTMLElement | null>(null);
+// 管理弹窗里的仓库搜索词：过滤「添加仓库」候选（仓库名或路径，大小写不敏感）
+const groupSearch = ref("");
+function matchRepoSearch(r: RepoTab): boolean {
+  const q = groupSearch.value.trim().toLowerCase();
+  if (!q) return true;
+  return r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q);
+}
+// 某个分组「添加仓库」列表：排除已在组内 + 没过搜索词
+function mgrCandidates(g: string): RepoTab[] {
+  return repos.value.filter((r) => r.group !== g && matchRepoSearch(r));
+}
+// 关闭弹窗（背板 / X / Esc 都走 showGroupMgr = false）时清空搜索词，下次打开是干净的
+watch(showGroupMgr, (open) => {
+  if (!open) groupSearch.value = "";
+});
 // 文件夹右键菜单：分组的新建/删除原先只能进管理弹窗做，而右键是这类「对象上的操作」
 // 最顺手的入口，也补齐了「文件夹能点开却什么都不带」的空缺
 const folderCtx = ref<{ x: number; y: number; group: string } | null>(null);
@@ -752,7 +795,7 @@ function openGroupMgr() {
   mgrExpanded.value = "";
   showGroupMgr.value = true;
 }
-function toggleFolder(g: string, ev: MouseEvent) {
+function toggleFolder(g: string, ev: MouseEvent | KeyboardEvent) {
   if (folderDd.value?.group === g) {
     folderDd.value = null;
     return;
@@ -763,6 +806,10 @@ function toggleFolder(g: string, ev: MouseEvent) {
     y: rect.bottom + 4,
     group: g,
   };
+  // 分组一多，下拉里哪一行是当前仓库就不好找了：打开后把它滚进视野
+  nextTick(() => {
+    folderDdEl.value?.querySelector('[data-folder-active="1"]')?.scrollIntoView({ block: "nearest" });
+  });
 }
 const folderMembers = computed(() =>
   folderDd.value ? repos.value.filter((r) => r.group === folderDd.value!.group) : [],
@@ -2297,7 +2344,11 @@ onUnmounted(() => {
             v-if="item.kind === 'group'"
             data-group-folder
             :data-group-folder-name="item.name"
-            class="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors duration-fast select-none"
+            tabindex="0"
+            role="button"
+            aria-haspopup="menu"
+            :aria-expanded="folderDd?.group === item.name"
+            class="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors duration-fast select-none outline-none focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
             :class="[
               folderHighlighted(item.name)
                 ? 'border-primary/60 bg-primary/10 text-primary ring-1 ring-primary/40'
@@ -2307,6 +2358,8 @@ onUnmounted(() => {
             ]"
             :title="`分组「${item.name}」· ${groupCount(item.name)} 个仓库 · 点击展开；拖仓库到此处可收进分组，右键可重命名/删除`"
             @click.stop="toggleFolder(item.name, $event)"
+            @keydown.enter.prevent="toggleFolder(item.name, $event)"
+            @keydown.space.prevent="toggleFolder(item.name, $event)"
             @contextmenu.prevent.stop="openFolderCtx($event, item.name)"
           >
             <Folder
@@ -3013,6 +3066,7 @@ onUnmounted(() => {
     <!-- 分组文件夹下拉：成员仓库列表，点击激活 -->
     <div v-if="folderDd" class="fixed inset-0 z-40" @click="closeFolderDd" @contextmenu.prevent="folderDd = null">
       <div
+        ref="folderDdEl"
         class="fixed max-h-[60vh] w-[260px] overflow-y-auto surface-menu rounded-sm py-1 pop-in"
         :style="{ left: folderDd.x + 'px', top: folderDd.y + 'px' }"
       >
@@ -3022,8 +3076,9 @@ onUnmounted(() => {
         <div
           v-for="r in folderMembers"
           :key="r.path"
+          :data-folder-active="r.path === repo ? '1' : undefined"
           class="group/member flex items-center gap-1 transition-colors duration-fast hover:bg-hover"
-          :class="r.path === repo && 'text-primary'"
+          :class="r.path === repo && 'bg-primary-soft text-primary'"
         >
           <button
             class="flex min-w-0 flex-1 cursor-grab items-center gap-2 px-3 py-1.5 text-left text-xs select-none"
@@ -3080,82 +3135,107 @@ onUnmounted(() => {
           <Button variant="ghost" size="icon" @click="showGroupMgr = false"><X class="size-4" /></Button>
         </header>
         <div class="min-h-0 flex-1 overflow-y-auto p-3">
-          <Button variant="secondary" size="sm" class="mb-2" @click="openGroupCreate">
-            <Plus class="size-3.5" /> 新建分组
-          </Button>
+          <div class="mb-2 flex items-center gap-2">
+            <Button variant="secondary" size="sm" @click="openGroupCreate">
+              <Plus class="size-3.5" /> 新建分组
+            </Button>
+            <div class="relative ml-auto">
+              <Search class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                v-model="groupSearch"
+                class="h-7 w-52 pl-7 text-xs"
+                placeholder="搜索仓库：名称或路径"
+                aria-label="搜索仓库"
+              />
+            </div>
+          </div>
           <div v-if="!groupList.length" class="py-8 text-center text-xs text-muted-foreground">
             还没有分组。新建一个，然后把仓库收进去——标签栏会出现一个文件夹，点击可展开仓库列表。
           </div>
-          <div
-            v-for="g in groupList"
-            :key="g"
-            :data-mgr-group="g"
-            class="mb-2 rounded-md border transition-colors duration-fast"
-            :class="mgrHighlighted(g) ? 'border-primary/60 bg-primary-soft' : 'border-border'"
+          <VueDraggable
+            v-model="groupList"
+            :animation="150"
+            :force-fallback="true"
+            fallback-class="opacity-70"
+            handle=".mgr-group-handle"
+            tag="div"
+            @update:model-value="syncGroupBarOrder"
           >
-            <div class="flex items-center gap-2 px-3 py-2">
-              <button
-                class="flex flex-1 cursor-pointer items-center gap-1.5 text-left text-base"
-                @click="mgrExpanded = mgrExpanded === g ? '' : g"
-              >
-                <ChevronDown
-                  class="size-3 text-muted-foreground transition-transform duration-fast"
-                  :class="mgrExpanded !== g && '-rotate-90'"
-                />
-                <Folder class="size-3.5 text-primary" />
-                <span class="font-medium">{{ g }}</span>
-                <span class="text-xs text-muted-foreground">{{ groupCount(g) }} 个仓库</span>
-                <span v-if="isGroupActive(g)" class="size-1.5 rounded-full bg-primary" title="当前打开的仓库在此分组" />
-              </button>
-              <Button variant="ghost" size="sm" class="h-6 px-2 text-xs" @click="openGroupRename(g)">重命名</Button>
-              <Button variant="ghost" size="sm" class="h-6 px-2 text-xs text-destructive" @click="askDeleteGroup(g)">
-                删除
-              </Button>
-            </div>
-            <!-- 成员编辑：移出 / 添加 -->
-            <div v-if="mgrExpanded === g" class="border-t border-border/60 px-3 py-2">
-              <div
-                v-for="r in repos.filter((x) => x.group === g)"
-                :key="r.path"
-                class="flex cursor-grab items-center gap-2 rounded-sm py-1 text-xs select-none transition-colors duration-fast hover:bg-hover"
-                title="按住可拖到上面任意分组"
-                @mousedown="startItemDrag($event, r.path, r.name, mgrGroupAtPoint, dropItem)"
-              >
-                <span
-                  class="size-1.5 shrink-0 rounded-full"
-                  :class="r.path === repo ? 'bg-primary' : 'bg-border'"
-                />
-                <span class="shrink-0 font-medium">{{ r.name }}</span>
-                <span class="flex-1 truncate text-xs text-muted-foreground">{{ r.path }}</span>
+            <div
+              v-for="g in groupList"
+              :key="g"
+              :data-mgr-group="g"
+              class="mb-2 rounded-md border transition-colors duration-fast"
+              :class="mgrHighlighted(g) ? 'border-primary/60 bg-primary-soft' : 'border-border'"
+            >
+              <div class="flex items-center gap-2 px-3 py-2">
+                <GripVertical class="mgr-group-handle size-3.5 shrink-0 cursor-grab text-muted-foreground" @click.stop />
                 <button
-                  class="cursor-pointer text-muted-foreground transition-colors duration-fast hover:text-destructive"
-                  title="移出分组（回到标签栏，可在下方列表点回来）"
-                  @mousedown.stop
-                  @click="removeMember(r.path)"
+                  class="flex flex-1 cursor-pointer items-center gap-1.5 text-left text-base"
+                  @click="mgrExpanded = mgrExpanded === g ? '' : g"
                 >
-                  <X class="size-3" />
+                  <ChevronDown
+                    class="size-3 text-muted-foreground transition-transform duration-fast"
+                    :class="mgrExpanded !== g && '-rotate-90'"
+                  />
+                  <Folder class="size-3.5 text-primary" />
+                  <span class="font-medium">{{ g }}</span>
+                  <span class="text-xs text-muted-foreground">{{ groupCount(g) }} 个仓库</span>
+                  <span v-if="isGroupActive(g)" class="size-1.5 rounded-full bg-primary" title="当前打开的仓库在此分组" />
                 </button>
+                <Button variant="ghost" size="sm" class="h-6 px-2 text-xs" @click="openGroupRename(g)">重命名</Button>
+                <Button variant="ghost" size="sm" class="h-6 px-2 text-xs text-destructive" @click="askDeleteGroup(g)">
+                  删除
+                </Button>
               </div>
-              <div v-if="!groupCount(g)" class="py-1 text-xs text-muted-foreground">空分组</div>
-              <div class="mt-1 border-t border-border/60 pt-1.5">
-                <div class="mb-1 text-xs text-muted-foreground">添加仓库（一个仓库只属一个分组）：</div>
-                <div class="max-h-32 space-y-0.5 overflow-y-auto">
+              <!-- 成员编辑：移出 / 添加 -->
+              <div v-if="mgrExpanded === g" class="border-t border-border/60 px-3 py-2">
+                <div
+                  v-for="r in repos.filter((x) => x.group === g)"
+                  :key="r.path"
+                  class="flex cursor-grab items-center gap-2 rounded-sm py-1 text-xs select-none transition-colors duration-fast hover:bg-hover"
+                  title="按住可拖到上面任意分组"
+                  @mousedown="startItemDrag($event, r.path, r.name, mgrGroupAtPoint, dropItem)"
+                >
+                  <span
+                    class="size-1.5 shrink-0 rounded-full"
+                    :class="r.path === repo ? 'bg-primary' : 'bg-border'"
+                  />
+                  <span class="shrink-0 font-medium">{{ r.name }}</span>
+                  <span class="flex-1 truncate text-xs text-muted-foreground">{{ r.path }}</span>
                   <button
-                    v-for="r in repos.filter((x) => x.group !== g)"
-                    :key="r.path"
-                    class="flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-xs transition-colors duration-fast hover:bg-hover"
-                    @click="addMember(g, r.path)"
+                    class="cursor-pointer text-muted-foreground transition-colors duration-fast hover:text-destructive"
+                    title="移出分组（回到标签栏，可在下方列表点回来）"
+                    @mousedown.stop
+                    @click="removeMember(r.path)"
                   >
-                    <Plus class="size-3 shrink-0 text-primary" />
-                    <span class="truncate">{{ r.name }}</span>
-                    <span class="ml-auto truncate text-xs text-muted-foreground">
-                      {{ r.group ? `来自「${r.group}」` : "未分组" }}
-                    </span>
+                    <X class="size-3" />
                   </button>
+                </div>
+                <div v-if="!groupCount(g)" class="py-1 text-xs text-muted-foreground">空分组</div>
+                <div class="mt-1 border-t border-border/60 pt-1.5">
+                  <div class="mb-1 text-xs text-muted-foreground">添加仓库（一个仓库只属一个分组）：</div>
+                  <div class="max-h-32 space-y-0.5 overflow-y-auto">
+                    <button
+                      v-for="r in mgrCandidates(g)"
+                      :key="r.path"
+                      class="flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-xs transition-colors duration-fast hover:bg-hover"
+                      @click="addMember(g, r.path)"
+                    >
+                      <Plus class="size-3 shrink-0 text-primary" />
+                      <span class="truncate">{{ r.name }}</span>
+                      <span class="ml-auto truncate text-xs text-muted-foreground">
+                        {{ r.group ? `来自「${r.group}」` : "未分组" }}
+                      </span>
+                    </button>
+                    <div v-if="!mgrCandidates(g).length" class="px-1.5 py-1 text-xs text-muted-foreground">
+                      没有匹配的仓库
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
+          </VueDraggable>
         </div>
         <footer class="shrink-0 border-t border-border px-4 py-2 text-xs text-muted-foreground">
           分组像书签文件夹：组内仓库不占选项卡，点文件夹下拉打开。移出/删除分组不会关闭任何仓库。
@@ -3182,6 +3262,31 @@ onUnmounted(() => {
           @keydown.enter.prevent="imeConfirmGroupModal"
           @keydown.esc="imeCloseGroupModal"
         />
+        <!-- 新建时顺带归组：从标签栏拖进文件夹对键盘/单窗口用户不友好，这里给一条鼠标直路 -->
+        <template v-if="groupModal.mode === 'create'">
+          <div class="mt-3 mb-1 text-xs text-muted-foreground">顺带加入仓库（可选，一个仓库只属一个分组）：</div>
+          <div class="max-h-40 overflow-y-auto rounded-md border border-border/70 p-1">
+            <button
+              v-for="r in repos"
+              :key="r.path"
+              class="flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-xs transition-colors duration-fast hover:bg-hover"
+              :class="groupPicks.includes(r.path) && 'bg-primary-soft'"
+              @click="toggleGroupPick(r.path)"
+            >
+              <span
+                class="flex size-3.5 shrink-0 items-center justify-center rounded-xs border"
+                :class="groupPicks.includes(r.path) ? 'border-primary bg-primary text-primary-foreground' : 'border-border'"
+              >
+                <Check v-if="groupPicks.includes(r.path)" class="size-2.5" />
+              </span>
+              <span class="truncate">{{ r.name }}</span>
+              <span class="ml-auto truncate text-xs text-muted-foreground">
+                {{ r.group ? `来自「${r.group}」` : "未分组" }}
+              </span>
+            </button>
+            <div v-if="!repos.length" class="px-1.5 py-1 text-xs text-muted-foreground">还没有仓库</div>
+          </div>
+        </template>
         <div v-if="groupModalErr" class="mt-1.5 text-xs text-destructive">{{ groupModalErr }}</div>
         <div class="mt-5 flex justify-end gap-2">
           <Button variant="ghost" size="sm" @click="groupModal = null">取消</Button>
