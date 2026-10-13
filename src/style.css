@@ -67,14 +67,14 @@
   --graph-line: #5f6472;
 
   /* 徽标实心色对：旧写法 bg-xxx/10 半透明底合成后对比不足，改为不透明白名单色 */
-  --badge-default-bg: #6f60f3;
-  --badge-default-fg: #ffffff;
-  --badge-info-bg: #2e7abe;
-  --badge-info-fg: #ffffff;
-  --badge-warning-bg: #a87d2e;
-  --badge-warning-fg: #101014;
-  --badge-danger-bg: #d53f4a;
-  --badge-danger-fg: #ffffff;
+  --badge-default-bg: #2c2950;
+  --badge-default-fg: #9a90f7;
+  --badge-info-bg: #1d2f44;
+  --badge-info-fg: #6ca2d1;
+  --badge-warning-bg: #152d39;
+  --badge-warning-fg: #5fa3b5;
+  --badge-danger-bg: #452128;
+  --badge-danger-fg: #e37d84;
 
   /* 危险按钮专用色对：--destructive 还当文字色用在 25 处，不能为按钮去调暗它，故与按钮解耦 */
   --btn-danger-bg: #f26d78;
@@ -152,14 +152,14 @@
 
   --graph-line: #7c7c85;
 
-  --badge-default-bg: #6f60f3;
-  --badge-default-fg: #ffffff;
-  --badge-info-bg: #1a6fb5;
-  --badge-info-fg: #fafafa;
-  --badge-warning-bg: #0e7490;
-  --badge-warning-fg: #ffffff;
-  --badge-danger-bg: #c53038;
-  --badge-danger-fg: #fafafa;
+  --badge-default-bg: #e4e1fd;
+  --badge-default-fg: #5a4dc4;
+  --badge-info-bg: #d7e6f3;
+  --badge-info-fg: #256299;
+  --badge-warning-bg: #d1e5ea;
+  --badge-warning-fg: #0c667e;
+  --badge-danger-bg: #f7dbdd;
+  --badge-danger-fg: #a9323b;
 
   /* 危险按钮专用色对（见 :root 注释） */
   --btn-danger-bg: #d23b42;
@@ -207,14 +207,14 @@
 
   --graph-line: #676d82;
 
-  --badge-default-bg: #6f60f3;
-  --badge-default-fg: #ffffff;
-  --badge-info-bg: #2e7abe;
-  --badge-info-fg: #ffffff;
-  --badge-warning-bg: #a87d2e;
-  --badge-warning-fg: #101014;
-  --badge-danger-bg: #d53f4a;
-  --badge-danger-fg: #ffffff;
+  --badge-default-bg: #2d2956;
+  --badge-default-fg: #9c92f7;
+  --badge-info-bg: #1d304a;
+  --badge-info-fg: #6fa4d2;
+  --badge-warning-bg: #162e3f;
+  --badge-warning-fg: #61a4b6;
+  --badge-danger-bg: #45212e;
+  --badge-danger-fg: #e37e85;
 
   /* 危险按钮专用色对（见 :root 注释） */
   --btn-danger-bg: #f26d78;
@@ -256,14 +256,14 @@
 
   --graph-line: #7c7c85;
 
-  --badge-default-bg: #6f60f3;
-  --badge-default-fg: #ffffff;
-  --badge-info-bg: #1a6fb5;
-  --badge-info-fg: #eff1f5;
-  --badge-warning-bg: #0e7490;
-  --badge-warning-fg: #ffffff;
-  --badge-danger-bg: #c53038;
-  --badge-danger-fg: #eff1f5;
+  --badge-default-bg: #cfcff0;
+  --badge-default-fg: #4f44ad;
+  --badge-info-bg: #c3d4e6;
+  --badge-info-fg: #215687;
+  --badge-warning-bg: #bdd3dd;
+  --badge-warning-fg: #0b596f;
+  --badge-danger-bg: #e3c9d0;
+  --badge-danger-fg: #952c34;
 
   /* 危险按钮专用色对（见 :root 注释） */
   --btn-danger-bg: #c52d35;
@@ -308,14 +308,14 @@
 
   --graph-line: #7d7d8a;
 
-  --badge-default-bg: #6f60f3;
-  --badge-default-fg: #ffffff;
-  --badge-info-bg: #2e7abe;
-  --badge-info-fg: #ffffff;
-  --badge-warning-bg: #a87d2e;
-  --badge-warning-fg: #101014;
-  --badge-danger-bg: #d53f4a;
-  --badge-danger-fg: #ffffff;
+  --badge-default-bg: #34335b;
+  --badge-default-fg: #a79ef8;
+  --badge-info-bg: #24394e;
+  --badge-info-fg: #7fadd7;
+  --badge-warning-bg: #1c3843;
+  --badge-warning-fg: #72aebe;
+  --badge-danger-bg: #4c2b32;
+  --badge-danger-fg: #e68c92;
 
   /* 危险按钮专用色对（见 :root 注释） */
   --btn-danger-bg: #f26d78;
@@ -358,14 +358,14 @@
 
   --graph-line: #676d80;
 
-  --badge-default-bg: #6f60f3;
-  --badge-default-fg: #ffffff;
-  --badge-info-bg: #2e7abe;
-  --badge-info-fg: #ffffff;
-  --badge-warning-bg: #a87d2e;
-  --badge-warning-fg: #101014;
-  --badge-danger-bg: #ca2c37;
-  --badge-danger-fg: #e6edf3;
+  --badge-default-bg: #2b2c54;
+  --badge-default-fg: #9e93f7;
+  --badge-info-bg: #1c3247;
+  --badge-info-fg: #71a5d3;
+  --badge-warning-bg: #14303c;
+  --badge-warning-fg: #63a5b7;
+  --badge-danger-bg: #44242c;
+  --badge-danger-fg: #e38087;
 
   /* 危险按钮专用色对（见 :root 注释） */
   --btn-danger-bg: #f26d78;

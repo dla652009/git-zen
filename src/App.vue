@@ -1965,7 +1965,7 @@ onUnmounted(() => {
           aria-label="未推送提交菜单"
           @click.stop="aheadMenu = { x: $event.clientX, y: $event.clientY }"
         >
-          <Badge variant="info" class="transition-colors duration-fast hover:bg-primary/30">↑{{ status.ahead }}</Badge>
+          <Badge variant="info" class="transition-shadow duration-fast hover:ring-1 hover:ring-[var(--badge-info-fg)]/45">↑{{ status.ahead }}</Badge>
         </button>
       </Tooltip>
       <span class="mx-1 h-4 w-px bg-border" />
