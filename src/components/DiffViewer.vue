@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted } from "vue";
-import { X, Bot, Maximize2, Minimize2 } from "@lucide/vue";
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
+import { X, Bot, Maximize2, Minimize2, Search, ChevronUp, ChevronDown } from "@lucide/vue";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, isAbortError } from "../ai";
 import { settings } from "../settings";
 import { patchSections, type PatchLine } from "../lib/patch";
+import { searchSections, type Segment } from "../lib/diffSearch";
 import { humanizeMsg } from "../lib/errors";
 import { FileDown } from "@lucide/vue";
 
@@ -28,7 +29,7 @@ async function saveExplainToFile() {
     err.value = humanizeMsg(e);
   }
 }
-import { Badge, Button, Spinner, Md, Tooltip } from "@/components/ui";
+import { Badge, Button, Input, Spinner, Md, Tooltip } from "@/components/ui";
 
 export interface DiffTarget {
   path: string;
@@ -162,6 +163,78 @@ watch(sections, (list) => {
   }
 }, { immediate: true });
 
+// ---- diff 内搜索 ----
+// 命中跨文件连续编号，跳转时自动切到命中所在的文件 —— 多文件 diff 里只搜当前文件
+// 会让人以为没找到；左侧列表会显示每个文件各命中几处。
+const rootEl = ref<HTMLElement | null>(null);
+const searchOpen = ref(false);
+const q = ref("");
+const cur = ref(-1); // 当前停在第几个命中；-1 表示没有
+const found = computed(() => searchSections(sections.value, q.value));
+const count = computed(() => found.value.count);
+// 正在渲染的是第几段（左列表选中的文件）
+const curSectionIdx = computed(() => sections.value.findIndex((s) => s.file === selectedFile.value));
+const curLines = computed(() => sections.value[curSectionIdx.value]?.lines ?? []);
+// 当前命中落在「正在渲染的那一段」的哪一行；不在这一段就是 -1（不画高亮）
+const hitRow = computed(() => {
+  const h = cur.value >= 0 ? found.value.hits[cur.value] : undefined;
+  return h && h.section === curSectionIdx.value ? h.row : -1;
+});
+// 查询为空时给 null，让模板走回纯文本渲染：否则每一行都要白白建一个片段数组
+const segments = computed<Segment[][] | null>(() =>
+  q.value.trim() ? (found.value.sections[curSectionIdx.value]?.rows ?? null) : null,
+);
+const segsFor = (li: number): Segment[] | null => segments.value?.[li] ?? null;
+const hitsOf = (si: number): number => found.value.sections[si]?.hits.length ?? 0;
+
+function go(d: number) {
+  if (!count.value) return;
+  cur.value = (cur.value + d + count.value) % count.value;
+}
+function focusSearch() {
+  void nextTick(() => rootEl.value?.querySelector<HTMLInputElement>("[data-search-input]")?.focus());
+}
+function toggleSearch() {
+  if (searchOpen.value) {
+    focusSearch();
+    return;
+  }
+  searchOpen.value = true;
+  cur.value = count.value ? 0 : -1;
+  focusSearch();
+}
+function closeSearch() {
+  searchOpen.value = false;
+  q.value = "";
+  cur.value = -1;
+}
+// 左列表手动切文件时把游标挪到该文件的第一个命中，否则计数还停在别的文件上、当前文件里却一个高亮都没有
+function pickFile(file: string) {
+  selectedFile.value = file;
+  if (!count.value) return;
+  const i = found.value.hits.findIndex((h) => sections.value[h.section]?.file === file);
+  if (i >= 0 && i !== cur.value) cur.value = i;
+}
+watch(q, () => (cur.value = count.value ? 0 : -1));
+// 查询变了、或游标动了，都要把当前命中滚进视野（跟浏览器查找一样，边打字边定位）
+watch([found, cur], async () => {
+  const h = cur.value >= 0 ? found.value.hits[cur.value] : undefined;
+  if (!h) return;
+  const f = sections.value[h.section]?.file;
+  if (f && f !== selectedFile.value) selectedFile.value = f; // 命中在别的文件：先切过去
+  await nextTick();
+  rootEl.value?.querySelector('[data-hit="1"]')?.scrollIntoView({ block: "center" });
+});
+// Ctrl+F 打开搜索。焦点在别的浮层里就不抢（两个 diff 弹层理论上不会同时开，
+// 真同时开着时让焦点所在的那个响应）
+function onFindKey(e: KeyboardEvent) {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "f") return;
+  const act = document.activeElement as HTMLElement | null;
+  if (act && rootEl.value && !rootEl.value.contains(act)) return;
+  e.preventDefault();
+  toggleSearch();
+}
+
 // 行 hover 提示改动人信息（工作区文件无改动人 → 显示路径与模式）
 // ---- 逐行归属（blame）：+ 行归属本次变更；context/- 行查该行真正的最后修改提交 ----
 // commit 模式 blame 父版本（`<hash>^`，按旧文件行号查）；文件模式 blame 工作区（按新文件行号查）。
@@ -255,11 +328,15 @@ function endListResize() {
   document.body.style.cursor = "";
   localStorage.setItem("gz.diffListW", String(listW.value));
 }
-onMounted(() => window.addEventListener("resize", onWinResize));
+onMounted(() => {
+  window.addEventListener("resize", onWinResize);
+  window.addEventListener("keydown", onFindKey);
+});
 onUnmounted(() => {
   window.removeEventListener("mousemove", onListResize);
   window.removeEventListener("mouseup", endListResize);
   window.removeEventListener("resize", onWinResize);
+  window.removeEventListener("keydown", onFindKey);
 });
 </script>
 
@@ -267,6 +344,7 @@ onUnmounted(() => {
   <!-- 固定高度，避免加载前后高度跳动 -->
   <div
     v-trap
+    ref="rootEl"
     class="fixed inset-0 z-20 flex items-center justify-center bg-scrim"
     role="dialog"
     aria-modal="true"
@@ -288,6 +366,18 @@ onUnmounted(() => {
         </span>
         <Badge v-if="file?.conflict" variant="warning">合并冲突</Badge>
         <span class="flex-1" />
+        <Tooltip text="搜索（Ctrl+F）">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6"
+            aria-label="在 diff 里搜索"
+            :aria-pressed="searchOpen"
+            @click="toggleSearch"
+          >
+            <Search class="size-3.5" />
+          </Button>
+        </Tooltip>
         <Tooltip :text="fullscreen ? '退出全屏' : '全屏查看'">
           <Button
             variant="ghost"
@@ -315,6 +405,36 @@ onUnmounted(() => {
         <Button variant="ghost" size="icon" aria-label="关闭" @click="emit('close')"><X class="size-4" /></Button>
       </header>
 
+      <!-- 搜索栏：常驻会白占 36px 高，所以由 header 的按钮或 Ctrl+F 开关 -->
+      <div v-if="searchOpen" class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5">
+        <Search class="size-3.5 shrink-0 text-muted-foreground" />
+        <Input
+          v-model="q"
+          data-search-input
+          class="h-7 flex-1 text-xs"
+          placeholder="在 diff 里查找…"
+          @keydown.enter.exact.prevent="go(1)"
+          @keydown.shift.enter.prevent="go(-1)"
+          @keydown.esc.stop.prevent="closeSearch"
+        />
+        <span class="shrink-0 text-2xs tabular-nums text-muted-foreground">{{
+          q.trim() ? (count ? `${cur + 1}/${count}` : "无匹配") : ""
+        }}</span>
+        <Tooltip text="上一个（Shift+Enter）">
+          <Button variant="quiet" size="icon" class="h-6 w-6" :disabled="!count" aria-label="上一个匹配" @click="go(-1)">
+            <ChevronUp class="size-3.5" />
+          </Button>
+        </Tooltip>
+        <Tooltip text="下一个（Enter）">
+          <Button variant="quiet" size="icon" class="h-6 w-6" :disabled="!count" aria-label="下一个匹配" @click="go(1)">
+            <ChevronDown class="size-3.5" />
+          </Button>
+        </Tooltip>
+        <Button variant="quiet" size="icon" class="h-6 w-6" aria-label="关闭搜索" @click="closeSearch">
+          <X class="size-3.5" />
+        </Button>
+      </div>
+
         <!-- 双栏：左文件列表 / 右选中文件的 diff（参考 FileHistoryModal 布局） -->
         <div class="flex min-h-0 flex-1">
         <aside
@@ -323,17 +443,24 @@ onUnmounted(() => {
         >
           <ul>
             <li
-              v-for="s in sections"
+              v-for="(s, si) in sections"
               :key="s.file"
               :class="[
                 'cursor-pointer border-b border-border/60 px-3 py-2 transition-colors duration-fast hover:bg-hover',
                 selectedFile === s.file && 'bg-primary-soft',
               ]"
               :title="s.file"
-              @click="selectedFile = s.file"
+              @click="pickFile(s.file)"
             >
               <div class="truncate text-xs font-medium">{{ s.file }}</div>
-              <div class="mt-0.5 text-xs text-muted-foreground">{{ s.lines.length }} 行</div>
+              <div class="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                <span>{{ s.lines.length }} 行</span>
+                <span
+                  v-if="q.trim() && hitsOf(si)"
+                  class="shrink-0 rounded-xs bg-primary/15 px-1 text-2xs text-primary"
+                  >{{ hitsOf(si) }} 处</span
+                >
+              </div>
             </li>
           </ul>
         </aside>
@@ -353,12 +480,16 @@ onUnmounted(() => {
             <pre
               class="whitespace-pre-wrap font-mono text-xs leading-5 [overflow-wrap:anywhere]"
             ><span
-              v-for="(l, i) in sections.find((s) => s.file === selectedFile)?.lines ?? []"
-              :key="i"
+              v-for="(l, li) in curLines"
+              :key="li"
               :class="l.cls"
               class="flex"
               :title="tipFor(l)"
-            ><span class="w-10 shrink-0 select-none pr-1.5 text-right opacity-45">{{ l.oldLine ?? "" }}</span><span class="w-10 shrink-0 select-none pr-2 text-right opacity-45">{{ l.newLine ?? "" }}</span><span class="min-w-0 flex-1">{{ l.text || " " }}</span></span></pre>
+            ><span class="w-10 shrink-0 select-none pr-1.5 text-right opacity-45">{{ l.oldLine ?? "" }}</span><span class="w-10 shrink-0 select-none pr-2 text-right opacity-45">{{ l.newLine ?? "" }}</span><span class="min-w-0 flex-1" :data-hit="hitRow === li ? '1' : undefined"><template v-if="segsFor(li)"><span
+              v-for="(g, k) in segsFor(li)!"
+              :key="k"
+              :class="g.hit && g.at === cur ? 'rounded-xs bg-primary/40' : g.hit ? 'bg-primary/15' : ''"
+            >{{ g.t }}</span></template><template v-else>{{ l.text || " " }}</template></span></span></pre>
           </template>
         </div>
       </div>
