@@ -1068,11 +1068,25 @@
 **每抽一个都要重跑 `pnpm verify`**，其中 `vite build` 那一步不可省：`vue-tsc` 不检查模板结构，
 只有构建能拦住缺结束标签这类错（见 NOTES.md）。
 
-### 16.2 template → 子组件（未开始）
+### 16.2 template → 子组件（进行中）
 
-- 选项卡栏（含分组文件夹）→ `components/RepoBar.vue`
-- 主棚三栏外壳
-- 24 个浮层按模块归堆
+底稿行号每批都在变，**派活时一律给 `<!-- 注释 -->` 锚点让队友自己重新定位**，不要沿用上批的行号。
+`src/App.vue` 从 16.2 起步的 2931 行降到 **2886 行**（批 1-3 之后）。
+
+- [x] 批 1：`CreateBranchDialog` / `CreateTagDialog` / `TabRenameDialog` / `BranchRenameDialog`（提交 `b16cf35`）
+- [x] 批 2：`ErrorDialog` / `ConfirmDialog` / `GroupNameDialog`（提交 `e2d34ee`）
+- [x] 批 3：`AiReviewDialog` / `ReleaseNotesDialog`（提交 `fce116b`）
+- [ ] 批 4：两个切换器（Ctrl+P 仓库 / Ctrl+B 分支）
+- [ ] 批 5：工作流确认 + 执行进度两弹窗
+- [ ] 批 6：`OpenRepoDialog`（打开仓库）
+- [ ] 分组管理弹窗 + 分组下拉 —— 与拖拽机器 / `syncBar` 写穿双向耦合，**排在最后**
+- [ ] 选项卡栏（含分组文件夹）→ `components/RepoBar.vue`
+- [ ] 主棚三栏外壳
+
+**每批的硬约束（三批下来没变过）**：`overlayLayers` / `overlayOrder` / `closeTopOverlay` / `onGlobalKeydown`
+一个字节不动（AGENTS.md 硬性规则 6，Esc 分层关闭靠它）；open 状态与回调逻辑留在 App，子组件只收 props + emit；
+`v-trap`、`role` / `aria-*`、`id`、class、文案、disabled 条件逐字保留；IME 守卫跟着键盘事件走（模板里没有
+`@keydown.*` 就不带）；**只改不提交**，由 Lead 逐行对照原文复核 diff 后统一提交。
 
 **目录约定**：`src/composables/` 放「有状态、依赖 Vue 响应式、返回 ref 或函数」的模块；
 `src/lib/` 保持「无状态纯函数」（`focusTrap.ts` 是指令，属历史遗留的例外）。
