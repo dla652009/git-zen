@@ -63,6 +63,8 @@ import ConfirmDialog from "./components/ConfirmDialog.vue";
 import GroupNameDialog from "./components/GroupNameDialog.vue";
 import AiReviewDialog from "./components/AiReviewDialog.vue";
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue";
+import RepoSwitcher from "./components/RepoSwitcher.vue";
+import BranchSwitcher from "./components/BranchSwitcher.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
@@ -2602,55 +2604,16 @@ onUnmounted(() => {
       @confirm="confirmGroupModal()"
     />
 
-    <!-- 仓库快速切换器（Ctrl+P）：模糊搜索 + 最近使用排序 -->
-    <div
-      v-if="showSwitcher"
-      v-trap
-      class="fixed inset-0 z-50 flex items-start justify-center bg-scrim pt-[15vh]"
-      role="dialog"
-      aria-modal="true"
-      aria-label="仓库快速切换器"
-      @click.self="showSwitcher = false"
-    >
-      <div class="w-dlg-lg surface overflow-hidden rounded-lg pop-in">
-        <div class="relative p-2">
-          <Search
-            class="pointer-events-none absolute top-1/2 left-5 size-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            v-model="switcherQuery"
-            v-focus
-            class="h-9 pl-8"
-            placeholder="搜索仓库… ↑↓ 选择 · 回车打开 · Esc 关闭"
-            @keydown="onSwitcherKeydown"
-          />
-        </div>
-        <ul class="max-h-[50vh] overflow-y-auto p-1 pb-2">
-          <li
-            v-for="(r, idx) in switcherResults"
-            :id="`sw-item-${idx}`"
-            :key="r.path"
-            :class="[
-              'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-base',
-              idx === switcherIndex && 'bg-primary/10',
-            ]"
-            @click="pickSwitcher(r.path)"
-            @mousemove="switcherIndex = idx"
-          >
-            <span
-              class="size-1.5 shrink-0 rounded-full"
-              :class="r.path === repo ? 'bg-primary' : 'bg-border'"
-            />
-            <span class="shrink-0 font-medium">{{ r.name }}</span>
-            <Badge v-if="r.group" variant="muted">{{ r.group }}</Badge>
-            <span class="flex-1 truncate text-right text-xs text-muted-foreground">{{ r.path }}</span>
-          </li>
-          <li v-if="!switcherResults.length" class="px-3 py-6 text-center text-xs text-muted-foreground">
-            没有匹配的仓库
-          </li>
-        </ul>
-      </div>
-    </div>
+    <!-- 仓库快速切换器（Ctrl+P）：渲染在 RepoSwitcher.vue -->
+    <RepoSwitcher
+      v-model:open="showSwitcher"
+      v-model:query="switcherQuery"
+      v-model:index="switcherIndex"
+      :results="switcherResults"
+      :current="repo"
+      @pick="pickSwitcher"
+      @keydown="onSwitcherKeydown"
+    />
 
     <!-- 选项卡重命名弹窗 -->
     <TabRenameDialog
@@ -2668,57 +2631,15 @@ onUnmounted(() => {
       @confirm="confirmBranchRename()"
     />
 
-    <!-- 分支快速切换器（Ctrl+B） -->
-    <div
-      v-if="showBranchSwitcher"
-      v-trap
-      class="fixed inset-0 z-50 flex items-start justify-center bg-scrim pt-[15vh]"
-      role="dialog"
-      aria-modal="true"
-      aria-label="分支快速切换器"
-      @click.self="showBranchSwitcher = false"
-    >
-      <div class="w-dlg-lg surface overflow-hidden rounded-lg pop-in">
-        <div class="relative p-2">
-          <GitBranch
-            class="pointer-events-none absolute top-1/2 left-5 size-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            v-model="bsQuery"
-            v-focus
-            class="h-9 pl-8"
-            placeholder="搜索分支… ↑↓ 选择 · 回车切换 · Esc 关闭"
-            @keydown="onBranchSwitcherKeydown"
-          />
-        </div>
-        <ul class="max-h-[50vh] overflow-y-auto p-1 pb-2">
-          <li
-            v-for="(b, idx) in bsResults"
-            :id="`bs-item-${idx}`"
-            :key="b.name + (b.remote ? '@' : '')"
-            :class="[
-              'flex cursor-pointer items-center gap-2 rounded-md px-2.5 py-2 text-base',
-              idx === bsIndex && 'bg-primary/10',
-              b.current && 'font-medium text-primary',
-            ]"
-            @click="pickBranch(b)"
-            @mousemove="bsIndex = idx"
-          >
-            <Cloud v-if="b.remote" class="size-3.5 shrink-0 text-muted-foreground" />
-            <GitBranch v-else class="size-3.5 shrink-0 text-muted-foreground" />
-            <span class="truncate">{{ b.name }}</span>
-            <span v-if="b.ahead" class="shrink-0 text-2xs text-[var(--c-mod)]">↑{{ b.ahead }}</span>
-            <span v-if="b.behind" class="shrink-0 text-2xs text-[var(--c-conf)]">↓{{ b.behind }}</span>
-            <span class="flex-1" />
-            <Badge v-if="b.current" variant="default">当前</Badge>
-            <Badge v-if="b.remote" variant="muted">远程</Badge>
-          </li>
-          <li v-if="!bsResults.length" class="px-3 py-6 text-center text-xs text-muted-foreground">
-            没有匹配的分支
-          </li>
-        </ul>
-      </div>
-    </div>
+    <!-- 分支快速切换器（Ctrl+B）：渲染在 BranchSwitcher.vue -->
+    <BranchSwitcher
+      v-model:open="showBranchSwitcher"
+      v-model:query="bsQuery"
+      v-model:index="bsIndex"
+      :results="bsResults"
+      @pick="pickBranch"
+      @keydown="onBranchSwitcherKeydown"
+    />
 
     <!-- 工作流执行确认：步骤预览 + 运行时输入 -->
     <div
@@ -2751,7 +2672,7 @@ onUnmounted(() => {
             <Select
               v-if="slot.branch && (prefixes.length || slot.branch.prefix)"
               v-model="wfPrefixes[slot.index]"
-              class="w-24 shrink-0"
+              class="h-7 w-32 shrink-0 text-xs"
               :options="[
                 { value: '', label: '无前缀' },
                 ...prefixes.map((p: string) => ({ value: p, label: p })),
