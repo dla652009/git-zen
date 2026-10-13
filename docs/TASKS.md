@@ -944,6 +944,66 @@
 - 落点需要**三个**返回值：`null`（没落在任何能放的地方，什么都不做）/ `""`（落在标签栏空白处 =
   移出分组）/ 分组名（换组）。少了 `null` 这一档，「拖到空白处松手」就会变成静默移出分组。
 
+### 15.7 分组管理补全：搜索、拖拽排序、键盘可达、新建时选成员（用户反馈）
+
+15.6 定范围时被划出去的四条，用户随后又都要了：
+
+- [x] **管理弹窗加搜索**：`groupSearch` + `matchRepoSearch`（仓库名或路径，大小写不敏感）+ `mgrCandidates(g)`；
+      关弹窗即清空搜索词（`watch(showGroupMgr)`），下次打开是干净的。
+- [x] **管理弹窗里分组可拖拽排序**：`VueDraggable v-model="groupList"` + `handle=".mgr-group-handle"`。
+      关键在**要写穿到标签栏** —— 只改 `groupList` 不够，`syncBar` 会保留 `barOrder` 里已有的顺序，
+      标签栏看不出任何变化。`syncGroupBarOrder(list)` 把 `barOrder` 里的文件夹条目按同一顺序**原地回填**，
+      未分组仓库 tab 的位置不动；顺序没变时返回原引用，不触发多余写入。
+- [x] **下拉定位当前仓库**：`folderDdEl` + `data-folder-active`，打开后 `nextTick` 里
+      `scrollIntoView({ block: "nearest" })`；选中态由只改字色改为 `bg-primary-soft text-primary`。
+- [x] **分组文件夹键盘可达**：`tabindex="0"` + `role="button"` + `aria-haspopup="menu"` + `:aria-expanded`，
+      `@keydown.enter.prevent` / `@keydown.space.prevent` 走同一条 `toggleFolder`；
+      `toggleFolder` 形参放宽为 `MouseEvent | KeyboardEvent`（只用 `ev.currentTarget`，两种事件都能定位）。
+- [x] **新建分组时顺带选成员**：`groupPicks` + `toggleGroupPick`，默认一个不选；
+      `confirmGroupModal` 先 `createGroup` 再逐个 `addMember`（复用其「移出旧组」语义，不再写一份）。
+
+两处有意为之的取舍：
+- 拖拽只能从网格 handle 起拖，整行不可拖 —— 避开卡片内「展开 / 重命名 / 删除」三个按钮抢事件。
+- 搜索只过滤「添加仓库」的候选列表，**不过滤组内成员** —— 成员是当前状态，被过滤掉会让人以为仓库丢了。
+
+## M16 拆分 App.vue
+
+`App.vue` 是状态中枢，M13/M14/M15 的持续改动把它推到了 3500 行以上
+（`<script setup>` 2100+、`<template>` 1300+、`<style>` 10），任何改动都要在一个文件里定位。
+
+**架构选择（已与用户确认）：组合式函数 + 显式传依赖**，不用模块级 store。
+理由不是洁癖：项目已经把「多窗口展示」判了死刑，判决书正是「状态全是模块级单例」（见「需求池」）。
+再堆单例，将来任何「想同时开两份」的念头都会撞同一堵墙。代价是每个 composable 的入参长一点。
+
+分两阶段，**先 script 后 template**：
+
+1. **script → `src/composables/`**：模板不动，行为等价，风险可控。
+2. **template → 子组件**：把 `v-if` / `v-model` / `@click` 全改成 props + emits，
+   **改错了不是报错而是静默失效**；且 `vue-tsc` 不检查模板结构，只有 `vite build` 能拦住
+   缺结束标签那类错。所以这阶段**一轮只拆一块**。
+
+### 16.1 script → composables（进行中）
+
+按耦合度从低到高排，**每抽一个是独立提交 + 一次 `pnpm verify`**：
+
+- [x] `src/composables/useSidebarResize.ts` 侧栏拖宽 + 持久化（只依赖 window / localStorage）
+- [x] `src/composables/useRepoCache.ts` 仓库数据 LRU 缓存（只依赖 `settings.repoCacheSize`）
+- [ ] **接线**：把 `App.vue` 里这两段删掉改为调用 —— 等 task-16（分组管理）交付后再做，
+      避免同一个文件并发写
+- [ ] `useSwitcher.ts`：Ctrl+P 仓库切换器 + Ctrl+B 分支切换器
+- [ ] `useWorkflowRun.ts`：工作流执行 / 进度弹窗 / 从失败处重试
+- [ ] `useAiPanel.ts`：AI Review 与 Release Notes 两个报告弹窗
+- [ ] `useRepoSession.ts`：`activate` / `refresh` / `fetchLog` / 分页 —— 依赖最多，放最后
+
+### 16.2 template → 子组件（未开始）
+
+- 选项卡栏（含分组文件夹）→ `components/RepoBar.vue`
+- 主棚三栏外壳
+- 24 个浮层按模块归堆
+
+**目录约定**：`src/composables/` 放「有状态、依赖 Vue 响应式、返回 ref 或函数」的模块；
+`src/lib/` 保持「无状态纯函数」（`focusTrap.ts` 是指令，属历史遗留的例外）。
+
 ## 需求池（无需关注，后面排期）
 
 ### Git 核心补全
