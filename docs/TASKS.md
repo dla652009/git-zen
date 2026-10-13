@@ -285,7 +285,7 @@
 ### 11.2 阅读细节（已完成）
 
 - [x] **diff 行号栏**：patch.ts 已跟踪 oldLine/newLine，行左侧显示 旧/新 双列行号，便于引用与定位
-- [x] **diff 折行开关**：7.4 改为永远折行后加一个 折行/不折行 切换按钮，localStorage 记忆
+- [x] **diff 折行开关**：7.4 改为永远折行后加一个 折行/不折行 切换按钮，localStorage 记忆 —— **已于 14.13 移除，回到永远折行**
 - [x] **导出 patch**：DiffViewer 头部「导出 .patch」，当前 commit/文件 diff 存盘（复用保存对话框）
 - [x] **右键复制补齐**：历史行右键加 复制提交信息/作者/短 hash；文件行右键加 复制路径
 - [x] **最近提交信息复用**：提交框为空时出最近 5 条提交信息下拉一键填入 —— **已于 15.3 移除**
@@ -732,7 +732,7 @@
 用户提出「diff 框增加一个全屏查看的按钮」。
 
 - [x] `src/components/DiffViewer.vue` 新增 `fullscreen` ref（纯展示状态，关掉弹层即恢复默认尺寸、不持久化），
-      header 在「折行」之后加一个图标按钮，`Maximize2` / `Minimize2` 随状态互换，带 `aria-pressed` 与跟随状态的 tooltip。
+      header 右侧加一个图标按钮，`Maximize2` / `Minimize2` 随状态互换，带 `aria-pressed` 与跟随状态的 tooltip。
 - [x] 尺寸切换走 **`:class` 整组替换**，而不是「静态类 + 动态覆盖类」：
       `fullscreen ? 'h-full w-full' : 'h-[80vh] w-[80vw] rounded-lg'`。
       若写成静态 `rounded-lg` + 动态 `rounded-none`，两个类会同时留在元素上，谁赢由产物 CSS 顺序决定 ——
@@ -743,6 +743,19 @@
       这是本应用所有浮层的一致行为。在组件内拦 keydown 会和全局链打架，
       而且焦点不在弹层内时（比如刚点过可选中的 diff 文本）事件根本不经过组件，拦不可靠。
 - [x] `pnpm verify` exit 0；clean build（删 `dist` 后）exit 0；产物里 `h-full` / `w-full` / `h-[80vh]` / `w-[80vw]` / `rounded-lg` 均已生成。
+
+### 14.13 移除折行开关（用户反馈）
+
+用户提出「把切换折行的功能给我删掉」。等于回到 7.4 那版「永远折行」的行为。
+
+- [x] 动手前先确认用户的**实际**状态：折行偏好存在 localStorage 的 `gz.diffWrap`，而**只有点过那个按钮才会写入**。
+      读 WebView 的 leveldb 取证（键是 UTF-8、值是 `[len][type]` + 字符）得出值是 `"1"` —— 折行是开着的。
+      所以做法是「删按钮、保留折行」：用户看到的画面不变。反过来硬编码成不折行，就是替他改掉自己选过的阅读方式。
+- [x] `src/components/DiffViewer.vue` 四处清理：`WrapText` import、`wrap` ref 与 `toggleWrap()`、
+      header 里的按钮（含 `aria-pressed` 与 tooltip）、`<pre>` 上的条件 `:class`。
+- [x] `<pre>` 的条件类收进静态 `class="whitespace-pre-wrap font-mono text-xs leading-5 [overflow-wrap:anywhere]"`。
+- [x] `gz.diffWrap` 不再读写（残留在用户机器上不影响任何行为，也不需要清理）。
+- [x] `pnpm verify` exit 0；clean build exit 0。
 
 ## M15 工作区操作补全
 

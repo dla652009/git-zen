@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
-import { X, Bot, WrapText, Maximize2, Minimize2 } from "@lucide/vue";
+import { X, Bot, Maximize2, Minimize2 } from "@lucide/vue";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, isAbortError } from "../ai";
@@ -127,12 +127,8 @@ async function explain() {
 
 // Esc 关闭统一走 App 的 closeTopOverlay 分层链，本组件不再自挂 window 监听
 
-// ---- 阅读细节：折行开关 / 导出 patch ----
-const wrap = ref(localStorage.getItem("gz.diffWrap") !== "0");
-function toggleWrap() {
-  wrap.value = !wrap.value;
-  localStorage.setItem("gz.diffWrap", wrap.value ? "1" : "0");
-}
+// ---- 阅读细节：导出 patch ----
+// 折行固定开着。原来这里有个折行开关（持久化在 gz.diffWrap），用户反馈用不上，已移除。
 const savedPatchTip = ref(false);
 async function exportPatch() {
   if (!text.value.trim()) return;
@@ -292,11 +288,6 @@ onUnmounted(() => {
         </span>
         <Badge v-if="file?.conflict" variant="warning">合并冲突</Badge>
         <span class="flex-1" />
-        <Tooltip text="切换折行">
-          <Button variant="ghost" size="icon" class="h-6 w-6" aria-label="切换折行" @click="toggleWrap">
-            <WrapText class="size-3.5" :class="!wrap && 'opacity-40'" />
-          </Button>
-        </Tooltip>
         <Tooltip :text="fullscreen ? '退出全屏' : '全屏查看'">
           <Button
             variant="ghost"
@@ -360,8 +351,7 @@ onUnmounted(() => {
               {{ selectedFile }}
             </div>
             <pre
-              :class="wrap ? 'whitespace-pre-wrap [overflow-wrap:anywhere]' : 'whitespace-pre'"
-              class="font-mono text-xs leading-5"
+              class="whitespace-pre-wrap font-mono text-xs leading-5 [overflow-wrap:anywhere]"
             ><span
               v-for="(l, i) in sections.find((s) => s.file === selectedFile)?.lines ?? []"
               :key="i"

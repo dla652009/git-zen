@@ -518,7 +518,7 @@ async function genCommitMsg() {
           v-model="message"
           rows="4"
           class="pr-9 text-fixed"
-          placeholder="提交信息…  Ctrl+⏎ 提交"
+          placeholder="提交信息…"
           @keydown.ctrl.enter="onCommitKeydown"
         />
         <Tooltip text="AI 生成提交信息">
