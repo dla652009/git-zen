@@ -28,11 +28,14 @@ export const THEMES = [
 
 const KEY = "gz.settings";
 
-// 字号上下限。下限 14px：再小的中文小字在 Windows 上发虚。
+// 字号上下限。
+// 下限 14px：再小的中文小字在 Windows 上发虚。
+// 上限 20px：这是「把界面放大」的极端值。再大就不只是字大了 —— 侧栏与弹窗的宽度是 px
+// （刻意不随字号缩放，见 `--container-dlg-*`），字号继续涨只会让里面的文字先挤起来。
 // 注意 `src/style.css` 的 `--text-fixed: 14px` 与本下限同值 —— 提交信息框钉在这个下限上，
 // 不跟着「设置 → 字号」放大，所以两处要一起改。
 export const FONT_SIZE_MIN = 14;
-export const FONT_SIZE_MAX = 17;
+export const FONT_SIZE_MAX = 20;
 
 const DEFAULTS: Settings = {
   theme: "dark",
