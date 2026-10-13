@@ -2366,11 +2366,15 @@ onUnmounted(() => {
           分支
         </div>
         <!-- 分支模糊搜索（创建分支在工具栏按钮） -->
-        <div class="relative px-2.5 pb-2">
-          <Search
-            class="pointer-events-none absolute top-1/2 left-4.5 size-3.5 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input v-model="branchFilter" placeholder="搜索分支…" class="h-7 pl-7 text-xs" />
+        <div class="px-2.5 pb-2">
+          <!-- relative 只包住 Input、不跟外层合并：外层带 pb-2，若让图标相对外层定位，
+               top-1/2 算的是「输入框 + 下边距」的一半，图标会比输入框中心低 4px -->
+          <div class="relative">
+            <Search
+              class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input v-model="branchFilter" placeholder="搜索分支…" class="h-7 pl-7 text-xs" />
+          </div>
         </div>
         <!-- 本地分支组：一级栏，图标+强调 -->
         <div
