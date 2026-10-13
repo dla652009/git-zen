@@ -2,7 +2,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   FolderOpen,
@@ -32,7 +32,7 @@ import {
   GripVertical,
 } from "@lucide/vue";
 import * as api from "./gitApi";
-import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, aiCacheDelete, abortAi, isAbortError } from "./ai";
+import { abortAi } from "./ai";
 import type { Status, LogEntry, Branch, TagEntry } from "./gitApi";
 import { settings } from "./settings";
 import { describeStep } from "./workflow";
@@ -100,12 +100,13 @@ function retryLast() {
 }
 
 // git stderr -> 人话；实现放在 src/lib/errors.ts，组件内联错误提示也用同一份规则
-import { humanize, humanizeMsg } from "./lib/errors";
+import { humanize } from "./lib/errors";
 import { isUnmerged } from "./lib/conflict";
 import { useSidebarResize } from "./composables/useSidebarResize";
 import { useRepoCache } from "./composables/useRepoCache";
 import { useSwitcher } from "./composables/useSwitcher";
 import { useWorkflowRun } from "./composables/useWorkflowRun";
+import { useAiPanel } from "./composables/useAiPanel";
 
 // 刷新按钮动画 + 整页刷新遮罩
 const refreshing = ref(false);
@@ -283,7 +284,7 @@ async function run(fn: () => Promise<unknown>, name = "") {
     await fn();
     await refresh();
     // 推送成功 → 清掉该分支的 AI Review 缓存（已推送不再保留）
-    if (name === "push") aiCacheDelete(REVIEW_BUCKET, reviewKey());
+    if (name === "push") dropReviewCache();
   } catch (e) {
     // 失败也要重拉：git 操作失败经常已经改了状态 —— merge 冲突会把冲突文件留在索引里、
     // pull 失败但 fetch 已经动了远程跟踪分支。只在成功时刷新，界面就会停在旧快照上
@@ -1031,162 +1032,37 @@ function onCommitMenu(p: { x: number; y: number; c: LogEntry }) {
   commitCtx.value = p;
 }
 
-// ---- AI Review 未推送提交（ahead>0 时工具栏出按钮）----
-// 结果按 repo+分支 临时保存：切回来能二次查看；推送成功后清除
-const reviewBusy = ref(false);
-const reviewOpen = ref(false);
-const reviewText = ref("");
-const reviewErr = ref("");
-// 结果持久化在 localStorage（gz.ai.review），重启后仍可二次查看
-const REVIEW_BUCKET = "review";
-function reviewCacheGet(key: string): string | undefined {
-  return aiCacheRead(REVIEW_BUCKET, key);
-}
-function reviewCacheSet(key: string, text: string) {
-  aiCacheWrite(REVIEW_BUCKET, key, text);
-}
-function reviewKey(): string {
-  return `${repo.value}::${status.value?.branch ?? ""}`;
-}
-function aiConfigured(): boolean {
-  if (settings.aiEnabled !== "on") return false; // AI 总开关关闭时全部入口引导去设置
-  return !!(settings.aiBaseUrl.trim() && (settings.aiApiKey.trim() || settings.aiBaseUrl.includes("localhost")));
-}
-async function startReview(regen: boolean | Event = false) {
-  // 注意：模板 @click 不带参时会把 MouseEvent 传进来，只有显式传 true 才算强制重生成
-  const forceRegen = regen === true;
-  if (!aiConfigured()) {
-    // 未配置 → 直接引导到设置 AI 页
-    showSettingsTab.value = "ai";
-    showSettings.value = true;
-    return;
-  }
-  if (reviewBusy.value || !status.value?.ahead) return;
-  const key = reviewKey();
-  const cached = reviewCacheGet(key);
-  if (!forceRegen && cached !== undefined) {
-    // 已有报告直接展示，附重新生成按钮
-    reviewText.value = cached;
-    reviewErr.value = "";
-    reviewOpen.value = true;
-    return;
-  }
-  reviewOpen.value = true;
-  reviewBusy.value = true;
-  reviewText.value = "";
-  reviewErr.value = "";
-  try {
-    const d = await api.diffUnpushed(repo.value);
-    reviewText.value = await aiComplete(
-      AI_PROMPTS.reviewUnpushed.system,
-      clipForAI(d),
-    );
-    reviewCacheSet(key, reviewText.value);
-  } catch (e) {
-    // 关弹窗触发的取消是正常操作，不是错误
-    if (isAbortError(e)) return;
-    reviewErr.value = humanizeMsg(e);
-  } finally {
-    reviewBusy.value = false;
-  }
-}
-
-const reviewSaved = ref(false);
-async function saveReviewToFile() {
-  if (!reviewText.value) return;
-  try {
-    // saveDialog 也要放进 try：插件调用失败（ACL 未授权 / 后端异常）时它会 reject，
-    // 放在 try 外面就成了一次「点了保存、什么都没发生、也没有提示」的未处理 rejection
-    const target = await saveDialog({
-      title: "保存 AI Review 报告",
-      defaultPath: `AI-review-${status.value?.branch ?? "branch"}-${new Date().toISOString().slice(0, 10)}.md`,
-      filters: [{ name: "Markdown", extensions: ["md"] }],
-    });
-    if (!target) return;
-    await api.writeTextFile(target, reviewText.value);
-    reviewSaved.value = true;
-    setTimeout(() => (reviewSaved.value = false), 2000);
-  } catch (e) {
-    showError(String(e));
-  }
-}
-
-// ---- AI Release Notes：选 tag 范围汇总提交 → Markdown 报告（复用 Review 弹窗骨架）----
-// 默认起点 = describe --tags 的最近 tag；仓库无 tag 时可汇总全部提交
-const notesOpen = ref(false);
-const notesBusy = ref(false);
-const notesText = ref("");
-const notesErr = ref("");
-const notesSaved = ref(false);
-const notesFrom = ref(""); // tag 名；"__all__" = 全部提交
-const notesLatest = ref(""); // HEAD 可达的最近 tag
-
-const notesOptions = computed(() => {
-  const opts: { value: string; label: string }[] = [];
-  if (notesLatest.value)
-    opts.push({ value: notesLatest.value, label: `最近标签 ${notesLatest.value}` });
-  for (const t of tags.value) {
-    if (t.name !== notesLatest.value) opts.push({ value: t.name, label: t.name });
-  }
-  if (!opts.length) opts.push({ value: "__all__", label: "全部提交（仓库还没有标签）" });
-  return opts;
+// Review / Release Notes 的生成、缓存与保存都抽到 composables/useAiPanel.ts
+const {
+  reviewBusy,
+  reviewOpen,
+  reviewText,
+  reviewErr,
+  reviewSaved,
+  startReview,
+  saveReviewToFile,
+  notesOpen,
+  notesBusy,
+  notesText,
+  notesErr,
+  notesSaved,
+  notesFrom,
+  notesLatest,
+  notesOptions,
+  openReleaseNotes,
+  genReleaseNotes,
+  saveNotesToFile,
+  dropReviewCache,
+} = useAiPanel({
+  repo,
+  status,
+  // tags 声明在下方「标签」一节，用取值函数传，避免初始化顺序依赖
+  tags: () => tags.value,
+  showSettingsTab,
+  showSettings,
+  showError,
 });
 
-async function openReleaseNotes() {
-  if (!aiConfigured()) {
-    showSettingsTab.value = "ai";
-    showSettings.value = true;
-    return;
-  }
-  notesOpen.value = true;
-  notesText.value = "";
-  notesErr.value = "";
-  notesLatest.value = await api.latestTag(repo.value).catch(() => "");
-  notesFrom.value = notesLatest.value || "__all__";
-  genReleaseNotes();
-}
-async function genReleaseNotes() {
-  if (notesBusy.value || !repo.value) return;
-  // 绑定仓库：取提交范围与拼提示词之间用户可能切走，否则会把 A 的提交交给 B 的报告
-  const path = repo.value;
-  notesBusy.value = true;
-  notesErr.value = "";
-  notesText.value = "";
-  try {
-    const from = notesFrom.value === "__all__" ? "" : notesFrom.value;
-    const list = await api.commitsRange(path, from);
-    if (!list.length) {
-      notesErr.value = "该范围内没有提交";
-      return;
-    }
-    const user =
-      `【仓库】${path.split(/[\\/]/).pop() || path}\n【范围】${from ? `${from}..HEAD` : "全部提交"}\n\n` +
-      list.map((c) => `${c.hash} ${c.date} ${c.author} ${c.subject}`).join("\n");
-    notesText.value = await aiComplete(AI_PROMPTS.releaseNotes.system, clipForAI(user));
-  } catch (e) {
-    if (isAbortError(e)) return; // 关弹窗取消，不是失败
-    notesErr.value = humanizeMsg(e);
-  } finally {
-    notesBusy.value = false;
-  }
-}
-async function saveNotesToFile() {
-  if (!notesText.value) return;
-  try {
-    // 同上：saveDialog 的 rejection 也要落到错误提示里
-    const target = await saveDialog({
-      title: "保存 Release Notes",
-      defaultPath: `Release-notes-${new Date().toISOString().slice(0, 10)}.md`,
-      filters: [{ name: "Markdown", extensions: ["md"] }],
-    });
-    if (!target) return;
-    await api.writeTextFile(target, notesText.value);
-    notesSaved.value = true;
-    setTimeout(() => (notesSaved.value = false), 2000);
-  } catch (e) {
-    showError(String(e));
-  }
-}
 
 // ---- 分支树：本地 / 按远程前缀分组，可折叠 ----
 // "gz:tags"（侧栏标签组）默认收起，键带前缀避免与分支树节点撞名
@@ -1580,7 +1456,7 @@ function askDiscardUnpushed() {
       "此操作无法在界面撤销（必要时可在终端用 git reflog 找回）。",
     ok: async () => {
       await api.resetUnpushed(repo.value);
-      aiCacheDelete(REVIEW_BUCKET, reviewKey());
+      dropReviewCache();
     },
   });
 }
