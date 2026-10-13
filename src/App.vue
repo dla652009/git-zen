@@ -22,12 +22,10 @@ import {
   Cloud,
   Download,
   Tag,
-  Sparkles,
   Workflow as WorkflowIcon,
   Check,
   Minus,
   X,
-  Bot,
   ExternalLink,
   GripVertical,
 } from "@lucide/vue";
@@ -41,7 +39,6 @@ import {
   Button,
   Input,
   Spinner,
-  Md,
   Select,
   Tooltip,
   Badge,
@@ -64,6 +61,8 @@ import BranchRenameDialog from "./components/BranchRenameDialog.vue";
 import ErrorDialog from "./components/ErrorDialog.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import GroupNameDialog from "./components/GroupNameDialog.vue";
+import AiReviewDialog from "./components/AiReviewDialog.vue";
+import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
@@ -908,7 +907,6 @@ const {
   notesErr,
   notesSaved,
   notesFrom,
-  notesLatest,
   notesOptions,
   openReleaseNotes,
   genReleaseNotes,
@@ -2310,73 +2308,30 @@ onUnmounted(() => {
       @close="fileHistoryModal = null"
     />
 
-    <!-- AI Review 报告弹窗 -->
-    <div
-      v-if="reviewOpen"
-      v-trap
-      class="fixed inset-0 z-30 flex items-center justify-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dlg-review-title"
-      @click.self="reviewOpen = false"
-    >
-      <div class="flex max-h-[80vh] w-dlg-xl flex-col surface rounded-lg pop-in">
-        <header class="flex shrink-0 items-center gap-2 border-b border-border px-5 py-3">
-          <Bot class="size-4 text-primary" />
-          <span id="dlg-review-title" class="text-base font-semibold">AI Review · 未推送的 {{ status?.ahead }} 个提交</span>
-          <span class="flex-1" />
-          <Button variant="ghost" size="icon" @click="reviewOpen = false"><X class="size-4" /></Button>
-        </header>
-        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-base leading-relaxed">
-          <Spinner v-if="reviewBusy" label="AI 正在审查未推送的变更…" />
-          <div v-else-if="reviewErr" class="text-destructive">{{ reviewErr }}</div>
-          <Md v-else :source="reviewText" />
-        </div>
-        <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-5 py-3">
-          <span v-if="reviewSaved" class="mr-auto text-xs text-primary">已保存 ✓</span>
-          <Button variant="secondary" size="sm" :disabled="reviewBusy || !reviewText" @click="saveReviewToFile">保存到本地</Button>
-          <Button variant="secondary" size="sm" :disabled="reviewBusy || !status?.ahead" @click="startReview(true)">
-            重新生成
-          </Button>
-          <Button variant="secondary" size="sm" @click="reviewOpen = false">关闭</Button>
-        </footer>
-      </div>
-    </div>
+    <!-- AI Review 报告弹窗：渲染在 AiReviewDialog.vue -->
+    <AiReviewDialog
+      v-model:open="reviewOpen"
+      :ahead="status?.ahead"
+      :busy="reviewBusy"
+      :err="reviewErr"
+      :text="reviewText"
+      :saved="reviewSaved"
+      @save="saveReviewToFile()"
+      @regen="startReview(true)"
+    />
 
-    <!-- AI Release Notes 弹窗（复用 Review 骨架） -->
-    <div
-      v-if="notesOpen"
-      v-trap
-      class="fixed inset-0 z-30 flex items-center justify-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dlg-notes-title"
-      @click.self="notesOpen = false"
-    >
-      <div class="flex max-h-[80vh] w-dlg-xl flex-col surface rounded-lg pop-in">
-        <header class="flex shrink-0 items-center gap-2 border-b border-border px-5 py-3">
-          <Sparkles class="size-4 text-primary" />
-          <span id="dlg-notes-title" class="text-base font-semibold">AI Release Notes</span>
-          <Select v-model="notesFrom" class="w-56" :options="notesOptions" />
-          <span class="flex-1" />
-          <Button variant="ghost" size="icon" @click="notesOpen = false"><X class="size-4" /></Button>
-        </header>
-        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-base leading-relaxed">
-          <Spinner v-if="notesBusy" label="AI 正在汇总提交生成 Release Notes…" />
-          <div v-else-if="notesErr" class="text-destructive">{{ notesErr }}</div>
-          <Md v-else-if="notesText" :source="notesText" />
-          <div v-else class="text-muted-foreground">选择范围后点「生成」。</div>
-        </div>
-        <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-5 py-3">
-          <span v-if="notesSaved" class="mr-auto text-xs text-primary">已保存 ✓</span>
-          <Button variant="secondary" size="sm" :disabled="notesBusy || !notesText" @click="saveNotesToFile">
-            保存到本地
-          </Button>
-          <Button variant="secondary" size="sm" :disabled="notesBusy" @click="genReleaseNotes">生成</Button>
-          <Button variant="secondary" size="sm" @click="notesOpen = false">关闭</Button>
-        </footer>
-      </div>
-    </div>
+    <!-- AI Release Notes 弹窗（复用 Review 骨架）：渲染在 ReleaseNotesDialog.vue -->
+    <ReleaseNotesDialog
+      v-model:open="notesOpen"
+      v-model:from="notesFrom"
+      :options="notesOptions"
+      :busy="notesBusy"
+      :err="notesErr"
+      :text="notesText"
+      :saved="notesSaved"
+      @save="saveNotesToFile()"
+      @generate="genReleaseNotes()"
+    />
 
     <SettingsModal
       v-if="showSettings"
