@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
+import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
@@ -529,6 +529,100 @@ function folderUnderPointer(x: number, y: number): string {
   const folder = el?.closest("[data-group-folder]") as HTMLElement | null;
   return folder?.dataset.groupFolderName ?? "";
 }
+// ---- 手写「按住拖到某处松手」的指针拖拽（分组下拉成员 / 管理弹窗成员共用）----
+// 不用 HTML5 DnD（WebView2 里不可靠），也不用 Sortable（这两处没有排序语义）。
+// 标签栏那边的落点判定用元素矩形而不是 elementFromPoint：下拉浮层底下压着一层
+// fixed inset-0 的背板（职责是接住「点外面关闭」），elementFromPoint 只会拿到背板。
+const itemDrag = reactive({
+  on: false,
+  active: false,
+  path: "",
+  name: "",
+  from: "",
+  x: 0,
+  y: 0,
+  target: null as string | null,
+});
+// 松手后浏览器还会补一个 click：拖完不该顺手把仓库切走
+let dragJustEnded = false;
+function itemDragged() {
+  return dragJustEnded;
+}
+function startItemDrag(
+  e: MouseEvent,
+  path: string,
+  name: string,
+  hit: (x: number, y: number) => string | null,
+  commit: (path: string, target: string | null) => void,
+) {
+  if (e.button !== 0) return;
+  const x0 = e.clientX;
+  const y0 = e.clientY;
+  const s = itemDrag;
+  s.on = true;
+  s.active = false;
+  s.path = path;
+  s.name = name;
+  s.x = x0;
+  s.y = y0;
+  s.target = null;
+  s.from = repoByPath.value.get(path)?.group ?? "";
+  const onMove = (ev: MouseEvent) => {
+    // 先要求真的移动了才算拖拽，否则手一抖「点击打开」就变成「拖拽」
+    if (!s.active) {
+      if (Math.abs(ev.clientX - x0) + Math.abs(ev.clientY - y0) < 5) return;
+      s.active = true;
+    }
+    // 拖拽期间别顺手把行里的文字选中
+    ev.preventDefault();
+    s.x = ev.clientX;
+    s.y = ev.clientY;
+    s.target = hit(ev.clientX, ev.clientY);
+  };
+  const onUp = (ev: MouseEvent) => {
+    window.removeEventListener("mousemove", onMove);
+    window.removeEventListener("mouseup", onUp);
+    s.on = false;
+    if (!s.active) return;
+    dragJustEnded = true;
+    setTimeout(() => (dragJustEnded = false), 0);
+    commit(path, hit(ev.clientX, ev.clientY));
+  };
+  window.addEventListener("mousemove", onMove);
+  window.addEventListener("mouseup", onUp);
+}
+// 标签栏上的落点：分组名 / ""（落在标签栏空白处 = 移出分组）/ null（没落在标签栏）
+function folderAtPoint(x: number, y: number): string | null {
+  const bar = document.querySelector("[data-tab-bar]");
+  const r = bar?.getBoundingClientRect();
+  if (!r || x < r.left || x > r.right || y < r.top || y > r.bottom) return null;
+  for (const el of document.querySelectorAll<HTMLElement>("[data-group-folder-name]")) {
+    const b = el.getBoundingClientRect();
+    if (x >= b.left && x <= b.right && y >= b.top && y <= b.bottom) {
+      return el.dataset.groupFolderName ?? "";
+    }
+  }
+  return "";
+}
+// 管理弹窗里的落点：弹窗内部没有竞争的背板，直接命中检测即可
+function mgrGroupAtPoint(x: number, y: number): string | null {
+  const el = document.elementFromPoint(x, y) as HTMLElement | null;
+  return el?.closest<HTMLElement>("[data-mgr-group]")?.dataset.mgrGroup ?? null;
+}
+// 统一的落点提交：null = 没落在任何能放的地方，什么都不做
+function dropItem(path: string, target: string | null) {
+  if (target === null) return;
+  const r = repoByPath.value.get(path);
+  if (!r) return;
+  const to = target || null;
+  if ((r.group ?? null) === to) return;
+  if (to) addMember(to, path);
+  else removeMember(path);
+}
+function onMemberClick(path: string) {
+  if (itemDragged()) return;
+  openFromFolder(path);
+}
 function onBarDragMove(e: MouseEvent) {
   dragPointer.x = e.clientX;
   dragPointer.y = e.clientY;
@@ -584,12 +678,16 @@ function deleteGroup(name: string) {
 function addMember(group: string, path: string) {
   const r = repoByPath.value.get(path);
   if (r) r.group = group; // 一个仓库只属一个分组；syncBar 把它从标签栏移除
+  // 归组是「东西去哪儿了」的动作：标签栏上的仓库会立刻消失，得说一句它去了哪，
+  // 否则看起来就像点坏了。toast 放在这里而不是各调用点，几条入口才不会漏
+  if (r) toast(`已把「${r.name}」收进「${group}」`);
 }
 // 移出分组：仓库本身不会丢，只是回到标签栏——同一个面板下方的「添加仓库」列表
 // 一次点击就能加回来，属于完全可逆操作，故意不加确认框（危险操作到处确认会让确认失去意义）
 function removeMember(path: string) {
   const r = repoByPath.value.get(path);
   if (r) r.group = undefined;
+  if (r) toast(`已把「${r.name}」移出分组`);
 }
 
 // 分组命名弹窗（新建 / 重命名共用）
@@ -622,6 +720,33 @@ function confirmGroupModal() {
 const showGroupMgr = ref(false);
 const mgrExpanded = ref("");
 const folderDd = ref<{ x: number; y: number; group: string } | null>(null);
+// 文件夹右键菜单：分组的新建/删除原先只能进管理弹窗做，而右键是这类「对象上的操作」
+// 最顺手的入口，也补齐了「文件夹能点开却什么都不带」的空缺
+const folderCtx = ref<{ x: number; y: number; group: string } | null>(null);
+function openFolderCtx(e: MouseEvent, g: string) {
+  folderDd.value = null;
+  folderCtx.value = { x: e.clientX, y: e.clientY, group: g };
+}
+// 文件夹高亮：Sortable 拖仓库进来，或从下拉里拖成员出去悬停到某个文件夹时。
+// 已经在这个分组里的不高亮 —— 落点没有变化，高亮会骗人
+function folderHighlighted(name: string) {
+  if (itemDrag.on && itemDrag.active && itemDrag.target === name) return itemDrag.from !== name;
+  return dragOverGroup.value === name;
+}
+function mgrHighlighted(g: string) {
+  if (!itemDrag.on || !itemDrag.active || itemDrag.target !== g) return false;
+  return itemDrag.from !== g;
+}
+// 拖完松手时浏览器会在共同祖先上补一个 click：落在背板上会顺手把下拉/弹窗关掉。
+// 这里挡一下，让用户能连着拖走好几个成员
+function closeFolderDd() {
+  if (itemDragged()) return;
+  folderDd.value = null;
+}
+function closeGroupMgr() {
+  if (itemDragged()) return;
+  showGroupMgr.value = false;
+}
 function openGroupMgr() {
   folderDd.value = null;
   mgrExpanded.value = "";
@@ -654,6 +779,7 @@ function askDeleteGroup(g: string) {
     ok: async () => {
       deleteGroup(g);
       if (mgrExpanded.value === g) mgrExpanded.value = "";
+      toast(`已删除分组「${g}」，组内仓库回到选项卡栏`);
     },
   });
 }
@@ -2151,7 +2277,7 @@ onUnmounted(() => {
     </header>
 
     <!-- 仓库选项卡栏：文件夹（分组）+ 未分组仓库，可拖动排序；最右侧按钮打开分组管理 -->
-    <div class="flex items-end border-b border-border bg-card">
+    <div data-tab-bar class="flex items-end border-b border-border bg-card">
       <VueDraggable
         v-model="barOrder"
         :animation="150"
@@ -2174,20 +2300,23 @@ onUnmounted(() => {
             :data-group-folder-name="item.name"
             class="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors duration-fast select-none"
             :class="[
-              dragOverGroup === item.name
+              folderHighlighted(item.name)
                 ? 'border-primary/60 bg-primary/10 text-primary ring-1 ring-primary/40'
                 : isGroupActive(item.name)
                   ? 'border-border bg-background font-medium text-foreground'
                   : 'border-transparent text-muted-foreground transition-colors duration-fast hover:bg-hover',
             ]"
-            :title="`分组「${item.name}」· ${groupCount(item.name)} 个仓库 · 点击展开，拖仓库到此处可收进分组`"
+            :title="`分组「${item.name}」· ${groupCount(item.name)} 个仓库 · 点击展开；拖仓库到此处可收进分组，右键可重命名/删除`"
             @click.stop="toggleFolder(item.name, $event)"
+            @contextmenu.prevent.stop="openFolderCtx($event, item.name)"
           >
             <Folder
               class="size-3.5 shrink-0"
-              :class="dragOverGroup === item.name || isGroupActive(item.name) ? 'text-primary' : 'opacity-70'"
+              :class="folderHighlighted(item.name) || isGroupActive(item.name) ? 'text-primary' : 'opacity-70'"
             />
-            {{ item.name }}
+            <!-- 分组名长起来会挤爆标签栏：截断 + 成员数，让每个文件夹的宽度可预期 -->
+            <span class="max-w-[140px] truncate">{{ item.name }}</span>
+            <span class="text-2xs text-muted-foreground">{{ groupCount(item.name) }}</span>
             <ChevronDown class="size-3 opacity-50" />
           </div>
           <!-- 仓库选项卡 -->
@@ -2856,8 +2985,30 @@ onUnmounted(() => {
       @close="tabCtx = null"
     />
 
+    <!-- 分组文件夹右键菜单（重命名 / 管理 / 删除） -->
+    <ContextMenu
+      v-if="folderCtx"
+      :x="folderCtx.x"
+      :y="folderCtx.y"
+      :items="[
+        { label: '重命名…', fn: () => openGroupRename(folderCtx!.group) },
+        { label: '管理分组…', fn: openGroupMgr },
+        { label: '删除分组', danger: true, fn: () => askDeleteGroup(folderCtx!.group) },
+      ]"
+      @close="folderCtx = null"
+    />
+
+    <!-- 拖拽跟手标签（分组下拉 / 管理弹窗共用） -->
+    <div
+      v-if="itemDrag.on && itemDrag.active"
+      class="pointer-events-none fixed z-[80] surface-menu rounded-sm px-2 py-1 text-xs"
+      :style="{ left: itemDrag.x + 12 + 'px', top: itemDrag.y + 12 + 'px' }"
+    >
+      {{ itemDrag.name }}
+    </div>
+
     <!-- 分组文件夹下拉：成员仓库列表，点击激活 -->
-    <div v-if="folderDd" class="fixed inset-0 z-40" @click="folderDd = null" @contextmenu.prevent="folderDd = null">
+    <div v-if="folderDd" class="fixed inset-0 z-40" @click="closeFolderDd" @contextmenu.prevent="folderDd = null">
       <div
         class="fixed max-h-[60vh] w-[260px] overflow-y-auto surface-menu rounded-sm py-1 pop-in"
         :style="{ left: folderDd.x + 'px', top: folderDd.y + 'px' }"
@@ -2865,22 +3016,37 @@ onUnmounted(() => {
         <div class="px-3 pt-3 pb-1.5 text-2xs font-semibold tracking-wide text-muted-foreground">
           {{ folderDd.group }} · {{ folderMembers.length }} 个仓库
         </div>
-        <button
+        <div
           v-for="r in folderMembers"
           :key="r.path"
-          class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors duration-fast hover:bg-hover"
+          class="group/member flex items-center gap-1 transition-colors duration-fast hover:bg-hover"
           :class="r.path === repo && 'text-primary'"
-          :title="r.path"
-          @click.stop="openFromFolder(r.path)"
         >
-          <span
-            class="size-1.5 shrink-0 rounded-full"
-            :class="r.path === repo ? 'bg-primary' : 'bg-border'"
-          />
-          <span class="truncate">{{ r.name }}</span>
-        </button>
+          <button
+            class="flex min-w-0 flex-1 cursor-grab items-center gap-2 px-3 py-1.5 text-left text-xs select-none"
+            :title="`${r.path} · 按住可拖到标签栏移出分组，或拖到别的文件夹换组`"
+            @mousedown="startItemDrag($event, r.path, r.name, folderAtPoint, dropItem)"
+            @click.stop="onMemberClick(r.path)"
+          >
+            <span
+              class="size-1.5 shrink-0 rounded-full"
+              :class="r.path === repo ? 'bg-primary' : 'bg-border'"
+            />
+            <span class="truncate">{{ r.name }}</span>
+          </button>
+          <Tooltip text="移出分组（回到选项卡栏）">
+            <button
+              class="mr-1 shrink-0 cursor-pointer text-muted-foreground opacity-0 transition-opacity duration-fast group-hover/member:opacity-100 hover:text-destructive"
+              aria-label="移出分组"
+              @mousedown.stop
+              @click.stop="removeMember(r.path)"
+            >
+              <X class="size-3" />
+            </button>
+          </Tooltip>
+        </div>
         <div v-if="!folderMembers.length" class="px-3 py-2 text-xs text-muted-foreground">
-          空分组 · 点右下角「管理分组」添加仓库
+          空分组 · 用选项卡栏右侧的「管理分组」添加仓库
         </div>
         <div class="mt-1 border-t border-border/60 pt-1">
           <button
@@ -2901,7 +3067,7 @@ onUnmounted(() => {
       role="dialog"
       aria-modal="true"
       aria-labelledby="dlg-group-mgr-title"
-      @click.self="showGroupMgr = false"
+      @click.self="closeGroupMgr"
     >
       <div class="flex max-h-[75vh] w-dlg-lg flex-col surface rounded-lg pop-in">
         <header class="flex shrink-0 items-center gap-2 border-b border-border px-5 py-3">
@@ -2917,7 +3083,13 @@ onUnmounted(() => {
           <div v-if="!groupList.length" class="py-8 text-center text-xs text-muted-foreground">
             还没有分组。新建一个，然后把仓库收进去——标签栏会出现一个文件夹，点击可展开仓库列表。
           </div>
-          <div v-for="g in groupList" :key="g" class="mb-2 rounded-md border border-border">
+          <div
+            v-for="g in groupList"
+            :key="g"
+            :data-mgr-group="g"
+            class="mb-2 rounded-md border transition-colors duration-fast"
+            :class="mgrHighlighted(g) ? 'border-primary/60 bg-primary-soft' : 'border-border'"
+          >
             <div class="flex items-center gap-2 px-3 py-2">
               <button
                 class="flex flex-1 cursor-pointer items-center gap-1.5 text-left text-base"
@@ -2942,7 +3114,9 @@ onUnmounted(() => {
               <div
                 v-for="r in repos.filter((x) => x.group === g)"
                 :key="r.path"
-                class="flex items-center gap-2 py-1 text-xs"
+                class="flex cursor-grab items-center gap-2 rounded-sm py-1 text-xs select-none transition-colors duration-fast hover:bg-hover"
+                title="按住可拖到上面任意分组"
+                @mousedown="startItemDrag($event, r.path, r.name, mgrGroupAtPoint, dropItem)"
               >
                 <span
                   class="size-1.5 shrink-0 rounded-full"
@@ -2953,6 +3127,7 @@ onUnmounted(() => {
                 <button
                   class="cursor-pointer text-muted-foreground transition-colors duration-fast hover:text-destructive"
                   title="移出分组（回到标签栏，可在下方列表点回来）"
+                  @mousedown.stop
                   @click="removeMember(r.path)"
                 >
                   <X class="size-3" />
