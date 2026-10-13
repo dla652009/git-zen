@@ -23,6 +23,7 @@ import type { DiffTarget } from "./DiffViewer.vue";
 import { AI_PROMPTS, aiComplete, clipForAI } from "../ai";
 import { settings } from "../settings";
 import { humanizeMsg } from "../lib/errors";
+import { isUnmerged } from "../lib/conflict";
 import {
   Button,
   Textarea,
@@ -190,16 +191,6 @@ const unstaged = computed(() =>
 function label(f: StatusFile): string {
   if (f.x === "?") return "?"; // 未跟踪
   return (f.y !== " " ? f.y : f.x).toUpperCase();
-}
-
-// 未合并（冲突中）的 porcelain 状态码：UU AA DD AU UA DU UD
-function isUnmerged(f: StatusFile): boolean {
-  return (
-    f.x === "U" ||
-    f.y === "U" ||
-    (f.x === "A" && f.y === "A") ||
-    (f.x === "D" && f.y === "D")
-  );
 }
 
 // 有未合并文件 = 合并/rebase 冲突进行中，此时必须给用户一个「放弃合并」的出口，

@@ -101,6 +101,7 @@ function retryLast() {
 
 // git stderr -> 人话；实现放在 src/lib/errors.ts，组件内联错误提示也用同一份规则
 import { humanize, humanizeMsg } from "./lib/errors";
+import { isUnmerged } from "./lib/conflict";
 
 // 刷新按钮动画 + 整页刷新遮罩
 const refreshing = ref(false);
@@ -313,6 +314,11 @@ async function run(fn: () => Promise<unknown>, name = "") {
     // 推送成功 → 清掉该分支的 AI Review 缓存（已推送不再保留）
     if (name === "push") aiCacheDelete(REVIEW_BUCKET, reviewKey());
   } catch (e) {
+    // 失败也要重拉：git 操作失败经常已经改了状态 —— merge 冲突会把冲突文件留在索引里、
+    // pull 失败但 fetch 已经动了远程跟踪分支。只在成功时刷新，界面就会停在旧快照上
+    // （症状：合并冲突后看不见冲突横幅，得手动点刷新才出现）。
+    // refresh() 自带错误处理与仓库身份守卫，不会把下面这条真正的失败原因盖掉。
+    await refresh();
     showError(String(e));
     // 挂上重试入口（放在 showError 之后，showError 会把它清掉）
     retryFn.value = fn;
@@ -1597,7 +1603,20 @@ function askMerge(b: Branch) {
   openConfirm({
     title: "合并分支",
     body: `将 ${target} 合并到当前分支 ${status.value?.branch ?? ""}？`,
-    ok: () => api.merge(repo.value, target),
+    ok: async () => {
+      try {
+        await api.merge(repo.value, target);
+        toast(`已合并 ${target}`);
+      } catch (e) {
+        // 冲突不是「操作失败」：git 有意停在中途等用户解决，这是合并的正常一步，
+        // 不该弹红色错误框。必须先把状态拉回来再判断 —— 冲突文件只在重拉之后才看得见，
+        // 这也是「合并冲突后界面没反应」的根因。
+        await refresh();
+        const n = (status.value?.files ?? []).filter(isUnmerged).length;
+        if (!n) throw e; // 没有冲突文件 = 真失败（分支名不存在、本地改动会被覆盖…），照旧报错
+        toast(`合并有 ${n} 个文件冲突，解决后暂存并提交即完成合并`);
+      }
+    },
   });
 }
 // 放弃未推送的提交：硬重置回上游。工作区未提交改动会被一并丢弃——确认框必须明示（含数量），

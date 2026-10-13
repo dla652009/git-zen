@@ -15,7 +15,7 @@
 
 ```bash
 pnpm tauri dev                                # 开发（首次 Rust 编译 3-5 分钟）
-pnpm verify                                   # 一把梭：契约检查 + 对比度检查 + 类型检查 + 5 个前端自检
+pnpm verify                                   # 一把梭：契约检查 + 对比度检查 + 类型检查 + 6 个前端自检
 npx vue-tsc --noEmit                          # 类型检查（pnpm build 内置）
 node scripts/check-contract.mjs               # 契约检查：command 注册 + gitApi↔git.rs 结构体镜像
 node scripts/check-contrast.mjs               # 对比度检查：7 套主题的 WCAG AA（改主题/配色后必跑）
@@ -23,13 +23,14 @@ node --experimental-strip-types src/graph.test.ts        # 泳道布局自检（
 node --experimental-strip-types src/lib/patch.test.ts    # diff 解析自检
 node --experimental-strip-types src/lib/overlays.test.ts # 浮层优先级自检
 node --experimental-strip-types src/lib/safeJson.test.ts # localStorage 安全解析自检
+node --experimental-strip-types src/lib/conflict.test.ts # 冲突状态码判定自检
 node --experimental-strip-types src/workflow.test.ts     # 工作流数据层自检
 cd src-tauri && cargo check                   # Rust 检查
 cd src-tauri && cargo test --lib              # Rust 单测（路径校验/超时/大输出）
 pnpm tauri build                              # release（产物 src-tauri/target/release/）
 ```
 
-注意：五个 *.test.ts 自检脚本被 tsconfig exclude，不参与 vue-tsc；改布局/diff 解析/浮层优先级/localStorage 读写后手动跑（或直接 `pnpm verify`）。
+注意：六个 *.test.ts 自检脚本被 tsconfig `exclude` 逐个列出（不是通配），不参与 vue-tsc；**新增自检脚本必须同时加进 tsconfig.json 的 exclude，否则 `pnpm verify` 会在 vue-tsc 这一步报 `Cannot find module 'node:assert'`**。改布局/diff 解析/浮层优先级/localStorage 读写/冲突判定后手动跑（或直接 `pnpm verify`）。
 
 ## 硬性架构规则（违反会炸或埋雷）
 
@@ -38,7 +39,7 @@ pnpm tauri build                              # release（产物 src-tauri/targe
 2. **所有 Tauri command 必须 `async fn` + `offload()`（spawn_blocking）**——同步 command 跑在主线程，
    git 慢调用会冻住整个窗口。
 3. **`src/gitApi.ts` 的 interface 与 `git.rs` 的 serde struct 是人工镜像**——改一边必须同步另一边，无代码生成。
-4. **刷新策略**：组件只 emit action，任何操作成功后由 `App.vue run()` 统一重拉 status/log/branches，不做增量更新。
+4. **刷新策略**：组件只 emit action，任何操作**结束后（无论成功还是失败）**由 `App.vue run()` 统一重拉 status/log/branches，不做增量更新。失败也必须重拉——失败的 git 操作经常已经改了状态（merge 冲突把冲突文件留在索引里、pull 失败但 fetch 已动 refs），只在成功时刷新会让界面停在旧快照上。
 5. **AI 功能全部只读**（只消费 diff/log 文本），提示词只允许写在 `src/ai.ts` 的 AI_PROMPTS。
 6. **新增浮层（弹窗/菜单/下拉）必须在 `src/lib/overlays.ts` 的 `overlayOrder` 里登记**，
    并在 `App.vue` 的 `overlayLayers` 补上对应的 `{ open, close }`——漏了 vue-tsc 会报缺键

@@ -12,6 +12,16 @@
       busy 拦截防并发刷新）；fetchOnce 完成后 status+branches 一并重拉并同步 LRU 缓存快照，
       加 path 守卫丢弃切换期间的过期结果。操作后刷新（run()）不带 fetch——pull/pull 已更新 refs
 
+- [x] 合并冲突时不弹提示、界面也不更新，要手动点刷新才看到冲突文件（用户反馈）→ **根因**：`src/App.vue`
+      的 `run()` 只在 `try` 里 `await refresh()`，失败直接进 `catch` 只弹错误框。而 **merge 冲突恰恰是
+      「命令报错但状态已改变」**：`git merge` 因冲突 exit 1 → `git_merge` 返回 Err → 走 catch → 不刷新
+      → `status` 停在合并前的快照上。冲突横幅（`ChangesPanel.vue` 的 `conflictFiles`，由
+      `props.status.files` 驱动）和冲突文件因此全都不出现——**界面明明有这个功能，只是永远拿不到数据**。
+      修复两处：① `run()` 的 catch 里也 `await refresh()`（对所有失败操作生效，不只 merge）；② `askMerge`
+      把「冲突」与「真失败」分开——冲突是 git 有意停在中途等用户解决，属合并的正常一步，不该弹红色错误框，
+      改为刷新后 toast 提示冲突文件数，只有确实没有未合并文件时才当失败抛出。后端前提由 `src-tauri/src/git.rs`
+      的 `merge_conflict_fails_but_state_changes` 钉住（断言命令返回 Err 的同时 status 里已出现冲突文件）。
+
 ## T0 阻塞问题
 
 - [x] 刚进入/切换选项卡加载仓库概率卡死、窗口无响应 → **根因**：Tauri v2 同步 command 在主线程执行，

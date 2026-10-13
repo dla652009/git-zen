@@ -1922,5 +1922,47 @@ mod tests {
         let st = porcelain(&repo);
         assert!(!st.contains("DU"), "冲突状态应被清除，实际: {st:?}");
     }
+
+    /// 用户报的 bug（「合并冲突时不弹提示、界面不更新，要手动点刷新」）的后端前提：
+    /// **git_merge 报错，但仓库状态确实变了** —— 冲突文件已经躺在索引里。
+    ///
+    /// 把这两件事钉在一起，是为了说明前端「失败就不刷新」的假设错在哪：
+    /// 只要「命令返回 Err」与「状态已改变」同时成立，界面就会停在合并前的快照上，
+    /// 冲突横幅（ChangesPanel 的 conflictFiles）和冲突文件都不会出现。
+    #[test]
+    fn merge_conflict_fails_but_state_changes() {
+        let repo = TempRepo::new("mconf");
+        commit_files(&repo, &[("c.txt", "base")], "base");
+        let base = branch_name(&repo);
+
+        run(repo.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        commit_files(&repo, &[("c.txt", "from-side")], "side");
+        run(repo.path(), &["checkout", "-q", &base]).unwrap();
+        commit_files(&repo, &[("c.txt", "from-base")], "base2");
+
+        let before = tauri::async_runtime::block_on(git_status(repo.path().to_string())).unwrap();
+        assert!(before.files.is_empty(), "合并前工作区应当干净");
+
+        let err =
+            tauri::async_runtime::block_on(git_merge(repo.path().to_string(), "side".to_string()))
+                .expect_err("冲突时 git_merge 返回 Err —— 前端 run() 因此走 catch 分支");
+        assert!(!err.trim().is_empty(), "冲突时不能弹空白错误框");
+
+        // 关键：状态确实变了。前端若不刷新，这一整块信息用户都看不到
+        let after = tauri::async_runtime::block_on(git_status(repo.path().to_string())).unwrap();
+        let conflicts: Vec<&str> = after
+            .files
+            .iter()
+            .filter(|f| {
+                f.x == 'U' || f.y == 'U' || (f.x == 'A' && f.y == 'A') || (f.x == 'D' && f.y == 'D')
+            })
+            .map(|f| f.path.as_str())
+            .collect();
+        assert_eq!(
+            conflicts,
+            vec!["c.txt"],
+            "冲突文件应当出现在 status 里（前端靠它显示冲突横幅）"
+        );
+    }
 }
 

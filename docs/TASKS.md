@@ -751,6 +751,29 @@
 - [x] 4 个 Rust 单测覆盖：四类改动一起丢 / `delete_new=false` 保留新文件 / 未跟踪文件不受影响 /
       空仓库 / 越界路径拒绝，另有 3 个冲突形态（`UU` / `AA` / `DU`）。
 
+### 15.2 合并冲突的提示与刷新（用户反馈）
+
+用户报「合并代码冲突的时候，不弹出冲突提示，然后 app 界面也不更新，要手动点击刷新按钮才会更新
+暂存区的内容」。两个症状其实是**同一个 bug**。
+
+- [x] **确认 bug 真实存在**。根因是 `App.vue` 的 `run()` 只在成功路径 `await refresh()`，
+      而 merge 冲突恰好是「命令报错但状态已改变」：`git merge` 冲突时 exit 1 → `git_merge` 返回 Err →
+      前端走 catch 只弹错误框、**不刷新** → `status` 停在合并前的快照上。
+      **冲突横幅本来就写好了**（`ChangesPanel.vue:340` 的 `conflictFiles`，由 `props.status.files` 驱动），
+      只是永远拿不到数据 —— 界面有这个功能，但没人给它数据。
+- [x] `run()` 的 catch 里也 `await refresh()`。这条对所有失败操作生效，不只 merge：
+      `git pull` 失败但 fetch 已更新远程跟踪分支这类情况同样会留下陈旧界面。
+- [x] `askMerge` 把「冲突」与「真失败」分开：冲突是 git 有意停在中途等用户解决，属合并的正常一步，
+      不该弹红色错误框 → 刷新后 toast 提示冲突文件数；确实没有未合并文件时才当失败抛出。
+      （工作流里的 merge 步骤未受影响：`api.merge` 依旧在冲突时抛错，所以「出错即停」照旧。）
+- [x] 冲突判定抽到 `src/lib/conflict.ts`（`ChangesPanel` 与 `App.vue` 共用），
+      新增 `src/lib/conflict.test.ts` 守住 7 种未合并状态码（`UU AA DD AU UA DU UD`）。
+      **做过负向验证**：故意漏掉「工作区一侧是 U」→ 测试报 `AU 应当判为冲突`；还原后 sha256 一致。
+- [x] 后端前提由 `cargo test --lib` 的 `merge_conflict_fails_but_state_changes` 钉住：
+      断言「`git_merge` 返回 Err」与「`git_status` 里已出现冲突文件」同时成立。
+- [x] **AGENTS.md 硬性规则 4 已改写**：从「任何操作成功后统一重拉」改为
+      「任何操作结束后（无论成功还是失败）统一重拉」。
+
 ## 需求池（无需关注，后面排期）
 
 ### Git 核心补全
