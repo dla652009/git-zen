@@ -2218,12 +2218,6 @@ onUnmounted(() => {
         </button>
       </Tooltip>
       <span class="mx-1 h-4 w-px bg-border" />
-      <!-- 新建分支：与 Pull/Push 同属「对仓库做事」，所以同组 -->
-      <Tooltip text="新建分支">
-        <Button variant="quiet" size="icon" :disabled="!repo || busy" aria-label="新建分支" @click="openCreateBranch">
-          <GitBranchPlus class="size-4" />
-        </Button>
-      </Tooltip>
       <!-- 顶部这排统一用默认高度：图标按钮是 h-8，文字按钮若用 sm(h-7) 会在同一行里
            差 4px，对齐看得很明显；32px 也是更舒服的点击目标 -->
       <Tooltip text="拉取并合并远程更新">
@@ -2267,6 +2261,11 @@ onUnmounted(() => {
           @click="doRefresh"
         >
           <RefreshCw class="size-4" :class="refreshing && 'animate-spin'" />
+        </Button>
+      </Tooltip>
+      <Tooltip text="新建分支">
+        <Button variant="quiet" size="icon" :disabled="!repo || busy" aria-label="新建分支" @click="openCreateBranch">
+          <GitBranchPlus class="size-4" />
         </Button>
       </Tooltip>
       <Tooltip text="设置">
