@@ -30,6 +30,15 @@
       `wfRun`（状态，执行期间不清空）与 `wfRunOpen`（可见性）。关闭只是 `wfRunOpen = false`，
       失败时若弹窗已被关掉会重新打开，让用户看见失败原因。
       **教训**：拿同一个 ref 既当「数据」又当「这个弹窗开着吗」，就等于让关闭按钮具备清空业务状态的能力。
+- [x] 同一个崩溃还有第二条路：执行期间按 **Esc**。上面那条只覆盖了「点背景」，而 Esc 走的是
+      `src/lib/overlays.ts` 那张分层关闭表 —— `overlayLayers.flowRun` 当时写的是
+      `close: () => (wfRun.value = null)`，绕过了带 `busy` 守卫的 `closeWfRun()`，
+      于是 `wfRun.value.states[i]` 的老问题原样复发。两层一起修：
+      ①`flowRun.close` 改调 `closeWfRun()`（与「点背景」同一条路：执行期间只把弹窗藏起来）；
+      ②`executeFlow` 的循环不再读 `wfRun.value` —— 进循环前先 `const run = wfRun.value`
+      再一律用 `run`，界面无论怎么关弹窗都动不了这个局部引用；失败重开时把 `run` 挂回去。
+      **教训**：一个状态有两条关闭路径时，把守卫加在其中一条上等于没加。`overlayLayers`
+      这种回调表最容易「补了 A 忘了 B」，所以关闭逻辑只该有一份实现，表里只做转发。
 
 ## T0 阻塞问题
 

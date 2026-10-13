@@ -1540,7 +1540,10 @@ const overlayLayers: Record<OverlayName, OverlayLayer> = {
   tabRename: { open: () => !!renameTarget.value, close: () => (renameTarget.value = "") },
   branchRename: { open: () => !!branchRename.value, close: () => (branchRename.value = null) },
   flowConfirm: { open: () => !!wfConfirm.value, close: () => (wfConfirm.value = null) },
-  flowRun: { open: () => !!wfRun.value, close: () => (wfRun.value = null) },
+  // 关进度弹窗必须走 closeWfRun()：它带 busy 守卫，执行期间只把弹窗藏起来、不动 wfRun。
+  // 这里曾经直接置空 wfRun —— 执行中按 Esc 会让循环里的状态写入抛 TypeError，
+  // 整个流程半路无声死掉（「点背景」那条路修过，Esc 这条漏了）。
+  flowRun: { open: () => !!wfRun.value, close: () => closeWfRun() },
   settings: { open: () => showSettings.value, close: () => (showSettings.value = false) },
   fileHistory: {
     open: () => !!fileHistoryModal.value,

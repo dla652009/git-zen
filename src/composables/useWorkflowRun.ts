@@ -107,15 +107,18 @@ export function useWorkflowRun(opts: {
       prefixes: { ...prefixes },
     };
     wfRunOpen.value = true;
+    // 循环里一律用这个局部引用，不再读 wfRun.value：那个 ref 会被界面置空（关弹窗），
+    // 而循环体在 await 之后还要继续写状态。run 是同一个响应式代理，界面照常更新。
+    const run = wfRun.value;
     let ok = true;
     try {
       for (let i = fromIndex; i < wf.steps.length; i++) {
-        const st = wfRun.value.states[i]!;
+        const st = run.states[i]!;
         // 每步开始前校验仓库身份：切走即中止，否则后续步骤会在别的仓库上 commit/push
         if (opts.repo.value !== path) {
           st.state = "fail";
-          wfRun.value.error = "执行期间切换了仓库，工作流已中止";
-          wfRun.value.repoChanged = true;
+          run.error = "执行期间切换了仓库，工作流已中止";
+          run.repoChanged = true;
           ok = false;
           break;
         }
@@ -133,8 +136,8 @@ export function useWorkflowRun(opts: {
         } catch (e) {
           st.state = "fail";
           const h = humanize(String(e));
-          wfRun.value.error = h.msg + (h.detail ? `\n${h.detail}` : "");
-          wfRun.value.failIndex = i;
+          run.error = h.msg + (h.detail ? `\n${h.detail}` : "");
+          run.failIndex = i;
           ok = false;
           break; // 出错即停：后续保持 pending；merge 冲突正好停在目标分支待处理
         }
@@ -149,7 +152,8 @@ export function useWorkflowRun(opts: {
       wfRunOpen.value = false;
       toast("工作流已完成");
     } else if (!wfRunOpen.value) {
-      // 执行期间被关掉了，但失败了得让用户看见
+      // 执行期间被关掉了，但失败了得让用户看见。把 run 挂回去：它可能已被置空
+      wfRun.value = run;
       wfRunOpen.value = true;
     }
   }
