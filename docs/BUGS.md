@@ -224,6 +224,16 @@
       收不到事件，下一次 Tab 直接穿透到弹层背后；②`Ctrl+F` 判焦点归属时把 `body` 当成
       「别处在用」，于是点过 diff 文本（`select-text`）之后再按 Ctrl+F 毫无反应 ——
       而这个组件挂载期间，它自己就是打开着的那个弹窗。
+- [x] 下拉框的长值折行溢出（用户反馈）→ 工作流「新建分支名」那行的前缀下拉，选中的
+      `dla-feature/` 在 96px 宽的触发器里折成两行、撑破固定的 `h-8`。根因在共用的
+      `ui/Select.vue`：**触发器是固定高度的 flex 行，却没有 `whitespace-nowrap`；
+      装值的那一侧也没有 `truncate`** —— 于是文本会在字符自带的软换行点（连字符）折叠，
+      高度不受控。修在共用组件（全应用的下拉一起受益）：触发器加 `whitespace-nowrap`、
+      值加 `truncate`（`truncate` 带 `overflow: hidden`，会把 flex 子项的自动最小尺寸
+      从 `auto` 变成 0，所以省略号真的会出现）、被截断时用原生 `title` 兜底；下拉面板改
+      `w-max min-w-full`、选项加 `whitespace-nowrap`，长选项按内容撑开而不是挤在 96px
+      里折行。顺带修同排的尺寸不一致：那个下拉是 `h-8`/`text-base`，紧挨着的输入框是
+      `h-7`/`text-xs`，同排差 4px、字号还大一档。
 
 ## 全面审查修复（M13）
 
