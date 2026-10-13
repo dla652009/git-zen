@@ -2206,6 +2206,13 @@ onUnmounted(() => {
         </span>
       </Tooltip>
       <span v-else class="text-xs text-muted-foreground">未打开仓库</span>
+      <!-- 新建分支属于「仓库」而不是「同步」，所以挨着仓库名放 ——
+           和 GitHub Desktop 把「当前分支 + 新建分支」放在一起是同一个道理 -->
+      <Tooltip text="新建分支">
+        <Button variant="quiet" size="icon" :disabled="!repo || busy" aria-label="新建分支" @click="openCreateBranch">
+          <GitBranchPlus class="size-4" />
+        </Button>
+      </Tooltip>
       <span class="flex-1" />
       <Badge v-if="status?.behind" variant="warning">↓{{ status.behind }}</Badge>
       <Tooltip v-if="status?.ahead" text="未推送的提交：Review 或放弃">
@@ -2218,38 +2225,32 @@ onUnmounted(() => {
         </button>
       </Tooltip>
       <span class="mx-1 h-4 w-px bg-border" />
-      <Tooltip text="新建分支">
-        <Button variant="ghost" size="icon" :disabled="!repo || busy" aria-label="新建分支" @click="openCreateBranch">
-          <GitBranchPlus class="size-4" />
-        </Button>
-      </Tooltip>
       <!-- 顶部这排统一用默认高度：图标按钮是 h-8，文字按钮若用 sm(h-7) 会在同一行里
            差 4px，对齐看得很明显；32px 也是更舒服的点击目标 -->
       <Tooltip text="拉取并合并远程更新">
-        <Button :disabled="!repo || busy" @click="doPull">
+        <Button variant="ghost" :disabled="!repo || busy" @click="doPull">
           <Spinner v-if="runningAction === 'pull'" :size="14" />
           <ArrowDownToLine v-else class="size-3.5" />
           Pull
         </Button>
       </Tooltip>
       <Tooltip text="推送（无上游自动建立跟踪）">
-        <Button :disabled="!repo || busy" @click="doPush">
+        <Button variant="ghost" :disabled="!repo || busy" @click="doPush">
           <Spinner v-if="runningAction === 'push'" :size="14" />
           <ArrowUpFromLine v-else class="size-3.5" />
           Push
         </Button>
       </Tooltip>
-      <span class="mx-1 h-4 w-px bg-border" />
       <!-- 钉住的工作流（最多 3 个，在设置页勾）：常用流程不必每次展开下拉再点一次 -->
       <Tooltip v-for="w in pinnedFlows" :key="w.id" :text="`执行工作流：${w.name}`">
-        <Button :disabled="!repo || busy" @click="runFlow(w)">
+        <Button variant="ghost" :disabled="!repo || busy" @click="runFlow(w)">
           <WorkflowIcon class="size-3.5 shrink-0" />
           <span class="max-w-[7rem] truncate">{{ w.name }}</span>
         </Button>
       </Tooltip>
       <Tooltip text="工作流">
         <Button
-          variant="ghost"
+          variant="quiet"
           size="icon"
           :disabled="!repo || busy"
           aria-label="工作流"
@@ -2260,7 +2261,7 @@ onUnmounted(() => {
       </Tooltip>
       <Tooltip text="刷新">
         <Button
-          variant="ghost"
+          variant="quiet"
           size="icon"
           :disabled="!repo || busy || refreshing"
           aria-label="刷新"
@@ -2270,7 +2271,7 @@ onUnmounted(() => {
         </Button>
       </Tooltip>
       <Tooltip text="设置">
-        <Button variant="ghost" size="icon" aria-label="设置" @click="showSettings = true">
+        <Button variant="quiet" size="icon" aria-label="设置" @click="showSettings = true">
           <SettingsIcon class="size-4" />
         </Button>
       </Tooltip>

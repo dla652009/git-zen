@@ -11,6 +11,9 @@ const buttonVariants = cva(
         default: "bg-primary text-primary-foreground hover:opacity-90",
         secondary: "bg-secondary text-secondary-foreground border border-border hover:border-primary/50",
         ghost: "hover:bg-hover active:bg-active",
+        // 工具条里的「次级纯图标按钮」：常态退到 muted、hover 回到前景色。
+        // 层级用颜色而不是底色表达，整行工具条才能保持同一种控件语法（都不带边界）。
+        quiet: "text-muted-foreground hover:bg-hover hover:text-foreground active:bg-active",
         // 危险按钮走专用实心色对：半透明底（bg-destructive/15）合成后 6 套主题都不达标
         destructive: "bg-[var(--btn-danger-bg)] text-[var(--btn-danger-fg)] hover:bg-[var(--btn-danger-bg-hover)]",
       },
