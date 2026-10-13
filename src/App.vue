@@ -720,8 +720,15 @@ watch(switcherIndex, (i) => {
   document.getElementById(`sw-item-${i}`)?.scrollIntoView({ block: "nearest" });
 });
 
+// 切仓库是「导航」，不是「改动」，不该被正在跑的操作挡住。
+// 之前这里是 `if (path === repo.value || busy.value) return;` —— 而 Ctrl+Tab / Ctrl+数字
+// 一直走 activate() 直接切、根本不看 busy，于是鼠标点选项卡在操作期间毫无反应
+// （而且没有任何提示，看起来就像「点了没生效」）。
+// 两者现在对齐：都允许切。安全性由各处已有的仓库身份守卫保证 ——
+// refresh / fetchLog / loadMorePage / activate 都做了 path 快照比对，
+// executeFlow 也会在发现仓库变了时中止工作流。
 function switchRepo(path: string) {
-  if (path === repo.value || busy.value) return;
+  if (path === repo.value) return;
   activate(path);
 }
 
@@ -1027,18 +1034,20 @@ async function openReleaseNotes() {
 }
 async function genReleaseNotes() {
   if (notesBusy.value || !repo.value) return;
+  // 绑定仓库：取提交范围与拼提示词之间用户可能切走，否则会把 A 的提交交给 B 的报告
+  const path = repo.value;
   notesBusy.value = true;
   notesErr.value = "";
   notesText.value = "";
   try {
     const from = notesFrom.value === "__all__" ? "" : notesFrom.value;
-    const list = await api.commitsRange(repo.value, from);
+    const list = await api.commitsRange(path, from);
     if (!list.length) {
       notesErr.value = "该范围内没有提交";
       return;
     }
     const user =
-      `【仓库】${repo.value.split(/[\\/]/).pop() || repo.value}\n【范围】${from ? `${from}..HEAD` : "全部提交"}\n\n` +
+      `【仓库】${path.split(/[\\/]/).pop() || path}\n【范围】${from ? `${from}..HEAD` : "全部提交"}\n\n` +
       list.map((c) => `${c.hash} ${c.date} ${c.author} ${c.subject}`).join("\n");
     notesText.value = await aiComplete(AI_PROMPTS.releaseNotes.system, clipForAI(user));
   } catch (e) {
@@ -1646,12 +1655,15 @@ function askMergeInto(b: Branch) {
   const target = b.name;
   const cur = status.value?.branch ?? "";
   if (!cur || cur === target) return;
+  // 绑定仓库：确认框里的 checkout 与 merge 之间用户仍可能切走选项卡（Ctrl+Tab 一直能切），
+  // 现读 repo.value 会变成「在 A 里 checkout、在 B 里 merge」
+  const path = repo.value;
   openConfirm({
     title: "合并当前分支到目标分支",
     body: `将把当前分支 ${cur} 合并到 ${target}，完成后停留在 ${target}。若冲突请在解决后重新提交。`,
     ok: async () => {
-      await api.checkout(repo.value, target);
-      await api.merge(repo.value, cur);
+      await api.checkout(path, target);
+      await api.merge(path, cur);
     },
   });
 }

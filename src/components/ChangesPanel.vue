@@ -258,10 +258,14 @@ function onCommitKeydown(e: KeyboardEvent) {
   if (canCommit.value) doCommit();
 }
 function doCommit() {
+  // 绑定仓库与分支：提交与推送之间用户可能切走选项卡（切仓库不拦 busy），
+  // 而 props.repo 是响应式的 —— 第二次读取会拿到新仓库，改动就被推到别的仓库去了
+  const repo = props.repo;
+  const branch = props.status?.branch ?? "";
   emit("action", async () => {
-    await api.commit(props.repo, message.value);
-    message.value = "";
-    if (pushAfterCommit.value) await api.push(props.repo, props.status?.branch ?? "");
+    await api.commit(repo, message.value);
+    drafts.set(repo, ""); // 清的是这个仓库的草稿，不是「当前」仓库的
+    if (pushAfterCommit.value) await api.push(repo, branch);
     toast(pushAfterCommit.value ? "已提交并推送" : "已提交");
   });
 }
@@ -292,21 +296,23 @@ async function genCommitMsg() {
   }
   aiBusy.value = true;
   aiErr.value = "";
+  // 绑定仓库：diff / log / AI 之间用户可能切走选项卡，三处必须读同一个仓库
+  const repo = props.repo;
   try {
     const d = await api.diff(
-      props.repo,
+      repo,
       staged.value.map((f) => filePath(f)),
       true
     );
     // 取最近提交推断本仓库的信息风格（SKILL.md：优先跟随既有惯例）
-    const recentLog = (await api.log(props.repo))
+    const recentLog = (await api.log(repo))
       .slice(0, 10)
       .map((c) => c.subject)
       .join("\n");
     const user = `【仓库近期提交风格】\n${recentLog || "（无历史提交）"}\n\n【暂存区 diff】\n${clipForAI(d)}`;
-    applyGenerated(
-      await aiComplete(AI_PROMPTS.commitMessage.system(settings.aiCommitLang), user),
-    );
+    const text = await aiComplete(AI_PROMPTS.commitMessage.system(settings.aiCommitLang), user);
+    if (props.repo !== repo) return; // 生成期间切走了：结果属于旧仓库，写进去会串草稿
+    applyGenerated(text);
   } catch (e) {
     aiErr.value = humanizeMsg(e);
   } finally {

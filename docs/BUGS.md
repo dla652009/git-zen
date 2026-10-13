@@ -135,6 +135,17 @@
 - [x] 点击没反应/慢响应 → activate() 引入 seq token：每次切换递增序号，过期请求的结果直接丢弃不再覆盖 UI；
       旧数据立即清空所以点击必有反馈
 - [x] 防抖频繁切选项卡 → 同上 token 机制即防抖：快速连续切换只有最后一次生效，中间的 CLI 调用结果被丢弃
+- [x] 操作进行中点选项卡没反应 → **根因：`switchRepo()` 里有 `busy.value` 守卫，直接静默 `return`**
+      （没有提示、没有视觉反馈，看起来就是「点了没生效」）；而 Ctrl+Tab / Ctrl+数字 走 `activate()`、
+      **从不看 busy** —— 键盘能切、鼠标不能切，两条路径行为不一致。
+      该守卫已删除：切仓库是「导航」不是「改动」，不该被一个正在跑的操作挡住；
+      安全性由各处**已有**的仓库身份守卫保证（`refresh` / `fetchLog` / `loadMorePage` / `activate`
+      都做了 path 快照比对，`executeFlow` 发现仓库变了会中止并提示「执行期间切换了仓库」）。
+      **连带修掉三处「await 期间现读 repo」的越界**（此前只被 Ctrl+Tab 那条路暴露）：
+      `ChangesPanel.doCommit`（提交与推送之间切走 → 改动会被推到**别的仓库**）、
+      `App.askMergeInto`（在 A 里 checkout、在 B 里 merge）、
+      `App.genReleaseNotes`（把 A 的提交写进 B 的报告）；
+      `ChangesPanel.genCommitMsg` 另加一条「生成期间切走就丢弃结果」的守卫，避免 AI 结果串进新仓库的草稿。
 
 ## AI 功能问题
 

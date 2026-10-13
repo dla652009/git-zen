@@ -787,6 +787,26 @@
       与本次移除无关，别一起删掉。
 - [x] 保留 `ContextMenu` 与 `MenuItem` 的 import：文件右键菜单仍在用。
 
+### 15.4 选项卡点击在操作期间无响应（用户反馈）
+
+用户报「仓库选项卡，有时候点击没有反应」。
+
+- [x] **定位到根因**：`src/App.vue` 的 `switchRepo()` 写的是
+      `if (path === repo.value || busy.value) return;` —— **操作进行中（pull/push/fetch/提交/切换分支…）
+      点选项卡会被静默丢弃**，连一点视觉反馈都没有。而 Ctrl+Tab / Ctrl+数字 走的是 `activate()` 直连、
+      从不检查 busy（代码里三处注释都在说「Ctrl+Tab / Ctrl+数字绕过 busy 检查」）。
+      所以这**不是设计如此，是两条路径没对齐**：键盘能切、鼠标不能切。
+- [x] 删掉 `switchRepo()` 的 busy 守卫。切仓库是导航不是改动，不该被正在跑的操作挡住。
+      「操作期间切走」本来就是这套架构**已经假定会发生**的事 —— 三处仓库身份守卫（`refresh` 的
+      `refreshSeq` + path 快照、`fetchLog` 的 path 参数、`loadMorePage` / `activate` 的 seq）
+      和 `executeFlow` 的「切走即中止」都是为它写的。
+- [x] 顺带修掉这次改动会**更容易踩到**的三处越界（此前只有 Ctrl+Tab 那条路能触发）：
+      `ChangesPanel.doCommit` 把仓库与分支在闭包外绑定（原来提交后再读 `props.repo`，
+      期间切走就会把改动推到别的仓库）；`App.askMergeInto` 绑定仓库（否则在 A 里 checkout、在 B 里 merge）；
+      `App.genReleaseNotes` 绑定仓库（否则把 A 的提交写进 B 的报告）。
+      `ChangesPanel.genCommitMsg` 加「生成期间切走就丢弃」守卫。
+- [x] `pnpm verify` exit 0；clean build exit 0。（本轮无 Rust 改动，未跑 `cargo test --lib`。）
+
 ## 需求池（无需关注，后面排期）
 
 ### Git 核心补全
