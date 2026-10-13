@@ -23,8 +23,6 @@ import {
   Download,
   Tag,
   Workflow as WorkflowIcon,
-  Check,
-  Minus,
   X,
   ExternalLink,
   GripVertical,
@@ -33,7 +31,6 @@ import * as api from "./gitApi";
 import { abortAi } from "./ai";
 import type { Status, LogEntry, Branch, TagEntry } from "./gitApi";
 import { parseBranchPrefixes, settings } from "./settings";
-import { describeStep } from "./workflow";
 import { workflows } from "./workflowStore";
 import {
   Button,
@@ -65,6 +62,8 @@ import AiReviewDialog from "./components/AiReviewDialog.vue";
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue";
 import RepoSwitcher from "./components/RepoSwitcher.vue";
 import BranchSwitcher from "./components/BranchSwitcher.vue";
+import WorkflowConfirmDialog from "./components/WorkflowConfirmDialog.vue";
+import WorkflowRunDialog from "./components/WorkflowRunDialog.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
@@ -1632,10 +1631,10 @@ const { leftW, rightW, startResize, endResize, clampSidebars } = useSidebarResiz
 
 // ---- IME 守卫：输入法组词期间 Enter/Esc 属于输入法，不触发弹窗动作 ----
 // 守卫实现见 src/lib/imeGuard.ts。下面这些是给模板直接引用的处理器常量（不是函数调用），
-// 模板里写 @keydown.enter.prevent="imeConfirmFlow" 这样的裸标识符，
+// 模板里写 @keydown.enter.prevent="imeDoClone" 这样的裸标识符，
 // 避免内联表达式 imeGuard(fn) 把返回的函数当语句丢掉。
-// 已拆出去的弹窗（新建分支/新建标签/重命名选项卡/重命名分支/分组命名）在各自模块里自带守卫。
-const imeConfirmFlow = imeGuard(confirmFlow);
+// 已拆出去的弹窗（新建分支/新建标签/重命名选项卡/重命名分支/分组命名/工作流执行确认）
+// 在各自模块里自带守卫。
 const imeDoClone = imeGuard(doClone);
 const imeCloseOpenModal = imeGuard(() => {
   openModal.value = null;
@@ -2641,129 +2640,27 @@ onUnmounted(() => {
       @keydown="onBranchSwitcherKeydown"
     />
 
-    <!-- 工作流执行确认：步骤预览 + 运行时输入 -->
-    <div
-      v-if="wfConfirm"
-      v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dlg-wf-confirm-title"
-      @click.self="wfConfirm = null"
-    >
-      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
-        <div id="dlg-wf-confirm-title" class="mb-3 text-base font-semibold">执行工作流：{{ wfConfirm.wf.name }}</div>
-        <div v-if="wfConfirm.slots.length" class="mb-2 space-y-1.5">
-          <!-- 整行不能再用 <label> 包：<button> 也是 labelable 元素，Select 的触发器会
-               把 label 的关联目标从输入框顶掉，点标签文字就会误开下拉。改成 for/id 显式关联 -->
-          <div
-            v-for="(slot, k) in wfConfirm.slots"
-            :key="slot.index"
-            class="flex items-center gap-2"
-          >
-            <label
-              :for="`wf-slot-${slot.index}`"
-              class="w-28 shrink-0 truncate text-xs text-muted-foreground"
-              >{{ slot.label }}</label
-            >
-            <!-- 新建分支的槽带一个前缀下拉：候选就是「个性化 → 分支前缀」里配的那些，
-                 不必在流程里手写。没有可选项（没配前缀、步骤也没配）时不显示，
-                 否则就是一个只有「无前缀」的下拉 -->
-            <Select
-              v-if="slot.branch && (prefixes.length || slot.branch.prefix)"
-              v-model="wfPrefixes[slot.index]"
-              class="h-7 w-32 shrink-0 text-xs"
-              :options="[
-                { value: '', label: '无前缀' },
-                ...prefixes.map((p: string) => ({ value: p, label: p })),
-              ]"
-            />
-            <Input
-              :id="`wf-slot-${slot.index}`"
-              v-model="wfInputs[slot.index]"
-              v-focus="k === 0"
-              class="h-7 text-xs"
-              :placeholder="slotPlaceholder(slot)"
-              @keydown.enter.prevent="imeConfirmFlow"
-            />
-          </div>
-        </div>
-        <ol class="space-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
-          <li v-for="(s, i) in wfConfirm.wf.steps" :key="i">
-            {{ i + 1 }}. {{ describeStep(s, status?.branch) }}
-          </li>
-          <li v-if="!wfConfirm.wf.steps.length">（空工作流，先到管理里添加步骤）</li>
-        </ol>
-        <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
-          顺序执行、任一步失败立即中止。「提交推送」在有改动时自动全部暂存，无改动时跳过；
-          工作区有未提交改动时拉取/合并可能失败或被带入提交。
-        </p>
-        <div class="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" @click="wfConfirm = null">取消</Button>
-          <Button
-            variant="default"
-            size="sm"
-            :disabled="!flowInputsReady()"
-            @click="confirmFlow"
-          >
-            执行
-          </Button>
-        </div>
-      </div>
-    </div>
+    <!-- 工作流执行确认：渲染在 WorkflowConfirmDialog.vue -->
+    <WorkflowConfirmDialog
+      v-model:inputs="wfInputs"
+      v-model:prefixes="wfPrefixes"
+      :confirm="wfConfirm"
+      :ready="flowInputsReady()"
+      :status-branch="status?.branch"
+      :prefix-options="prefixes"
+      :slot-placeholder="slotPlaceholder"
+      @close="wfConfirm = null"
+      @confirm="confirmFlow()"
+    />
 
-    <!-- 工作流执行进度：逐步打勾，失败标红停住 -->
-    <div
-      v-if="wfRun && wfRunOpen"
-      v-trap
-      class="fixed inset-0 z-30 grid place-items-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dlg-wf-run-title"
-      @click.self="closeWfRun()"
-    >
-      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
-        <div id="dlg-wf-run-title" class="mb-3 flex items-center gap-2 text-base font-semibold">
-          <WorkflowIcon class="size-4 text-primary" />
-          {{ wfRun.wf.name }}
-          <span v-if="wfRun.start" class="text-xs font-normal text-muted-foreground">
-            起始分支 {{ wfRun.start }}
-          </span>
-        </div>
-        <ul class="space-y-2 text-base">
-          <li v-for="(s, i) in wfRun.states" :key="i" class="flex items-start gap-2">
-            <span class="flex w-4 shrink-0 justify-center pt-0.5">
-              <Spinner v-if="s.state === 'running'" :size="13" />
-              <Check v-else-if="s.state === 'done'" class="size-3.5 text-[var(--c-add)]" />
-              <Minus v-else-if="s.state === 'skip'" class="size-3.5 text-muted-foreground" />
-              <X v-else-if="s.state === 'fail'" class="size-3.5 text-destructive" />
-              <span v-else class="size-2 rounded-full border border-border" />
-            </span>
-            <span class="min-w-0 flex-1" :class="s.state === 'fail' && 'text-destructive'">
-              {{ describeStep(wfRun.wf.steps[i]!, wfRun.start) }}
-              <span v-if="s.note" class="text-xs text-muted-foreground">· {{ s.note }}</span>
-            </span>
-          </li>
-        </ul>
-        <div
-          v-if="wfRun.error"
-          class="mt-3 whitespace-pre-wrap rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
-        >{{ wfRun.error }}</div>
-        <div class="mt-3 flex justify-end gap-2">
-          <!-- 只在「某一步失败」时给重试：切走仓库导致的中止，重试没有意义 -->
-          <Button
-            v-if="wfRun.failIndex >= 0 && !wfRun.repoChanged"
-            variant="default"
-            size="sm"
-            :disabled="busy"
-            @click="retryFlow"
-          >
-            从失败处重试
-          </Button>
-          <Button variant="secondary" size="sm" @click="closeWfRun()">关闭</Button>
-        </div>
-      </div>
-    </div>
+    <!-- 工作流执行进度：渲染在 WorkflowRunDialog.vue -->
+    <WorkflowRunDialog
+      :run="wfRun"
+      :open="wfRunOpen"
+      :busy="busy"
+      @close="closeWfRun()"
+      @retry="retryFlow()"
+    />
 
     <!-- 拖拽仓库进窗口的提示遮罩 -->
     <div
