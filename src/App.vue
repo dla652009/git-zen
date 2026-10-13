@@ -2206,13 +2206,6 @@ onUnmounted(() => {
         </span>
       </Tooltip>
       <span v-else class="text-xs text-muted-foreground">未打开仓库</span>
-      <!-- 新建分支属于「仓库」而不是「同步」，所以挨着仓库名放 ——
-           和 GitHub Desktop 把「当前分支 + 新建分支」放在一起是同一个道理 -->
-      <Tooltip text="新建分支">
-        <Button variant="quiet" size="icon" :disabled="!repo || busy" aria-label="新建分支" @click="openCreateBranch">
-          <GitBranchPlus class="size-4" />
-        </Button>
-      </Tooltip>
       <span class="flex-1" />
       <Badge v-if="status?.behind" variant="warning">↓{{ status.behind }}</Badge>
       <Tooltip v-if="status?.ahead" text="未推送的提交：Review 或放弃">
@@ -2225,6 +2218,12 @@ onUnmounted(() => {
         </button>
       </Tooltip>
       <span class="mx-1 h-4 w-px bg-border" />
+      <!-- 新建分支：与 Pull/Push 同属「对仓库做事」，所以同组 -->
+      <Tooltip text="新建分支">
+        <Button variant="quiet" size="icon" :disabled="!repo || busy" aria-label="新建分支" @click="openCreateBranch">
+          <GitBranchPlus class="size-4" />
+        </Button>
+      </Tooltip>
       <!-- 顶部这排统一用默认高度：图标按钮是 h-8，文字按钮若用 sm(h-7) 会在同一行里
            差 4px，对齐看得很明显；32px 也是更舒服的点击目标 -->
       <Tooltip text="拉取并合并远程更新">
