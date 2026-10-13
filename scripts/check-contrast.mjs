@@ -119,6 +119,13 @@ const DANGER_PAIRS = [
 ];
 const TEXT_MIN = 4.5;
 const GRAPH_MIN = 3;
+// 状态语义色：--c-add/mod/del/ren 只用来给图标上色（图形阈值 3:1 就够），
+// 但 --c-conf 会被当文字渲染（侧栏的「↓N 落后」计数、分支树里的同一处），
+// 所以它必须走 4.5:1 —— 这一条是用户吐槽 #a16207「土」时顺手发现的：
+// 那个值在 catppuccin-latte 的 --card 上只有 4.05，一直没被检查过。
+const SEMANTIC_GRAPHIC = ["--c-add", "--c-mod", "--c-del", "--c-ren"];
+const SEMANTIC_TEXT = "--c-conf";
+const SEMANTIC_BGS = ["--card", "--background"];
 
 // ---------- 开始检查 ----------
 
@@ -170,6 +177,7 @@ let textChecks = 0;
 let badgeChecks = 0;
 let graphChecks = 0;
 let dangerChecks = 0;
+let semanticChecks = 0;
 
 for (const [themeName, tokens] of themes) {
   // 1) 文字对
@@ -217,7 +225,30 @@ for (const [themeName, tokens] of themes) {
     }
   }
 
-  // 4) 非文本图形：泳道连线 + 7 个泳道色 + 开关滑块，阈值 3:1
+  // 4) 状态语义色：图标按图形阈值，--c-conf 因为会当文字用所以按文字阈值
+  const semanticTokens = [...SEMANTIC_GRAPHIC, SEMANTIC_TEXT];
+  if (requireTokens(themeName, tokens, semanticTokens)) {
+    for (const bgName of SEMANTIC_BGS) {
+      const bgc = parseColor(resolveToken(tokens, bgName));
+      if (!bgc) {
+        failures.push({ theme: themeName, fgLabel: SEMANTIC_TEXT, bgLabel: bgName, value: "—", min: "可解析" });
+        continue;
+      }
+      for (const name of SEMANTIC_GRAPHIC) {
+        const fg = parseColor(resolveToken(tokens, name));
+        if (!fg) continue;
+        semanticChecks++;
+        check(themeName, name, bgName, fg, bgc, GRAPH_MIN);
+      }
+      const conf = parseColor(resolveToken(tokens, SEMANTIC_TEXT));
+      if (conf) {
+        semanticChecks++;
+        check(themeName, SEMANTIC_TEXT, bgName, conf, bgc, TEXT_MIN);
+      }
+    }
+  }
+
+  // 5) 非文本图形：泳道连线 + 7 个泳道色 + 开关滑块，阈值 3:1
   const bg = parseColor(resolveToken(tokens, "--background"));
   const line = parseColor(resolveToken(tokens, "--graph-line"));
   if (bg && line) {
@@ -246,14 +277,16 @@ for (const [themeName, tokens] of themes) {
 
 // ---------- 输出 ----------
 
-const total = textChecks + badgeChecks + dangerChecks + graphChecks;
+const total = textChecks + badgeChecks + dangerChecks + semanticChecks + graphChecks;
 const themeNames = [...themes.keys()].join(" / ");
 
 if (failures.length === 0 && fatal.length === 0) {
   console.log(
     `✓ 对比度检查通过：${themes.size} 套主题（${themeNames}）共 ${total} 项 —— ` +
       `文字对 ${textChecks}（≥${TEXT_MIN}）、徽标 ${badgeChecks}（≥${TEXT_MIN}）、` +
-      `危险按钮 ${dangerChecks}（≥${TEXT_MIN}）、图形 ${graphChecks}（≥${GRAPH_MIN}）。`,
+      `危险按钮 ${dangerChecks}（≥${TEXT_MIN}）、` +
+      `语义色 ${semanticChecks}（图标 ≥${GRAPH_MIN}，${SEMANTIC_TEXT} ≥${TEXT_MIN}）、` +
+      `图形 ${graphChecks}（≥${GRAPH_MIN}）。`,
   );
   if (notes.length) for (const n of notes) console.log(`  ! ${n}`);
   process.exit(0);
