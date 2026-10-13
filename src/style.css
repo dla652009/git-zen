@@ -383,22 +383,28 @@
 /* 尺度类令牌：值固定的用 @theme，引用 CSS 变量的用 @theme inline */
 @theme {
   /* ── 字号：6 档，全部 rem，跟随「设置 → 字号」整体缩放 ──────────
-     右侧是按默认根字号 13px 折算的实际像素。
+     右侧是按默认根字号 14px 折算的实际像素。
      原来的 9/10/10.5/11/11.5/12/12.5/13px 八档里，
      有一半是 px（不跟随字号设置）、一半是 rem（跟随），改字号时只有一半文字会变，
      所以这里统一成 rem。 */
-  --text-2xs: 0.75rem; /*  9.8px — 角标、计数 */
+  --text-2xs: 0.75rem; /* 10.5px — 角标、计数 */
   --text-2xs--line-height: 1.25;
-  --text-xs: 0.8125rem; /* 10.6px — 密集标注、次要信息 */
+  --text-xs: 0.8125rem; /* 11.4px — 密集标注、次要信息 */
   --text-xs--line-height: 1.35;
-  --text-sm: 0.90625rem; /* 11.8px — 列表正文、按钮、输入框 */
+  --text-sm: 0.90625rem; /* 12.7px — 列表正文、按钮、输入框 */
   --text-sm--line-height: 1.45;
-  --text-base: 1rem; /* 13.0px — 强调正文、分组标题 */
+  --text-base: 1rem; /* 14.0px — 强调正文、分组标题 */
   --text-base--line-height: 1.5;
-  --text-lg: 1.1875rem; /* 15.4px — 弹窗标题 */
+  --text-lg: 1.1875rem; /* 16.6px — 弹窗标题 */
   --text-lg--line-height: 1.4;
-  --text-xl: 1.375rem; /* 17.9px — 空态主标题 */
+  --text-xl: 1.375rem; /* 19.3px — 空态主标题 */
   --text-xl--line-height: 1.3;
+  /* 上面六档都是 rem —— 会跟随「设置 → 字号」缩放。这一档相反，是 **固定 px**：
+     提交信息框是常驻控件，跟着字号放大到 16-17px 会把可见行数挤掉，
+     所以钉在字号下限（`src/settings.ts` 的 `FONT_SIZE_MIN`，两处要一起改）。
+     它是目前唯一不跟随字号的档位，加新档前先问「这个真的该固定吗」。 */
+  --text-fixed: 14px;
+  --text-fixed--line-height: 1.5;
 
   /* ── 圆角：4 档 + 全圆 ────────────────────────────────────────
      原来 2/4/6/8px 混用（rounded-sm/rounded/rounded-md/rounded-lg），

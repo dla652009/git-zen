@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, reactive, ref, nextTick, onMounted } from "vue";
 import { X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe, Workflow as WorkflowIcon, ChevronDown, ChevronUp } from "@lucide/vue";
-import { THEMES, settings, type Settings } from "../settings";
+import {
+  THEMES,
+  settings,
+  clampFontSize,
+  FONT_SIZE_MIN,
+  FONT_SIZE_MAX,
+  type Settings,
+} from "../settings";
 import * as api from "../gitApi";
 import { aiVerify, isAbortError } from "../ai";
 import { readJsonObject } from "../lib/safeJson";
@@ -396,8 +403,21 @@ const NAV = [
                 </div>
                 <div class="flex items-center gap-3">
                   <label class="w-16 shrink-0 text-xs text-muted-foreground">字号</label>
-                  <input v-model.number="draft.fontSize" type="range" min="11" max="17" class="flex-1 accent-[var(--primary)]" />
-                  <span class="w-9 text-right text-xs">{{ draft.fontSize }}px</span>
+                  <!-- 数字框而不是滑杆：滑杆滑不出精确值，也没法一眼看出当前是几号。
+                       夹取放在 change（失焦/回车）而不是 input —— 边打字边夹会把
+                       「1」→ 14、「16」打成「146」→ 17，根本没法输。 -->
+                  <Input
+                    v-model.number="draft.fontSize"
+                    type="number"
+                    :min="FONT_SIZE_MIN"
+                    :max="FONT_SIZE_MAX"
+                    step="1"
+                    class="h-7 w-16 text-sm"
+                    @change="draft.fontSize = clampFontSize(draft.fontSize)"
+                  />
+                  <span class="text-xs text-muted-foreground"
+                    >px（{{ FONT_SIZE_MIN }}–{{ FONT_SIZE_MAX }}）</span
+                  >
                 </div>
               </div>
             </section>

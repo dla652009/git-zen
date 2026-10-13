@@ -526,10 +526,12 @@ async function genCommitMsg() {
     <!-- 提交区：固定底部卡片 -->
     <div class="shrink-0 space-y-2 border-t border-border bg-card p-3">
       <div class="relative">
+        <!-- 字号钉在 text-fixed（固定 px，不跟随「设置 → 字号」）：这里是右栏最大的文字，
+             跟着字号放大到 16-17px 会挤掉可见行数 -->
         <Textarea
           v-model="message"
           rows="4"
-          class="pl-8 pr-9"
+          class="pl-8 pr-9 text-fixed"
           placeholder="提交信息…  Ctrl+⏎ 提交"
           @keydown.ctrl.enter="onCommitKeydown"
         />

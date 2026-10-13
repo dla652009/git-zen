@@ -709,6 +709,24 @@
 - [x] 顺带盘了一遍全仓固定定位：26 处里 `Toast.vue` 是**唯一钉在角落**的，其余 25 处都是 `inset-0` 遮罩
       （19 个模态 + 4 个背景层 + 拖拽提示），所以「挡住操作」类问题应当只有这一处。
 
+### 14.11 提交框字号固定 + 字号设置改数字框（用户反馈）
+
+用户说提交信息框的 placeholder「字太大了，不跟随设置里的字体，固定为 14px」，
+并要求设置里的字号「改为数字输入框输入，最小 14px」。
+
+- [x] **先确认用户的字号到底是多少** —— 请求有歧义（若当前是 13px，「太大」和「固定 14px」
+      就自相矛盾）。从 WebView 的 localStorage（`%LOCALAPPDATA%\com.gitzen.app\EBWebView\
+      Default\Local Storage\leveldb`）里读到 `"fontSize":16`，于是 `text-base` = 1rem = 16px，
+      14px 确实是**变小**，请求自洽。
+- [x] 新增 `--text-fixed: 14px` 令牌（`src/style.css`），**唯一一档不跟随字号的字号**；
+      提交信息框用它（`src/components/ChangesPanel.vue`）。
+- [x] `src/settings.ts` 新增 `FONT_SIZE_MIN = 14` / `FONT_SIZE_MAX = 17` 与 `clampFontSize()`；
+      `DEFAULTS.fontSize` 13 → 14，`load()` 与响应式 watcher 都夹区间（历史值 11-13 会被抬上来）。
+- [x] 设置页滑杆 → `<Input type="number" min max step>`，**夹取放在 `change` 而不是 `input`** ——
+      边打字边夹会把「1」夹成 14、把「16」打成「146」再夹成 17，根本没法输。
+- [x] `clampFontSize` 同时用在 `applySettings()` 上做兜底：手改 localStorage 写进越界值时，
+      渲染仍然正常（数字框的 `min`/`max` 只约束箭头，手输照样能提交）。
+
 ## M15 工作区操作补全
 
 ### 15.1 丢弃暂存区的全部改动（用户需求）

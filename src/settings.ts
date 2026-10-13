@@ -28,11 +28,17 @@ export const THEMES = [
 
 const KEY = "gz.settings";
 
+// 字号上下限。下限 14px：再小的中文小字在 Windows 上发虚。
+// 注意 `src/style.css` 的 `--text-fixed: 14px` 与本下限同值 —— 提交信息框钉在这个下限上，
+// 不跟着「设置 → 字号」放大，所以两处要一起改。
+export const FONT_SIZE_MIN = 14;
+export const FONT_SIZE_MAX = 17;
+
 const DEFAULTS: Settings = {
   theme: "dark",
   fontFamily:
     '"Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif',
-  fontSize: 13,
+  fontSize: FONT_SIZE_MIN,
   branchPrefix: "",
   repoCacheSize: 5,
   aiBaseUrl: "https://api.openai.com/v1",
@@ -47,6 +53,12 @@ const pickStr = (v: unknown, dflt: string): string =>
 const pickNum = (v: unknown, dflt: number): number =>
   typeof v === "number" && Number.isFinite(v) ? v : dflt;
 
+/// 把字号夹回合法区间。历史版本允许 11-13，手改 localStorage 也可能写进越界值，
+/// 不夹的话下限就是摆设（数字输入框的 min 只约束箭头，手输照样能提交）。
+export function clampFontSize(n: number): number {
+  return Math.min(FONT_SIZE_MAX, Math.max(FONT_SIZE_MIN, Math.round(n)));
+}
+
 // 逐字段取值 + 校验类型，缺省/类型不对的字段回退默认值。
 // 原来写法是 `{ ...DEFAULTS, ...saved } as Settings`——`as` 只是让编译器闭嘴，
 // 存坏的值（例如 fontSize: "big"）照样进 reactive 并生效。
@@ -56,7 +68,7 @@ function load(): Settings {
   return {
     theme: pickStr(saved.theme, DEFAULTS.theme),
     fontFamily: pickStr(saved.fontFamily, DEFAULTS.fontFamily),
-    fontSize: pickNum(saved.fontSize, DEFAULTS.fontSize),
+    fontSize: clampFontSize(pickNum(saved.fontSize, DEFAULTS.fontSize)),
     branchPrefix: pickStr(saved.branchPrefix, DEFAULTS.branchPrefix),
     repoCacheSize: pickNum(saved.repoCacheSize, DEFAULTS.repoCacheSize),
     aiBaseUrl: pickStr(saved.aiBaseUrl, DEFAULTS.aiBaseUrl),
@@ -73,6 +85,9 @@ export const settings = reactive<Settings>(load());
 watch(
   settings,
   () => {
+    // 越界只在真的发生时才回写，否则赋值同值不会触发响应式，也就不会自激
+    const fixed = clampFontSize(settings.fontSize);
+    if (fixed !== settings.fontSize) settings.fontSize = fixed;
     persist();
     applySettings();
   },
@@ -95,7 +110,7 @@ export function applySettings() {
   const root = document.documentElement;
   root.dataset.theme = resolvedTheme();
   root.style.fontFamily = settings.fontFamily;
-  root.style.fontSize = settings.fontSize + "px";
+  root.style.fontSize = clampFontSize(settings.fontSize) + "px";
   // 清掉历史版本可能写入的 diff 覆盖，回归主题默认
   [
     "--diff-add-bg",

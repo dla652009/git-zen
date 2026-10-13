@@ -596,5 +596,38 @@ Windows(WebView2) / macOS(WKWebView) / Linux(WebKitGTK) 三端。
 教训：探针覆盖的是「我想到的输入」，测试覆盖的是「我没想到的分支」。
 写完实现要专门问一句：**哪条分支是我从没跑过的？**
 
+### 想知道用户实际在用什么设置，去读 WebView 的 localStorage
+
+用户说「提交信息框的字太大了，不跟随设置里的字体，固定为 14px」——
+这话有歧义：如果他的字号是默认的 13px，那「太大」和「固定 14px」就自相矛盾。
+与其猜或者反问，不如直接查：
+
+```
+%LOCALAPPDATA%\com.gitzen.app\EBWebView\Default\Local Storage\leveldb\
+```
+
+里面存着 `gz.settings` 的 JSON。两个要点：
+
+- **应用在跑的时候这些文件是锁住的**（`EBUSY: resource busy or locked`），先 `Copy-Item` 到临时目录再读。
+- 值按 origin 分开存（`http://tauri.localhost` 是打包版、`http://localhost:5173` 是 dev），
+  而且字符串可能跨 leveldb 块存放、中间混进二进制字节。
+  最稳的是把整个文件按 `utf16le` 解出字符串再正则找 `fontSize`，**不要试图解析整段 JSON**。
+
+查出 `"fontSize":16` —— 于是 `text-base` = 1rem = 16px，14px 确实是变小，请求自洽，可以放心动手。
+**一个含糊的需求，往往能用一次取证变成明确的。**
+
+### `cn` 会合并冲突的类，但只认它认识的类
+
+`src/lib/utils.ts` 的 `cn` = `twMerge(clsx(...))`，而 `twMerge` 懂得 Tailwind 的类组，
+所以组件基类里的 `h-8 w-full text-base` 会被传进来的 `class="h-7 w-16 text-sm"` 覆盖掉 —— **后写的赢**。
+
+但**自定义 `@theme` 键生成的类它不认识**。`text-fixed` 不在 `tailwind-merge` 的知识库里，
+于是 `text-base` 和 `text-fixed` 会**同时留在 class 上**，谁生效由产物 CSS 的顺序决定。
+
+实测产物字节偏移：`.text-base` 26073 → `.text-fixed` 26171 → `.text-sm` 26364。
+同一个 `--text-*` 命名空间里按**字母序**排（base < fixed < lg < sm < xl），所以 `text-fixed` 赢 `text-base`。
+
+教训：给自定义令牌起的名字，**字母序决定了它会盖住谁**；拿不准就去产物里量偏移，别猜。
+
 
 
