@@ -55,5 +55,6 @@ export function useSidebarResize() {
     window.addEventListener("mouseup", endResize);
   }
 
-  return { leftW, rightW, startResize, clampSidebars };
+  // endResize 也导出：拖动中途卸载（热更新/退出）要能把监听和 col-resize 光标收干净
+  return { leftW, rightW, startResize, endResize, clampSidebars };
 }

@@ -103,6 +103,8 @@ function retryLast() {
 // git stderr -> 人话；实现放在 src/lib/errors.ts，组件内联错误提示也用同一份规则
 import { humanize, humanizeMsg } from "./lib/errors";
 import { isUnmerged } from "./lib/conflict";
+import { useSidebarResize } from "./composables/useSidebarResize";
+import { useRepoCache } from "./composables/useRepoCache";
 
 // 刷新按钮动画 + 整页刷新遮罩
 const refreshing = ref(false);
@@ -117,41 +119,8 @@ async function doRefresh() {
 }
 
 // ---- 仓库数据 LRU 缓存：切回最近访问的仓库秒开，容量可在设置-个性化调节 ----
-interface RepoCache {
-  status: Status;
-  commits: LogEntry[];
-  branchList: Branch[];
-  tags: TagEntry[];
-}
-const repoCache = new Map<string, RepoCache>();
-// 容量下限 1，兜底脏数据（localStorage 里被手改成非数字等）
-function cacheCapacity(): number {
-  return Math.max(1, Math.floor(settings.repoCacheSize) || 5);
-}
-function cacheGet(path: string): RepoCache | null {
-  const c = repoCache.get(path);
-  if (!c) return null;
-  // 触摸保 LRU 顺序
-  repoCache.delete(path);
-  repoCache.set(path, c);
-  return c;
-}
-function cachePut(path: string, data: RepoCache) {
-  repoCache.delete(path);
-  repoCache.set(path, data);
-  while (repoCache.size > cacheCapacity()) {
-    repoCache.delete(repoCache.keys().next().value!);
-  }
-}
-// 调小容量时立即淘汰最旧的，不用等下次写入
-watch(
-  () => settings.repoCacheSize,
-  () => {
-    while (repoCache.size > cacheCapacity()) {
-      repoCache.delete(repoCache.keys().next().value!);
-    }
-  },
-);
+// 实现见 src/composables/useRepoCache.ts
+const { cacheGet, cachePeek, cachePut, cacheDrop } = useRepoCache();
 
 // 历史视图范围：当前分支 / 所有分支
 const historyMode = ref<"current" | "all">("current");
@@ -256,7 +225,7 @@ function fetchOnce() {
       status.value = s;
       branchList.value = b;
       // 缓存快照同步更新，避免切回时又恢复 fetch 前的旧 status
-      const c = repoCache.get(path);
+      const c = cachePeek(path);
       if (c) cachePut(path, { ...c, status: s, branchList: b });
     })
     .catch(() => {});
@@ -989,7 +958,7 @@ function doCloseTab(path: string) {
   if (i === -1) return;
   const name = repos.value[i].name;
   const wasActive = repos.value[i].path === repo.value;
-  repoCache.delete(path); // 关闭的选项卡不占 LRU 名额
+  cacheDrop(path); // 关闭的选项卡不占 LRU 名额
   mruPaths.value = mruPaths.value.filter((p) => p !== path);
   repos.value.splice(i, 1); // syncBar 自动修剪 barOrder 条目
   toast(`已关闭「${name}」（可用「打开」重新加入）`);
@@ -2118,43 +2087,8 @@ function onGlobalKeydown(e: KeyboardEvent) {
 }
 
 // ---- 侧边栏拖宽 + 持久化 ----
-const leftW = ref(Number(localStorage.getItem("gz.w.left")) || 208);
-const rightW = ref(Number(localStorage.getItem("gz.w.right")) || 320);
-let resizing: "l" | "r" | null = null;
-
-// 侧栏宽度上限不能只看固定像素：最小窗口 860px 时 420+520 的上限足够把中间内容挤没
-// （审查实测两侧合计可占 61%）。给中间区留出 MIN_CENTER，上限再跟窗口宽度取小。
-const MIN_CENTER = 460;
-function maxLeftW() {
-  return Math.max(140, Math.min(420, window.innerWidth - rightW.value - MIN_CENTER));
-}
-function maxRightW() {
-  return Math.max(240, Math.min(520, window.innerWidth - leftW.value - MIN_CENTER));
-}
-// 窗口变窄时把已存/已拖的宽度收回来。只改 ref 不写回 localStorage——
-// 用户在大窗口下的偏好宽度应该保留，回到大窗口时还能用。
-function clampSidebars() {
-  if (leftW.value > maxLeftW()) leftW.value = maxLeftW();
-  if (rightW.value > maxRightW()) rightW.value = maxRightW();
-}
-
-function startResize(side: "l" | "r") {
-  resizing = side;
-  document.body.style.cursor = "col-resize";
-  window.addEventListener("mousemove", onResizeMove);
-  window.addEventListener("mouseup", endResize);
-}
-function onResizeMove(e: MouseEvent) {
-  if (resizing === "l") leftW.value = Math.min(maxLeftW(), Math.max(140, e.clientX));
-  else rightW.value = Math.min(maxRightW(), Math.max(240, window.innerWidth - e.clientX));
-}
-function endResize() {
-  window.removeEventListener("mousemove", onResizeMove);
-  window.removeEventListener("mouseup", endResize);
-  if (resizing) localStorage.setItem(resizing === "l" ? "gz.w.left" : "gz.w.right", String(resizing === "l" ? leftW.value : rightW.value));
-  document.body.style.cursor = "";
-  resizing = null;
-}
+// 实现见 src/composables/useSidebarResize.ts（上限跟窗口宽度联动，避免挤没中间区）
+const { leftW, rightW, startResize, endResize, clampSidebars } = useSidebarResize();
 
 // v-focus：选项卡重命名输入框自动聚焦
 // 值给 false 就不抢焦点：一个弹层里有多个输入框时，只该让第一个自动聚焦

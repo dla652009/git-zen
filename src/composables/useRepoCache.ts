@@ -37,6 +37,15 @@ export function useRepoCache() {
     }
   }
 
+  // 不触碰 LRU 顺序的读：刷新流程里只是顺手看一眼有没有缓存，不该因此改变淘汰次序
+  function cachePeek(path: string): RepoCache | undefined {
+    return repoCache.get(path);
+  }
+
+  function cacheDrop(path: string) {
+    repoCache.delete(path);
+  }
+
   // 调小容量时立即淘汰最旧的，不用等下次写入
   watch(
     () => settings.repoCacheSize,
@@ -47,5 +56,5 @@ export function useRepoCache() {
     },
   );
 
-  return { cacheGet, cachePut };
+  return { cacheGet, cachePeek, cachePut, cacheDrop };
 }
