@@ -2221,14 +2221,14 @@ onUnmounted(() => {
       <!-- 顶部这排统一用默认高度：图标按钮是 h-8，文字按钮若用 sm(h-7) 会在同一行里
            差 4px，对齐看得很明显；32px 也是更舒服的点击目标 -->
       <Tooltip text="拉取并合并远程更新">
-        <Button variant="ghost" :disabled="!repo || busy" @click="doPull">
+        <Button :disabled="!repo || busy" @click="doPull">
           <Spinner v-if="runningAction === 'pull'" :size="14" />
           <ArrowDownToLine v-else class="size-3.5" />
           Pull
         </Button>
       </Tooltip>
       <Tooltip text="推送（无上游自动建立跟踪）">
-        <Button variant="ghost" :disabled="!repo || busy" @click="doPush">
+        <Button :disabled="!repo || busy" @click="doPush">
           <Spinner v-if="runningAction === 'push'" :size="14" />
           <ArrowUpFromLine v-else class="size-3.5" />
           Push
@@ -2236,7 +2236,7 @@ onUnmounted(() => {
       </Tooltip>
       <!-- 钉住的工作流（最多 3 个，在设置页勾）：常用流程不必每次展开下拉再点一次 -->
       <Tooltip v-for="w in pinnedFlows" :key="w.id" :text="`执行工作流：${w.name}`">
-        <Button variant="ghost" :disabled="!repo || busy" @click="runFlow(w)">
+        <Button :disabled="!repo || busy" @click="runFlow(w)">
           <WorkflowIcon class="size-3.5 shrink-0" />
           <span class="max-w-[7rem] truncate">{{ w.name }}</span>
         </Button>
