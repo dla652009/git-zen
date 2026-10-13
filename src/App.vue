@@ -61,6 +61,9 @@ import CreateBranchDialog from "./components/CreateBranchDialog.vue";
 import CreateTagDialog from "./components/CreateTagDialog.vue";
 import TabRenameDialog from "./components/TabRenameDialog.vue";
 import BranchRenameDialog from "./components/BranchRenameDialog.vue";
+import ErrorDialog from "./components/ErrorDialog.vue";
+import ConfirmDialog from "./components/ConfirmDialog.vue";
+import GroupNameDialog from "./components/GroupNameDialog.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
@@ -103,6 +106,14 @@ function retryLast() {
   dismissError();
   if (fn) run(fn, name);
 }
+
+// open 留在 App（overlayLayers.error 指向 error）；关闭走原来的 dismissError
+const errorOpen = computed({
+  get: () => !!error.value,
+  set: (v) => {
+    if (!v) dismissError();
+  },
+});
 
 // git stderr -> 人话；实现放在 src/lib/errors.ts，组件内联错误提示也用同一份规则
 import { humanize } from "./lib/errors";
@@ -577,17 +588,22 @@ function removeMember(path: string) {
   if (r) toast(`已把「${r.name}」移出分组`);
 }
 
-// 分组命名弹窗（新建 / 重命名共用）
+// 分组命名弹窗（新建 / 重命名共用）：渲染已拆到 GroupNameDialog，open 与草稿留在 App
 const groupModal = ref<{ mode: "create" } | { mode: "rename"; from: string } | null>(null);
 const groupNameDraft = ref("");
 const groupModalErr = ref("");
 // 新建时顺带归组的仓库：默认一个不选，免得「建了个空组，东西怎么全进去了」
 const groupPicks = ref<string[]>([]);
-function toggleGroupPick(path: string) {
-  groupPicks.value = groupPicks.value.includes(path)
-    ? groupPicks.value.filter((p) => p !== path)
-    : [...groupPicks.value, path];
-}
+// open 留在 App（overlayLayers.groupModal 指向 groupModal）；弹窗只关心是新建还是重命名
+const groupModalOpen = computed({
+  get: () => !!groupModal.value,
+  set: (v) => {
+    if (!v) groupModal.value = null;
+  },
+});
+const groupModalMode = computed<"create" | "rename">(() =>
+  groupModal.value?.mode === "rename" ? "rename" : "create",
+);
 function openGroupCreate() {
   groupNameDraft.value = "";
   groupModalErr.value = "";
@@ -1281,10 +1297,25 @@ const confirmChecked = ref(false);
 function openConfirm(s: ConfirmState) {
   confirmChecked.value = false;
   confirmState.value = s;
-  // 危险操作的安全默认：焦点落「取消」，Enter 天然触发取消而非确认
-  nextTick(() => confirmCancelBtn.value?.$el.focus());
+  // 危险操作的安全默认「焦点落取消」由 ConfirmDialog 的 v-focus 承担
 }
-const confirmCancelBtn = ref<{ $el: HTMLButtonElement } | null>(null);
+
+// open 留在 App（overlayLayers.confirm 指向 confirmState）
+const confirmOpen = computed({
+  get: () => !!confirmState.value,
+  set: (v) => {
+    if (!v) confirmState.value = null;
+  },
+});
+
+// 确认动作：ok 回调与 run() 留在 App，ConfirmDialog 只 emit
+function confirmOk() {
+  const s = confirmState.value;
+  if (!s) return;
+  const ok = s.ok;
+  confirmState.value = null;
+  run(() => ok(confirmChecked.value));
+}
 
 function askDelete(b: Branch) {
   if (b.remote) {
@@ -1601,17 +1632,13 @@ const { leftW, rightW, startResize, endResize, clampSidebars } = useSidebarResiz
 
 // ---- IME 守卫：输入法组词期间 Enter/Esc 属于输入法，不触发弹窗动作 ----
 // 守卫实现见 src/lib/imeGuard.ts。下面这些是给模板直接引用的处理器常量（不是函数调用），
-// 模板里写 @keydown.enter.prevent="imeConfirmGroupModal" 这样的裸标识符，
+// 模板里写 @keydown.enter.prevent="imeConfirmFlow" 这样的裸标识符，
 // 避免内联表达式 imeGuard(fn) 把返回的函数当语句丢掉。
-// 已拆出去的弹窗（新建分支/新建标签/重命名选项卡/重命名分支）在各自模块里自带守卫。
-const imeConfirmGroupModal = imeGuard(confirmGroupModal);
+// 已拆出去的弹窗（新建分支/新建标签/重命名选项卡/重命名分支/分组命名）在各自模块里自带守卫。
 const imeConfirmFlow = imeGuard(confirmFlow);
 const imeDoClone = imeGuard(doClone);
 const imeCloseOpenModal = imeGuard(() => {
   openModal.value = null;
-});
-const imeCloseGroupModal = imeGuard(() => {
-  groupModal.value = null;
 });
 
 // 窗口重新获得焦点时静默刷新（切回来看到的就是最新状态）
@@ -2609,59 +2636,16 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <!-- 分组命名弹窗（新建 / 重命名共用） -->
-    <div
-      v-if="groupModal"
-      v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dlg-group-name-title"
-      @click.self="groupModal = null"
-    >
-      <div class="w-dlg-sm surface rounded-lg p-5 pop-in">
-        <div id="dlg-group-name-title" class="mb-3 text-base font-semibold">{{ groupModal.mode === "create" ? "新建分组" : "重命名分组" }}</div>
-        <Input
-          v-model="groupNameDraft"
-          v-focus
-          placeholder="分组名，如：前端 / 后端"
-          @keydown.enter.prevent="imeConfirmGroupModal"
-          @keydown.esc="imeCloseGroupModal"
-        />
-        <!-- 新建时顺带归组：从标签栏拖进文件夹对键盘/单窗口用户不友好，这里给一条鼠标直路 -->
-        <template v-if="groupModal.mode === 'create'">
-          <div class="mt-3 mb-1 text-xs text-muted-foreground">顺带加入仓库（可选，一个仓库只属一个分组）：</div>
-          <div class="max-h-40 overflow-y-auto rounded-md border border-border/70 p-1">
-            <button
-              v-for="r in repos"
-              :key="r.path"
-              class="flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-xs transition-colors duration-fast hover:bg-hover"
-              :class="groupPicks.includes(r.path) && 'bg-primary-soft'"
-              @click="toggleGroupPick(r.path)"
-            >
-              <span
-                class="flex size-3.5 shrink-0 items-center justify-center rounded-xs border"
-                :class="groupPicks.includes(r.path) ? 'border-primary bg-primary text-primary-foreground' : 'border-border'"
-              >
-                <Check v-if="groupPicks.includes(r.path)" class="size-2.5" />
-              </span>
-              <span class="truncate">{{ r.name }}</span>
-              <span class="ml-auto truncate text-xs text-muted-foreground">
-                {{ r.group ? `来自「${r.group}」` : "未分组" }}
-              </span>
-            </button>
-            <div v-if="!repos.length" class="px-1.5 py-1 text-xs text-muted-foreground">还没有仓库</div>
-          </div>
-        </template>
-        <div v-if="groupModalErr" class="mt-1.5 text-xs text-destructive">{{ groupModalErr }}</div>
-        <div class="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" @click="groupModal = null">取消</Button>
-          <Button variant="default" size="sm" :disabled="!groupNameDraft.trim()" @click="confirmGroupModal">
-            确定
-          </Button>
-        </div>
-      </div>
-    </div>
+    <!-- 分组命名弹窗（新建 / 重命名共用）：渲染在 GroupNameDialog.vue -->
+    <GroupNameDialog
+      v-model:open="groupModalOpen"
+      v-model:name="groupNameDraft"
+      v-model:picks="groupPicks"
+      :mode="groupModalMode"
+      :err="groupModalErr"
+      :repos="repos"
+      @confirm="confirmGroupModal()"
+    />
 
     <!-- 仓库快速切换器（Ctrl+P）：模糊搜索 + 最近使用排序 -->
     <div
@@ -2913,67 +2897,25 @@ onUnmounted(() => {
       松开打开这个仓库
     </div>
 
-    <!-- 错误确认框：居中展示，点确认才关 -->
-    <div
-      v-if="error"
-      v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dlg-error-title"
-      @click.self="dismissError()"
-    >
-      <!-- 错误框不用 surface：它要保持红色描边，会和 surface 自带的 border 打架 -->
-      <div class="w-dlg-md rounded-lg border border-destructive/40 bg-elevated p-5 shadow-elev-4 pop-in">
-        <div id="dlg-error-title" class="mb-3 text-base font-semibold text-destructive">操作失败</div>
-        <div>{{ error }}</div>
-        <details v-if="errDetail" class="mt-2">
-          <summary class="cursor-pointer text-xs text-muted-foreground">详细信息</summary>
-          <pre class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-xs text-muted-foreground">{{ errDetail }}</pre>
-        </details>
-        <div class="mt-5 flex justify-end gap-2">
-          <!-- 只对 run() 包起来的操作给重试：那是「重放一次同样的调用」，校验类错误重试没意义 -->
-          <Button v-if="retryFn" variant="secondary" size="sm" @click="retryLast()">重试</Button>
-          <Button variant="secondary" size="sm" @click="dismissError()">知道了</Button>
-        </div>
-      </div>
-    </div>
+    <!-- 错误确认框：渲染在 ErrorDialog.vue -->
+    <ErrorDialog
+      v-model:open="errorOpen"
+      :message="error"
+      :detail="errDetail"
+      :can-retry="!!retryFn"
+      @retry="retryLast()"
+    />
 
-    <!-- 危险操作确认框（删除分支/合并） -->
-    <div
-      v-if="confirmState"
-      v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dlg-confirm-title"
-      @click.self="confirmState = null"
-    >
-      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
-        <div id="dlg-confirm-title" class="mb-3 text-base font-semibold">{{ confirmState.title }}</div>
-        <div>{{ confirmState.body }}</div>
-        <label v-if="confirmState.checkbox" class="mt-2 flex cursor-pointer items-center gap-2 text-xs">
-          <input v-model="confirmChecked" type="checkbox" class="accent-[var(--primary)]" />
-          {{ confirmState.checkbox }}
-        </label>
-        <div class="mt-5 flex justify-end gap-2">
-          <Button ref="confirmCancelBtn" variant="ghost" size="sm" @click="confirmState = null">取消</Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            @click="
-              () => {
-                const ok = confirmState!.ok;
-                confirmState = null;
-                run(() => ok(confirmChecked));
-              }
-            "
-          >
-            {{ confirmState.okText ?? "确认执行" }}
-          </Button>
-        </div>
-      </div>
-    </div>
+    <!-- 危险操作确认框（删除分支/合并）：渲染在 ConfirmDialog.vue -->
+    <ConfirmDialog
+      v-model:open="confirmOpen"
+      v-model:checked="confirmChecked"
+      :title="confirmState?.title ?? ''"
+      :body="confirmState?.body ?? ''"
+      :checkbox="confirmState?.checkbox"
+      :ok-text="confirmState?.okText"
+      @confirm="confirmOk()"
+    />
   </div>
 </template>
 
