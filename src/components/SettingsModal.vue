@@ -327,7 +327,7 @@ const NAV = [
           <template v-else-if="tab === 'ai'">
             <section>
               <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">AI 服务（OpenAI 兼容协议）</h3>
-              <div class="mb-4 flex items-center justify-between rounded-md border border-border bg-muted/40 px-3 py-2">
+              <div class="mb-4 flex items-center justify-between rounded-md border border-border bg-muted/25 px-3 py-2">
                 <span class="text-xs">启用 AI 功能</span>
                 <Switch v-model="aiOn" />
               </div>

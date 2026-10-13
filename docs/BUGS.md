@@ -549,9 +549,9 @@ Consolas **没有中文字形**，代码块里出现中文注释时会掉到系�
 过渡统一到 `duration-fast`（交互反馈）/ `duration-base`（浮层入场）/ `duration-slow`（大面积变化）。
 `prefers-reduced-motion: reduce` 下三档全部压到 0.01ms。
 
-### 输入框在深色主题下像禁用态（用户反馈）
+### 输入框的底色让它读起来像禁用态（用户反馈，两轮）
 
-**现象**：用户原话「表单的背景色太深了，有点像禁用的颜色」。
+**现象**：用户原话「表单的背景色太深了，有点像禁用的颜色」，改完后又回「还是很深」（附截图）。
 
 **根因**：`ui/Input.vue` / `ui/Textarea.vue` / `ui/Select.vue` 的底色都是 `--background`（画布色）。
 浅色主题下画布比卡片暗一点点，看着正常；深色主题下新加的浮层 `--elevated` 比画布**亮**，
@@ -560,15 +560,24 @@ Consolas **没有中文字形**，代码块里出现中文注释时会掉到系�
 放大这个问题的是 `--border`：它对本主题 `--elevated` 的对比只有 1.1x（描边看不见），
 一个没有边框的暗块，读起来就是禁用态。
 
-**修复**：新增 `--input-bg`（六个主题各一个值，`@theme inline` 加 `--color-input-bg`），
-定义为比所在表面**亮一档**（浅色主题反过来，比白弹窗暗一档），四个使用点改用它。
-`--muted` 在深色主题里同样不好用——它比 `--elevated` 还暗。
+**第一次修复走反了方向**：我按「比所在表面差一档才看得出是输入框」的想法，深色往上抬、
+浅色往下压（light `#efeff0` / latte `#e7e7eb`）。用户截图后采样确认：弹窗底 `#FFFFFF`、
+输入框 `#E7E7EB`，而他原来用的是画布色 `#EFF1F5` —— **我把它改得更深了**。
+「差一档才看得出是输入框」是我自己编的规则；真实的形状线索是**描边**，不是底色差。
 
-**取值不是挑的，是算的**：底色越亮，placeholder（`--muted-foreground`）对比度越低。
+**修复**：新增 `--input-bg`（六个主题各一个值，`@theme inline` 加 `--color-input-bg`），
+四个使用点改用它。规则只有一条 —— **不要和它所在的表面拉开明显色差**：
+深色主题取比所在表面**亮**一档（`#2d2d36` / `#323249` / `#3a3f49` / `#262d36`），
+浅色主题一律 `#ffffff`，形状交给描边。`--muted` 在深色主题里同样不好用——它比 `--elevated` 还暗。
+
+**深色取值不是挑的，是算的**：底色越亮，placeholder（`--muted-foreground`）对比度越低。
 求出「在所在表面上叠 `--foreground` 的最大比例」即上限：dark 4.5% / mocha 8.0% /
-one-dark 5.0% / github-dark 5.0% / light 7.0% / latte 13.5%。
+one-dark 5.0% / github-dark 5.0%。
 `check-contrast.mjs` 的 `TEXT_PAIRS` 增加 `--foreground`/`--input-bg` 与
 `--muted-foreground`/`--input-bg` 两对（182 → 196 项），并做了负向验证：
 把 dark 的输入框调亮到 `#4a4a58` → placeholder 掉到 2.91，脚本 exit 1。
+
+**连带**：设置页「启用 AI 功能」那行的 `bg-muted/40` 放到 `bg-muted/25` ——
+输入框变白之后，它是表单区里唯一还在发灰的块。
 
 

@@ -636,13 +636,20 @@
 但深色主题的弹窗底是 `--elevated`，**画布比它暗**，于是输入框成了「比弹窗更黑的洞」——
 一个没有边框感（`--border` 对本主题的 `--elevated` 几乎不可见）的暗块，读起来就是禁用态。
 
-修法：新增 `--input-bg`，定义为**比它所在的表面亮一档**（浅色主题反过来，比白弹窗暗一档），
+修法：新增 `--input-bg`。规则只有一条 —— **不要和它所在的表面拉开明显色差**：
+深色主题取比所在表面**亮**一档，浅色主题直接取白。形状交给描边。
 `ui/Input.vue` / `ui/Textarea.vue` / `ui/Select.vue` 与设置页的分支前缀输入容器改用它。
 
 - [x] `--input-bg` 六个主题各一个值，`@theme inline` 加 `--color-input-bg` 映射
-- [x] **取值不是挑好看的，是被对比度定死的**：在所在表面上叠 `--foreground` 的最大比例，
+- [x] **深色取值不是挑好看的，是被对比度定死的**：在所在表面上叠 `--foreground` 的最大比例，
       上限是「输入框里的正文与 placeholder 仍要 ≥4.5:1」。脚本扫出来的最大值是
-      dark 4.5% / mocha 8.0% / one-dark 5.0% / github-dark 5.0% / light 7.0% / latte 13.5%
+      dark 4.5% / mocha 8.0% / one-dark 5.0% / github-dark 5.0%
+- [x] **浅色主题第一版做反了**：我按「比白弹窗暗一档才看得出是输入框」的思路给了
+      light `#efeff0` / latte `#e7e7eb`，比它们原来的画布色（`#fafafa` / `#eff1f5`）**更深**。
+      用户截图反馈「还是很深」，采样弹窗底 `#FFFFFF`、输入框 `#E7E7EB` 后确认。
+      改为一律 `#ffffff` —— 浅色主题下白底 + 描边就是标准做法，给灰底才会读成「已禁用」
+- [x] 顺带把设置页「启用 AI 功能」那行的 `bg-muted/40` 放到 `bg-muted/25`：
+      输入框变白之后，它是表单区里唯一还在发灰的块
 - [x] `scripts/check-contrast.mjs` 的 `TEXT_PAIRS` 加 `--foreground`/`--input-bg` 与
       `--muted-foreground`/`--input-bg`（182 项 → 196 项），并对新规则做了负向验证
       （把 dark 的输入框调亮到 `#4a4a58` → placeholder 掉到 2.91，脚本 exit 1）
