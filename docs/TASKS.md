@@ -696,6 +696,43 @@
       正是用户上一轮否定的大地色系 —— 它只因为不在浅色主题里而逃过了那一轮。
       现在跟着 `--c-conf` 一起换成青色系。
 
+### 14.10 提示移出右下角（用户反馈）
+
+用户说「把 app 右下角的提示换个位置，挡着我操作了」。
+
+- [x] 根因不是「提示太靠边」，是**它占着主操作区**：右栏底部依次是提交信息输入框、
+      「提交后推送到远程」开关和整宽的「提交」按钮，而 `ui/Toast.vue` 定位在 `right-4 bottom-10`。
+      容器虽有 `pointer-events-none`（不吃点击），但**看不见按钮和不能点是一回事**。
+- [x] 改到底部居中（`left-1/2 -translate-x-1/2` + `max-w-[420px]` 防长消息横贯全屏）。
+      选位依据是把四边都过一遍：左栏底部是标签区、右栏底部是提交区、顶栏和页签栏满是控件，
+      **中间列底部是唯一没有常驻控件的区域**。
+- [x] 顺带盘了一遍全仓固定定位：26 处里 `Toast.vue` 是**唯一钉在角落**的，其余 25 处都是 `inset-0` 遮罩
+      （19 个模态 + 4 个背景层 + 拖拽提示），所以「挡住操作」类问题应当只有这一处。
+
+## M15 工作区操作补全
+
+### 15.1 丢弃暂存区的全部改动（用户需求）
+
+用户提出「需要丢弃掉暂存区所有改动的功能」。此前只能先「全部取消暂存」再「全部丢弃」，
+而且中途取消暂存会把新增文件变成未跟踪、反而更难清理。
+
+- [x] **先做真实 git 探针再动手**（5 轮，临时仓库）。结论是三条路里只有一条能用：
+      - `git reset --hard HEAD -- <paths>` ❌ `fatal: Cannot do hard reset with paths.`
+      - `git restore --source=HEAD --staged --worktree -- <paths>` ✅ 一条命令就够，
+        **但空仓库（无 HEAD）报 `fatal: could not resolve HEAD`**；且它不认 `--end-of-options`，认 `--`
+      - `reset HEAD -- <paths>` 再 `checkout -- <paths>` ❌ 新增文件在 reset 后变未跟踪，
+        `checkout` 对它报 `pathspec ... did not match` 并整体失败
+      - **最终采用**：`ls-tree` 把路径分成「在 HEAD 里」和「不在 HEAD 里」，前者 `checkout HEAD --`、
+        后者 `git rm`
+- [x] 后端 `git_discard_staged(repo, paths, delete_new)`：逐个路径过 `check_repo_path`；
+      **单独用 `rev-parse --verify --quiet HEAD` 判有无 HEAD**，而不是靠 `ls-tree` 失败兜底 ——
+      后者会把「仓库损坏」也当成「都没提交过」而误删文件。
+- [x] `delete_new` 由 UI 让用户勾选：新增文件往往是从未提交过的工作成果，默认**只取消暂存、保留文件**。
+- [x] 前端：`ChangesPanel.vue` 的「已暂存」标题行加「丢弃全部」图标按钮；
+      **重命名文件要同时传旧名和新名**（`stagedPaths()` 专门处理），只传新名会留下 `D old.txt` 残缺状态。
+- [x] 4 个 Rust 单测覆盖：四类改动一起丢 / `delete_new=false` 保留新文件 / 未跟踪文件不受影响 /
+      空仓库 / 越界路径拒绝，另有 3 个冲突形态（`UU` / `AA` / `DU`）。
+
 ## 需求池（无需关注，后面排期）
 
 ### Git 核心补全

@@ -30,6 +30,7 @@ pub fn run() {
             git::git_get_user,
             git::git_config_user,
             git::git_discard,
+            git::git_discard_staged,
             git::git_revert,
             git::git_diff_unpushed,
             git::git_write_file,

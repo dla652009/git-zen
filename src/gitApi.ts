@@ -113,6 +113,11 @@ export const configUser = (repo: string, name: string, email: string) =>
   invoke<void>("git_config_user", { repo, name, email });
 export const discard = (repo: string, path: string, untracked: boolean) =>
   invoke<void>("git_discard", { repo, path, untracked });
+// 丢弃暂存区的全部改动：暂存内容与工作区一起还原到 HEAD，未跟踪文件不受影响。
+// paths 由前端从 status 算出（含重命名文件的旧名与新名），未跟踪文件不传。
+// deleteNew=false 时新增文件只取消暂存、留在磁盘上（删掉不可恢复，交给用户选）
+export const discardStaged = (repo: string, paths: string[], deleteNew: boolean) =>
+  invoke<void>("git_discard_staged", { repo, paths, deleteNew });
 export const revert = (repo: string, hash: string) =>
   invoke<void>("git_revert", { repo, hash });
 export const resetUnpushed = (repo: string) =>

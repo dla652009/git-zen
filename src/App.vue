@@ -1667,6 +1667,39 @@ function askAbortMerge() {
   });
 }
 
+// 丢弃暂存区的全部改动：暂存内容与工作区一起还原到 HEAD。
+// 新增文件（HEAD 里没有）默认只取消暂存、文件留在磁盘上 —— 它们往往是从未提交过的工作成果，
+// 删掉不可恢复，所以"连文件一起删"做成显式勾选，而不是默认行为。
+function askDiscardStaged(p: {
+  paths: string[];
+  count: number;
+  newCount: number;
+  conflictCount: number;
+}) {
+  if (!p.paths.length) return;
+  const parts = [`将丢弃暂存区 ${p.count} 个文件的改动，暂存内容与工作区一起还原到上次提交。`];
+  if (p.newCount) {
+    parts.push(
+      `其中 ${p.newCount} 个是本次新加的文件（上次提交里没有）：默认只取消暂存、文件保留在磁盘上变成未跟踪。`
+    );
+  }
+  if (p.conflictCount) {
+    parts.push(`另有 ${p.conflictCount} 个合并冲突文件会按当前分支（HEAD）的版本解决。`);
+  }
+  openConfirm({
+    title: "丢弃暂存区的全部改动",
+    okText: "丢弃改动",
+    body: parts.join(""),
+    // 没有新增文件时不给这个勾选：一个没有作用的开关只会让人犹豫
+    checkbox: p.newCount ? `同时删除这 ${p.newCount} 个新文件（不可恢复）` : undefined,
+    ok: async (deleteNew) => {
+      await api.discardStaged(repo.value, p.paths, deleteNew);
+      const kept = p.newCount && !deleteNew ? `，${p.newCount} 个新增文件保留在磁盘上` : "";
+      toast(`已丢弃 ${p.count} 个文件的暂存改动${kept}`);
+    },
+  });
+}
+
 // ---- amend / 撤销上次提交（都在改写历史，确认框负责安全提示）----
 // "已推送"判定：分支有上游且 ahead==0，即本地与远程一致，最近一次提交就在远程
 function pushedHead(): boolean {
@@ -2322,6 +2355,7 @@ onUnmounted(() => {
           @undo="askUndoCommit"
           @stash-drop="askStashDrop"
           @abort-merge="askAbortMerge"
+          @discard-staged="askDiscardStaged"
           @discard="(t: DiffTarget) =>
             openConfirm({
               title: t.untracked ? '删除未跟踪文件' : '丢弃更改',

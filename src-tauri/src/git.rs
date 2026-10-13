@@ -589,6 +589,76 @@ pub async fn git_discard(repo: String, path: String, untracked: bool) -> Result<
     .await
 }
 
+/// 丢弃暂存区的全部改动：暂存内容与工作区一起还原到 HEAD。
+///
+/// 不能用 `reset --hard HEAD -- <paths>`（git 直接拒绝：`fatal: Cannot do hard reset with paths.`），
+/// 也不能先 `reset -q HEAD -- <paths>` 再 `checkout -- <paths>`（新增文件在 reset 后变成未跟踪，
+/// checkout 会对它报 `pathspec ... did not match` 并整体失败）。
+/// 正确做法是按「HEAD 里有没有这个路径」分区：
+/// 有的走 `checkout HEAD --`（还原），没有的走 `rm`（新加进来的）。
+///
+/// 注意 `checkout -- <path>` 是**从暂存区**取内容，对已暂存的改动等于什么都没做，
+/// 必须写成 `checkout HEAD -- <path>` 才是从 HEAD 取。
+///
+/// 路径由前端从 status 计算：重命名文件必须**同时传旧名和新名** ——
+/// 旧名在 HEAD 里会被还原，新名不在 HEAD 里会被删除，只传一个会留下残缺状态。
+/// 未跟踪文件不在暂存区，前端不会传进来。
+///
+/// `delete_new` 决定「HEAD 里没有的路径」怎么处理：true 连文件一起删（真正的丢弃），
+/// false 只 `rm --cached` 取消暂存、文件留在磁盘上变成未跟踪。默认该由 UI 让用户选 ——
+/// 新增文件往往是从未提交过的工作成果，删掉不可恢复。
+#[tauri::command]
+pub async fn git_discard_staged(
+    repo: String,
+    paths: Vec<String>,
+    delete_new: bool,
+) -> Result<(), String> {
+    offload(move || {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        for p in &paths {
+            check_repo_path(p)?;
+        }
+        // 空仓库（无 HEAD）时把全部路径都当「不在 HEAD 里」。这里单独判 HEAD 而不是靠
+        // ls-tree 失败兜底 —— 后者会把「仓库损坏」之类真错误也当成「都没提交过」，
+        // 于是本该还原的文件被 rm 删掉。
+        let has_head = run(&repo, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok();
+        let tracked: Vec<String> = if has_head {
+            // --end-of-options 之后全部当路径，防止以 - 开头的文件名被当成选项
+            let mut ls = vec!["ls-tree", "-r", "--name-only", "HEAD", "--end-of-options", "--"];
+            ls.extend(paths.iter().map(|s| s.as_str()));
+            run(&repo, &ls)?
+                .lines()
+                .map(|s| s.to_string())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let (in_head, not_in_head): (Vec<&String>, Vec<&String>) =
+            paths.iter().partition(|p| tracked.iter().any(|t| t == *p));
+
+        if !in_head.is_empty() {
+            let mut args = vec!["checkout", "HEAD", "--end-of-options", "--"];
+            args.extend(in_head.iter().map(|s| s.as_str()));
+            run(&repo, &args)?;
+        }
+        if !not_in_head.is_empty() {
+            // git rm **不认** `--end-of-options`（会把它后面的 `--` 当 pathspec 报
+            // `did not match any files`），只能用 `--` 分隔
+            let mut args = if delete_new {
+                vec!["rm", "-q", "-f", "--"]
+            } else {
+                vec!["rm", "--cached", "-q", "-f", "--"]
+            };
+            args.extend(not_in_head.iter().map(|s| s.as_str()));
+            run(&repo, &args)?;
+        }
+        Ok(())
+    })
+    .await
+}
+
 /// revert 指定提交（生成反向提交）
 #[tauri::command]
 pub async fn git_revert(repo: String, hash: String) -> Result<(), String> {
@@ -1624,6 +1694,233 @@ mod tests {
         ))
         .expect_err("无效目录应报错");
         assert!(!err.trim().is_empty(), "错误信息不应为空");
+    }
+
+    // ---------- 丢弃暂存区全部改动 ----------
+
+    fn write_file(repo: &TempRepo, p: &str, c: &str) {
+        let full = repo.0.join(p);
+        std::fs::create_dir_all(full.parent().unwrap()).unwrap();
+        std::fs::write(&full, c).unwrap();
+    }
+
+    fn read_file(repo: &TempRepo, p: &str) -> Option<String> {
+        std::fs::read_to_string(repo.0.join(p)).ok()
+    }
+
+    fn commit_files(repo: &TempRepo, files: &[(&str, &str)], msg: &str) {
+        for (p, c) in files {
+            write_file(repo, p, c);
+        }
+        run(repo.path(), &["add", "-A"]).unwrap();
+        run(repo.path(), &["commit", "-q", "-m", msg]).unwrap();
+    }
+
+    /// 当前分支名（git init 的默认分支名随版本/配置而变，不能写死 master）
+    fn branch_name(repo: &TempRepo) -> String {
+        run(repo.path(), &["rev-parse", "--abbrev-ref", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string()
+    }
+
+    fn porcelain(repo: &TempRepo) -> String {
+        run(repo.path(), &["status", "--porcelain=v1"]).unwrap()
+    }
+
+    fn discard(repo: &TempRepo, paths: &[&str], delete_new: bool) -> Result<(), String> {
+        let v: Vec<String> = paths.iter().map(|s| s.to_string()).collect();
+        tauri::async_runtime::block_on(git_discard_staged(repo.path().to_string(), v, delete_new))
+    }
+
+    /// 修改 / 暂存区删除 / 重命名 / 新增四类一起丢弃，工作区应当完全干净。
+    /// 重命名行**同时给旧名和新名**是这里要守住的关键：只给新名会留下 `D old.txt`。
+    #[test]
+    fn discard_staged_restores_every_kind_of_change() {
+        let repo = TempRepo::new("dstaged");
+        commit_files(
+            &repo,
+            &[
+                ("mod.txt", "M0"),
+                ("del.txt", "D0"),
+                ("old.txt", "R0"),
+                ("keep.txt", "K0"),
+            ],
+            "init",
+        );
+
+        write_file(&repo, "mod.txt", "M1");
+        std::fs::remove_file(repo.0.join("del.txt")).unwrap();
+        std::fs::rename(repo.0.join("old.txt"), repo.0.join("new.txt")).unwrap();
+        write_file(&repo, "added.txt", "A1");
+        run(repo.path(), &["add", "-A"]).unwrap();
+
+        discard(
+            &repo,
+            &["mod.txt", "del.txt", "old.txt", "new.txt", "added.txt"],
+            true,
+        )
+        .expect("丢弃应当成功");
+
+        assert_eq!(read_file(&repo, "mod.txt").as_deref(), Some("M0"), "修改应还原");
+        assert_eq!(read_file(&repo, "del.txt").as_deref(), Some("D0"), "删除应还原");
+        assert_eq!(
+            read_file(&repo, "old.txt").as_deref(),
+            Some("R0"),
+            "重命名的旧名应还原"
+        );
+        assert!(!repo.0.join("new.txt").exists(), "重命名的新名应消失");
+        assert!(!repo.0.join("added.txt").exists(), "delete_new=true 时新增文件应删除");
+        assert_eq!(read_file(&repo, "keep.txt").as_deref(), Some("K0"), "未传的路径不该动");
+        let st = porcelain(&repo);
+        assert_eq!(st.trim(), "", "工作区应完全干净，实际: {st:?}");
+    }
+
+    /// delete_new=false 时新增文件只取消暂存、留在磁盘上变成未跟踪。
+    /// 这是默认行为：新增文件往往是从未提交过的工作成果，删掉不可恢复。
+    #[test]
+    fn discard_staged_keeps_new_files_when_not_deleting() {
+        let repo = TempRepo::new("dkeep");
+        commit_files(&repo, &[("mod.txt", "M0")], "init");
+        write_file(&repo, "mod.txt", "M1");
+        write_file(&repo, "added.txt", "A1");
+        run(repo.path(), &["add", "-A"]).unwrap();
+
+        discard(&repo, &["mod.txt", "added.txt"], false).expect("丢弃应当成功");
+
+        assert_eq!(read_file(&repo, "mod.txt").as_deref(), Some("M0"), "修改应还原");
+        assert_eq!(
+            read_file(&repo, "added.txt").as_deref(),
+            Some("A1"),
+            "新增文件应保留在磁盘上"
+        );
+        let st = porcelain(&repo);
+        assert!(st.contains("?? added.txt"), "应变成未跟踪，实际: {st:?}");
+    }
+
+    /// 未跟踪文件不在暂存区、前端不会传给这个命令，所以必须原封不动。
+    #[test]
+    fn discard_staged_leaves_untracked_files_alone() {
+        let repo = TempRepo::new("duntracked");
+        commit_files(&repo, &[("mod.txt", "M0")], "init");
+        write_file(&repo, "mod.txt", "M1");
+        write_file(&repo, "loose.txt", "L1");
+        run(repo.path(), &["add", "mod.txt"]).unwrap();
+
+        discard(&repo, &["mod.txt"], true).expect("丢弃应当成功");
+
+        assert_eq!(read_file(&repo, "mod.txt").as_deref(), Some("M0"));
+        assert_eq!(
+            read_file(&repo, "loose.txt").as_deref(),
+            Some("L1"),
+            "未跟踪文件不该被动"
+        );
+    }
+
+    /// 空仓库（还没有 HEAD）时全部路径都当「不在 HEAD 里」。
+    /// 这里不能靠 ls-tree 失败兜底 —— 那会把「仓库损坏」也当成「都没提交过」而误删文件。
+    #[test]
+    fn discard_staged_works_in_repo_without_head() {
+        let repo = TempRepo::new("dempty");
+        write_file(&repo, "a.txt", "A1");
+        run(repo.path(), &["add", "a.txt"]).unwrap();
+
+        discard(&repo, &["a.txt"], false).expect("空仓库也应当能丢弃暂存");
+
+        assert_eq!(read_file(&repo, "a.txt").as_deref(), Some("A1"), "文件应保留");
+        assert!(porcelain(&repo).contains("?? a.txt"), "应变成未跟踪");
+    }
+
+    /// 路径必须限制在仓库内：不能让前端传来的路径去动仓库外的文件。
+    #[test]
+    fn discard_staged_rejects_paths_outside_repo() {
+        let repo = TempRepo::new("descape");
+        commit_files(&repo, &[("a.txt", "A0")], "init");
+        let err = discard(&repo, &["../outside.txt"], true).unwrap_err();
+        assert!(err.contains("非法路径"), "应拒绝越界路径，实际: {err:?}");
+        // 空列表是合法的空操作，不该报错
+        discard(&repo, &[], true).expect("空列表应当直接返回");
+    }
+
+    /// 合并冲突（UU，文件在 HEAD 里）时不能炸：应当按 HEAD 的版本解决。
+    #[test]
+    fn discard_staged_resolves_uu_conflict_to_head() {
+        let repo = TempRepo::new("dcuu");
+        commit_files(&repo, &[("c.txt", "base")], "base");
+        let base = branch_name(&repo);
+
+        run(repo.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        commit_files(&repo, &[("c.txt", "from-side")], "side");
+        run(repo.path(), &["checkout", "-q", &base]).unwrap();
+        commit_files(&repo, &[("c.txt", "from-base")], "base2");
+
+        run(repo.path(), &["merge", "--no-edit", "side"]).expect_err("应当冲突");
+        assert!(porcelain(&repo).contains("UU c.txt"), "应当处于 UU 冲突态");
+
+        discard(&repo, &["c.txt"], true).expect("冲突文件也应当能丢弃");
+
+        assert_eq!(
+            read_file(&repo, "c.txt").as_deref(),
+            Some("from-base"),
+            "应按 HEAD 版本解决"
+        );
+        let st = porcelain(&repo);
+        assert!(!st.contains("UU"), "冲突状态应被清除，实际: {st:?}");
+    }
+
+    /// 合并冲突 AA（两边都新增同名文件）。**AA 的路径其实在 HEAD 里** —— HEAD 就是其中
+    /// 一边，所以它走的是 `checkout HEAD` 分支，应当还原成 HEAD 版本。
+    #[test]
+    fn discard_staged_resolves_aa_conflict() {
+        let repo = TempRepo::new("dcaa");
+        commit_files(&repo, &[("keep.txt", "K0")], "base");
+        let base = branch_name(&repo);
+
+        run(repo.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        commit_files(&repo, &[("n.txt", "from-side")], "side-adds");
+        run(repo.path(), &["checkout", "-q", &base]).unwrap();
+        commit_files(&repo, &[("n.txt", "from-base")], "base-adds");
+
+        run(repo.path(), &["merge", "--no-edit", "side"]).expect_err("应当冲突");
+        assert!(porcelain(&repo).contains("AA n.txt"), "应当处于 AA 冲突态");
+
+        discard(&repo, &["n.txt"], true).expect("AA 冲突文件也应当能丢弃");
+
+        assert_eq!(
+            read_file(&repo, "n.txt").as_deref(),
+            Some("from-base"),
+            "应按 HEAD 版本解决"
+        );
+        let st = porcelain(&repo);
+        assert!(!st.contains("AA"), "冲突状态应被清除，实际: {st:?}");
+    }
+
+    /// 合并冲突 DU（我方删除、对方修改）：这个路径**不在 HEAD 里**，
+    /// 是唯一会走到 `git rm` 分支的冲突形态 —— 也是最容易被漏掉的一条路径。
+    #[test]
+    fn discard_staged_resolves_du_conflict() {
+        let repo = TempRepo::new("dcdu");
+        commit_files(&repo, &[("c.txt", "base")], "base");
+        let base = branch_name(&repo);
+
+        run(repo.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        commit_files(&repo, &[("c.txt", "from-side")], "side-modifies");
+        run(repo.path(), &["checkout", "-q", &base]).unwrap();
+        std::fs::remove_file(repo.0.join("c.txt")).unwrap();
+        run(repo.path(), &["add", "-A"]).unwrap();
+        run(repo.path(), &["commit", "-q", "-m", "base-deletes"]).unwrap();
+
+        run(repo.path(), &["merge", "--no-edit", "side"]).expect_err("应当冲突");
+        assert!(porcelain(&repo).contains("DU c.txt"), "应当处于 DU 冲突态");
+
+        discard(&repo, &["c.txt"], true).expect("DU 冲突文件也应当能丢弃");
+
+        assert!(
+            !repo.0.join("c.txt").exists(),
+            "HEAD 里已经删掉这个文件，丢弃后也应当不存在"
+        );
+        let st = porcelain(&repo);
+        assert!(!st.contains("DU"), "冲突状态应被清除，实际: {st:?}");
     }
 }
 

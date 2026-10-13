@@ -53,6 +53,8 @@ const emit = defineEmits<{
   undo: []; // 撤销上次提交（App 侧确认）
   stashDrop: [index: number, subject: string]; // 删除 stash 记录（App 侧确认）
   abortMerge: []; // 放弃合并（App 侧确认）
+  // 丢弃暂存区全部改动（App 侧确认：新增文件删不删要用户定）
+  discardStaged: [p: { paths: string[]; count: number; newCount: number; conflictCount: number }];
 }>();
 
 // 切仓库时收起 stash 菜单/弹窗，避免上一仓库的列表串到新仓库
@@ -230,6 +232,30 @@ function filePath(f: StatusFile): string {
   return f.path.split(" -> ").pop()!;
 }
 
+// 丢弃暂存区全部改动时要交给 git 的路径。重命名行必须**同时给旧名和新名** ——
+// 旧名在 HEAD 里会被还原，新名不在 HEAD 里会被删除，只给一个会留下「D old.txt」这种残缺状态。
+// 未跟踪文件不在暂存区，天生不会进这个列表。
+function stagedPaths(): string[] {
+  const out: string[] = [];
+  for (const f of staged.value) {
+    const rp = renameParts(f.path);
+    if (rp) out.push(rp[0], rp[1]);
+    else out.push(filePath(f));
+  }
+  return out;
+}
+function askDiscardStaged() {
+  emit("discardStaged", {
+    paths: stagedPaths(),
+    // paths 里重命名算两个，所以文件数单独给，免得确认框报错数量
+    count: staged.value.length,
+    // x === "A" 的文件在 HEAD 里不存在，删不删磁盘上的文件得用户在确认框里定
+    newCount: staged.value.filter((f) => f.x === "A").length,
+    // 冲突文件按 HEAD 版本解决等于放弃已手动解决的内容，确认框要单独提示
+    conflictCount: staged.value.filter(isUnmerged).length,
+  });
+}
+
 const canCommit = computed(
   () => !props.busy && staged.value.length > 0 && message.value.trim().length > 0
 );
@@ -352,6 +378,18 @@ async function genCommitMsg() {
       >
         全部取消暂存
       </Button>
+      <Tooltip text="丢弃暂存区的全部改动（还原到上次提交）">
+        <Button
+          v-if="staged.length"
+          variant="ghost"
+          size="icon"
+          class="h-6 w-6 text-muted-foreground hover:text-destructive"
+          aria-label="丢弃暂存区的全部改动"
+          @click="askDiscardStaged"
+        >
+          <Trash2 class="size-3.5" />
+        </Button>
+      </Tooltip>
     </div>
     <ul class="max-h-[34%] overflow-y-auto px-1.5">
       <li

@@ -560,5 +560,41 @@ Windows(WebView2) / macOS(WKWebView) / Linux(WebKitGTK) 三端。
 （`String.Replace(string, string)` 本身是对的，所以替换结果没错，**错的是计数**。）
 **改 CSS 这类多值替换，用 Node 脚本 + `split(...).length - 1` 断言行数，别用 PowerShell 的 `.Split()`。**
 
+### 丢弃暂存改动：三条路里只有一条能用
+
+做「丢弃暂存区全部改动」时，直觉上最合适的是 `git restore --source=HEAD --staged --worktree -- <paths>`
+—— 一条命令就同时把暂存区和工作区还原。**但它在空仓库（还没有 HEAD）下报 `fatal: could not resolve HEAD`**，
+而「刚 `git init`、只 add 过、还没提交」恰恰是最需要这个功能的时候。
+`git reset --hard HEAD -- <paths>` 也不行（`fatal: Cannot do hard reset with paths.`）；
+`reset HEAD -- <paths>` 之后再 `checkout -- <paths>` 会在新增文件上失败（reset 后它成了未跟踪，
+`checkout` 对它报 `pathspec ... did not match` 并整体失败）。
+
+最终用两步分区：`ls-tree -r --name-only HEAD -- <paths>` 分出「在 HEAD 里」和「不在 HEAD 里」，
+前者 `checkout HEAD --`、后者 `git rm`。
+
+顺带记两条反直觉的：
+
+- **`git rm` 不认 `--end-of-options`**（`checkout` 和 `ls-tree` 反过来认）。
+  `git rm -q -f --end-of-options -- c.txt` 会报 `fatal: pathspec '--' did not match any files` 整个失败，
+  只能用 `git rm -q -f -- <paths>` 靠 `--` 挡。
+- **`git checkout -- <path>` 是从「暂存区」取内容**，不是从 HEAD。对已经暂存的改动写这条等于什么都没做，
+  必须写成 `checkout HEAD -- <path>`。这个错误不会报错，只会静默不生效。
+
+还有一个设计上的取舍：判「有没有 HEAD」要**单独用 `rev-parse --verify --quiet HEAD`**，
+不能靠 `ls-tree` 失败兜底 —— 那会把「仓库损坏」也当成「都没提交过」，然后把文件删掉。
+
+### 测试真正的价值是逼你走那条没探过的路径
+
+这个功能我先跑了 5 轮真实 git 探针，把修改/删除/重命名/新增/空仓库/`-` 开头的文件名全测了一遍，
+自认为覆盖够了。补单测时顺手加了合并冲突，结果 **AA 冲突那条断言是错的**：
+我以为「两边都新增 = 这个路径不在 HEAD 里」，其实 **HEAD 就是其中一边，所以它确实在 HEAD 里**，
+走的是 `checkout HEAD` 而不是 `rm` 分支。
+
+修正断言之后才想到去问：**那到底哪种冲突形态会走到 `rm` 分支？** —— 是 `DU`（我方删除、对方修改），
+而这条路径我从来没探过。补上之后它通过了，说明实现是对的，但**如果它没通过，我原先那 5 轮探针一个都发现不了**。
+
+教训：探针覆盖的是「我想到的输入」，测试覆盖的是「我没想到的分支」。
+写完实现要专门问一句：**哪条分支是我从没跑过的？**
+
 
 
