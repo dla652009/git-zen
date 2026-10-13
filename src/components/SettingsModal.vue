@@ -293,16 +293,55 @@ function refOf(s: WorkflowStep): BranchRef | null {
   return s.kind === "checkout" || s.kind === "merge" ? s.ref : null;
 }
 
-// 目前为固定快捷键，仅展示；后续可做成可配置
-const SHORTCUTS: [string, string][] = [
-  ["Ctrl + P", "仓库快速切换器（模糊搜索 + 最近使用排序）"],
-  ["Ctrl + Tab / Ctrl + Shift + Tab", "下一个 / 上一个仓库选项卡（仅可见的，分组内不参与）"],
-  ["Ctrl + 1..9", "跳到第 N 个可见仓库选项卡（分组内仓库不占号）"],
-  ["F5", "刷新仓库状态"],
-  ["Ctrl + Enter（提交框内）", "提交"],
-  ["双击分支", "切换 / 建立跟踪分支"],
-  ["双击历史行", "查看该提交的 diff"],
-  ["Esc", "关闭弹窗"],
+// 固定快捷键，仅展示（后续可做成可配置）。
+// 这份清单是「界面承诺」，必须与实现同步 —— 改键位时同时改这里。
+// 别按记忆写：它曾经就与实现对不上（写着「双击分支」，而代码早已改成单击）。
+const SHORTCUT_GROUPS: { title: string; items: [string, string][] }[] = [
+  {
+    title: "全局",
+    items: [
+      ["Ctrl + P", "仓库切换器（模糊搜索，按最近使用排序）"],
+      ["Ctrl + B", "分支切换器（搜索切换，或新建跟踪分支）"],
+      ["Ctrl + Tab / Ctrl + Shift + Tab", "下一个 / 上一个可见仓库选项卡（分组内的不参与）"],
+      ["Ctrl + 1..9", "跳到第 N 个可见仓库选项卡（分组内的仓库不占号）"],
+      ["Ctrl + Shift + L", "折叠 / 展开左侧栏"],
+      ["Ctrl + Shift + R", "折叠 / 展开右侧栏"],
+      ["F5", "刷新当前仓库"],
+      ["Esc", "按层级关闭最上层的浮层（弹窗 → 菜单 → 切换器）"],
+    ],
+  },
+  {
+    title: "提交",
+    items: [["Ctrl + Enter", "提交（光标在提交信息框里时）"]],
+  },
+  {
+    title: "diff 阅读（单文件 diff 与「文件变更历史」通用）",
+    items: [
+      ["Ctrl + F", "打开 / 关闭搜索栏"],
+      ["Enter / Shift + Enter", "下一个 / 上一个命中（跨文件连续编号）"],
+      ["Esc", "只关搜索栏，不关弹窗"],
+    ],
+  },
+  {
+    title: "工作流与设置",
+    items: [
+      ["Alt + ↑ / Alt + ↓", "上移 / 下移当前的步骤卡"],
+      ["Enter 或 ,", "在分支前缀输入框里添加一个前缀"],
+    ],
+  },
+  {
+    title: "鼠标",
+    items: [
+      ["单击分支", "切换到该分支（当前分支不响应）"],
+      ["单击历史行 / 变更文件行", "第一次选中，再点一次才打开"],
+      ["双击侧栏分隔条", "折叠 / 展开该侧栏"],
+      ["右键", "仓库选项卡、分组文件夹、分支、标签、文件、提交各有各的菜单"],
+      [
+        "拖动",
+        "仓库选项卡拖到分组文件夹上即收纳；分组下拉与「管理分组」里的仓库可拖动换组，拖到选项卡栏空白处即移出分组",
+      ],
+    ],
+  },
 ];
 
 // AI 开关（Switch 用 boolean，与 draft.aiEnabled 'on'/'off' 互转）
@@ -828,19 +867,25 @@ const NAV = [
 
           <!-- 快捷键 -->
           <template v-else>
-            <section>
-              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">快捷键列表</h3>
-              <div class="divide-y divide-border rounded-md border border-border">
-                <div
-                  v-for="[keys, desc] in SHORTCUTS"
-                  :key="keys"
-                  class="flex items-center justify-between gap-4 px-3 py-2"
-                >
-                  <span class="shrink-0 rounded-xs bg-muted px-1.5 py-0.5 font-mono text-xs">{{ keys }}</span>
-                  <span class="text-right text-xs text-muted-foreground">{{ desc }}</span>
+            <div class="space-y-4">
+              <section v-for="g in SHORTCUT_GROUPS" :key="g.title">
+                <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">{{ g.title }}</h3>
+                <div class="divide-y divide-border rounded-md border border-border">
+                  <div
+                    v-for="[keys, desc] in g.items"
+                    :key="keys"
+                    class="flex items-center justify-between gap-4 px-3 py-2"
+                  >
+                    <span class="shrink-0 rounded-xs bg-muted px-1.5 py-0.5 font-mono text-xs">{{ keys }}</span>
+                    <span class="text-right text-xs text-muted-foreground">{{ desc }}</span>
+                  </div>
                 </div>
-              </div>
-            </section>
+              </section>
+            </div>
+            <p class="mt-4 text-xs leading-relaxed text-muted-foreground">
+              光标在输入框里时，全局键让给输入法与文本编辑：只保留 Esc、Ctrl + Tab，以及在切换器的搜索框里按
+              Ctrl + P / Ctrl + B 把它自己关掉。
+            </p>
           </template>
         </div>
 
