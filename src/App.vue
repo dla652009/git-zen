@@ -105,6 +105,7 @@ import { humanize, humanizeMsg } from "./lib/errors";
 import { isUnmerged } from "./lib/conflict";
 import { useSidebarResize } from "./composables/useSidebarResize";
 import { useRepoCache } from "./composables/useRepoCache";
+import { useSwitcher } from "./composables/useSwitcher";
 
 // 刷新按钮动画 + 整页刷新遮罩
 const refreshing = ref(false);
@@ -806,60 +807,30 @@ function addRepo(path: string) {
   }
 }
 
-// ---- 仓库快速切换器（Ctrl+P）：模糊搜索 + 最近使用排序，多仓库时的主要跳转方式 ----
-const mruPaths = ref<string[]>([]);
-const showSwitcher = ref(false);
-const switcherQuery = ref("");
-const switcherIndex = ref(0);
-
-const switcherResults = computed(() => {
-  const q = switcherQuery.value.trim().toLowerCase();
-  const mru = (p: string) => {
-    const i = mruPaths.value.indexOf(p);
-    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
-  };
-  const list = [...repos.value];
-  if (!q) return list.sort((a, b) => mru(a.path) - mru(b.path));
-  return list
-    .filter((r) => r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q))
-    .sort(
-      (a, b) =>
-        Number(b.name.toLowerCase().startsWith(q)) -
-          Number(a.name.toLowerCase().startsWith(q)) ||
-        mru(a.path) - mru(b.path),
-    );
-});
-function openSwitcher() {
-  switcherQuery.value = "";
-  switcherIndex.value = 0;
-  showSwitcher.value = true;
-}
-function pickSwitcher(path: string) {
-  showSwitcher.value = false;
-  switchRepo(path); // busy 时静默忽略，与点选项卡行为一致
-}
-function onSwitcherKeydown(e: KeyboardEvent) {
-  // 输入法组词中：Enter 是确认候选词，不是「选中这一项」
-  if (e.isComposing) return;
-  const n = switcherResults.value.length;
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-    switcherIndex.value = n ? (switcherIndex.value + 1) % n : 0;
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    switcherIndex.value = n ? (switcherIndex.value - 1 + n) % n : 0;
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    const r = switcherResults.value[switcherIndex.value];
-    if (r) pickSwitcher(r.path);
-  } else if (e.key === "Escape") {
-    showSwitcher.value = false;
-  }
-}
-watch(switcherQuery, () => (switcherIndex.value = 0));
-// 键盘上下移动时把选中项滚进可视区
-watch(switcherIndex, (i) => {
-  document.getElementById(`sw-item-${i}`)?.scrollIntoView({ block: "nearest" });
+// ---- 快速切换器（Ctrl+P 切仓库 / Ctrl+B 切分支）----
+// 实现见 src/composables/useSwitcher.ts；mruPaths 的写入点仍在下面（切仓库、关选项卡、启动播种）
+const {
+  mruPaths,
+  showSwitcher,
+  switcherQuery,
+  switcherIndex,
+  switcherResults,
+  openSwitcher,
+  pickSwitcher,
+  onSwitcherKeydown,
+  showBranchSwitcher,
+  bsQuery,
+  bsIndex,
+  bsResults,
+  openBranchSwitcher,
+  pickBranch,
+  onBranchSwitcherKeydown,
+} = useSwitcher({
+  repos,
+  branchList,
+  hasRepo: () => !!repo.value,
+  onPickRepo: (path) => switchRepo(path),
+  onPickBranch: (b) => switchBranch(b),
 });
 
 // 切仓库是「导航」，不是「改动」，不该被正在跑的操作挡住。
@@ -1401,59 +1372,6 @@ function toggleFold(side: "l" | "r") {
     localStorage.setItem("gz.fold.right", rightFold.value ? "1" : "0");
   }
 }
-
-// 分支快速切换器（Ctrl+B）：复用仓库切换器的交互骨架
-const showBranchSwitcher = ref(false);
-const bsQuery = ref("");
-const bsIndex = ref(0);
-const bsResults = computed(() => {
-  const q = bsQuery.value.trim().toLowerCase();
-  // 远程分支拷贝成剥前缀的 DWIM 名（switchBranch 直接 checkout 该名建跟踪分支）
-  const list = branchList.value
-    .filter((b) => !b.name.endsWith("/HEAD"))
-    .map((b): Branch & { originName?: string } =>
-      b.remote ? { ...b, name: b.name.replace(/^[^/]+\//, ""), originName: b.name } : b,
-    );
-  if (!q) return list;
-  return list
-    .filter((b) => b.name.toLowerCase().includes(q))
-    .sort(
-      (a, b) =>
-        Number(b.name.toLowerCase().startsWith(q)) - Number(a.name.toLowerCase().startsWith(q)),
-    );
-});
-function openBranchSwitcher() {
-  if (!repo.value) return;
-  bsQuery.value = "";
-  bsIndex.value = 0;
-  showBranchSwitcher.value = true;
-}
-function pickBranch(b: Branch) {
-  showBranchSwitcher.value = false;
-  switchBranch(b);
-}
-function onBranchSwitcherKeydown(e: KeyboardEvent) {
-  // 输入法组词中：Enter 是确认候选词，不是「选中这一项」
-  if (e.isComposing) return;
-  const n = bsResults.value.length;
-  if (e.key === "ArrowDown") {
-    e.preventDefault();
-    bsIndex.value = n ? (bsIndex.value + 1) % n : 0;
-  } else if (e.key === "ArrowUp") {
-    e.preventDefault();
-    bsIndex.value = n ? (bsIndex.value - 1 + n) % n : 0;
-  } else if (e.key === "Enter") {
-    e.preventDefault();
-    const b = bsResults.value[bsIndex.value];
-    if (b) pickBranch(b);
-  } else if (e.key === "Escape") {
-    showBranchSwitcher.value = false;
-  }
-}
-watch(bsQuery, () => (bsIndex.value = 0));
-watch(bsIndex, (i) => {
-  document.getElementById(`bs-item-${i}`)?.scrollIntoView({ block: "nearest" });
-});
 
 // 拖拽仓库文件夹进窗口 = 打开（非仓库目录给出明确提示）
 const dragOver = ref(false);
