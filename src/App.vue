@@ -131,7 +131,7 @@ const historyLoading = ref(false);
 function updateTitle() {
   const a = status.value?.ahead ?? 0;
   getCurrentWindow()
-    .setTitle(a > 0 ? `(↑${a}) git-zen` : "git-zen")
+    .setTitle(a > 0 ? `(↑${a}) Git Zen` : "Git Zen")
     .catch(() => {});
 }
 watch(status, updateTitle);

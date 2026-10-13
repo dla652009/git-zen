@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "git-zen",
+        "title": "Git Zen",
         "width": 1200,
         "height": 760,
         "minWidth": 860,
