@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, nextTick } from "vue";
+import { ref, nextTick, onUnmounted } from "vue";
 
 // 自定义 tooltip：锚定触发元素（不跟随鼠标，避免滚动/嵌套场景错位），
 // 默认显示在触发元素下方左对齐；贴边/贴底自动翻转到上方或收敛进视口。
@@ -34,8 +34,24 @@ async function place() {
   pos.value = { x, y };
 }
 
+// 触发元素变成 disabled 时必须主动收起：Chrome 不会因为「指针底下那个元素被禁用」而补发
+// mouseleave（指针不动就永远不重算 hover），于是在「点一下按钮、按钮随即变禁用」的场景里
+// tooltip 会一直挂着 —— 例如「AI 生成提交信息」按下后 aiBusy 为真。
+// 每次展开时重新绑定：槽位内容可能被 v-if 换掉，只绑一次会指向旧节点。
+let mo: MutationObserver | null = null;
+function watchDisabled() {
+  mo?.disconnect();
+  const first = hostEl.value?.firstElementChild as (HTMLElement & { disabled?: boolean }) | null;
+  if (!first) return;
+  mo = new MutationObserver(() => {
+    if (first.disabled) show.value = false;
+  });
+  mo.observe(first, { attributes: true, attributeFilter: ["disabled"] });
+}
+
 function enter() {
   show.value = true;
+  watchDisabled();
   place();
 }
 function leave() {
@@ -45,6 +61,8 @@ function leave() {
 function onScroll() {
   show.value = false;
 }
+
+onUnmounted(() => mo?.disconnect());
 </script>
 
 <template>
@@ -53,6 +71,7 @@ function onScroll() {
     class="contents"
     @mouseenter="enter"
     @mouseleave="leave"
+    @click="leave"
     @scroll.capture="onScroll"
   >
     <slot />
