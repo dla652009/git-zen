@@ -1,6 +1,8 @@
 // 工作流数据层自检（node --experimental-strip-types src/workflow.test.ts）
 import {
+  defaultBranchPrefix,
   describeStep,
+  flowInputSlots,
   flowNeedsInput,
   seedWorkflows,
   newFlowId,
@@ -71,6 +73,29 @@ assert(
   }) === false,
   "merge 起始分支无需输入",
 );
+
+// flowInputSlots：新建分支的槽要带 branch.prefix（界面据此挂前缀下拉），其余槽不带
+const cbSlots = flowInputSlots({
+  id: "x",
+  name: "x",
+  steps: [{ kind: "pull" }, { kind: "createBranch", prefix: "feat/" }],
+});
+assert(cbSlots.length === 1 && cbSlots[0]!.index === 1, "新建分支槽按步骤下标定位");
+assert(cbSlots[0]!.branch?.prefix === "feat/", "新建分支槽带前缀");
+assert(
+  flowInputSlots({
+    id: "x",
+    name: "x",
+    steps: [{ kind: "checkout", ref: { mode: "ask" } }],
+  })[0]!.branch === undefined,
+  "ask 引用槽不带前缀",
+);
+
+// defaultBranchPrefix：步骤里配的优先于设置里的第一个，都没有才是「无前缀」
+assert(defaultBranchPrefix("hotfix/", ["feat/", "fix/"]) === "hotfix/", "步骤前缀优先");
+assert(defaultBranchPrefix("", ["feat/", "fix/"]) === "feat/", "没配步骤前缀取设置第一个");
+assert(defaultBranchPrefix("", []) === "", "都没有则无前缀");
+assert(defaultBranchPrefix("feat/", []) === "feat/", "设置为空仍用步骤前缀");
 
 // 种子：两个模板、深拷贝互不影响
 const seeds = seedWorkflows();

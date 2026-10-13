@@ -53,7 +53,7 @@ export function describeStep(s: WorkflowStep, startBranch?: string): string {
     case "merge":
       return `合并 ${refLabel(s.ref)} 到当前分支`;
     case "createBranch":
-      return `新建分支（运行时输入名称${s.prefix ? `，前缀 ${s.prefix}` : ""}）`;
+      return `新建分支（运行时输入名称${s.prefix ? `，默认前缀 ${s.prefix}` : ""}）`;
     case "switchBack":
       return `切回起始分支${startBranch ? `（${startBranch}）` : ""}`;
     case "commitPush":
@@ -72,6 +72,12 @@ export interface InputSlot {
   /** 输入框的短标签 */
   label: string;
   placeholder: string;
+  /**
+   * 仅「新建分支」步骤：这一槽填的是分支名，界面上要给它配一个前缀下拉。
+   * 存的是管理里为该步骤配置的前缀，作为下拉的初始选中项；候选列表由界面层从
+   * 「个性化 → 分支前缀」取 —— 那是设置，纯逻辑层不该 import。
+   */
+  branch?: { prefix: string };
 }
 
 export function flowInputSlots(wf: Workflow): InputSlot[] {
@@ -80,7 +86,7 @@ export function flowInputSlots(wf: Workflow): InputSlot[] {
     const at = `第 ${index + 1} 步`;
     if (s.kind === "createBranch") {
       const prefix = s.prefix?.trim() ?? "";
-      slots.push({ index, label: `${at} 新建分支名`, placeholder: `${prefix}分支名` });
+      slots.push({ index, label: `${at} 新建分支名`, placeholder: `${prefix}分支名`, branch: { prefix } });
     } else if ((s.kind === "checkout" || s.kind === "merge") && s.ref.mode === "ask") {
       slots.push({
         index,
@@ -95,6 +101,15 @@ export function flowInputSlots(wf: Workflow): InputSlot[] {
 // 是否需要运行时输入
 export function flowNeedsInput(wf: Workflow): boolean {
   return flowInputSlots(wf).length > 0;
+}
+
+/**
+ * 「新建分支」槽在确认弹窗里的初始前缀。
+ * 步骤里配的优先于设置里的第一个 —— 步骤是**这一步**的意图，设置是全局偏好。
+ * 都没有就是「无前缀」。抽出来是为了把这条优先级钉住：顺序反了会悄悄换掉建出来的分支名。
+ */
+export function defaultBranchPrefix(stepPrefix: string, configured: string[]): string {
+  return stepPrefix || configured[0] || "";
 }
 
 // 首次启动种子模板（深拷贝：用户编辑不能改到种子常量）

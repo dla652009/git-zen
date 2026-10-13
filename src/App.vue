@@ -34,7 +34,7 @@ import {
 import * as api from "./gitApi";
 import { abortAi } from "./ai";
 import type { Status, LogEntry, Branch, TagEntry } from "./gitApi";
-import { settings } from "./settings";
+import { parseBranchPrefixes, settings } from "./settings";
 import { describeStep } from "./workflow";
 import { workflows } from "./workflowStore";
 import {
@@ -107,18 +107,7 @@ import { useRepoCache } from "./composables/useRepoCache";
 import { useSwitcher } from "./composables/useSwitcher";
 import { useWorkflowRun } from "./composables/useWorkflowRun";
 import { useAiPanel } from "./composables/useAiPanel";
-
-// 刷新按钮动画 + 整页刷新遮罩
-const refreshing = ref(false);
-async function doRefresh() {
-  if (busy.value) return; // 操作进行中不并发刷新
-  refreshing.value = true;
-  try {
-    await refresh({ fetch: true });
-  } finally {
-    refreshing.value = false;
-  }
-}
+import { useRepoSession } from "./composables/useRepoSession";
 
 // ---- 仓库数据 LRU 缓存：切回最近访问的仓库秒开，容量可在设置-个性化调节 ----
 // 实现见 src/composables/useRepoCache.ts
@@ -132,55 +121,8 @@ const fileHistoryModal = ref<string | null>(null);
 const historyFilePath = ref<string | null>(null);
 const remoteRaw = ref(""); // origin 的 URL（git remote get-url）
 const remoteLink = ref(""); // 用户在设置里自定义的网页链接（留空自动推断）
-
-// 统一的历史拉取入口：带上 视图范围（--all）、文件历史（--follow -- path）与文件路径过滤。
-// path 显式传入（默认当前仓库）——await 期间仓库可能已切走，隐式读 repo.value 会让调用方
-// 很难把「这次请求属于哪个仓库」和结果对应起来（历史范围 watcher 的串台就出在这里）。
-function fetchLog(skip = 0, path = repo.value) {
-  return api.log(
-    path,
-    skip,
-    historyMode.value === "all" ? true : undefined,
-    historyFilePath.value ?? undefined,
-  );
-}
-
-// fetch=true 时先静默 fetch 远程再拉数据——ahead/behind 基于本地 remote-tracking refs，
-// 不 fetch 就永远看不到「远程有新提交可拉」；离线时 fetch 失败不打扰，仍刷新本地状态。
-// 操作后的刷新（run()）不带 fetch：pull/push 已更新过 refs，无需重复网络请求
-// 刷新序号：窗口聚焦、F5、操作后刷新可能并发（focus 那条不看 busy），
-// 让「后发起的那次」胜出——否则先发起的旧请求晚回来会把提交后的新状态覆盖回旧值
-let refreshSeq = 0;
-async function refresh(opts: { fetch?: boolean } = {}) {
-  // 仓库身份快照：await 期间用户可能已切走（Ctrl+Tab / Ctrl+数字绕过 busy 检查）
-  const path = repo.value;
-  if (!path) return;
-  const seq = ++refreshSeq;
-  if (opts.fetch) {
-    await api.fetchAll(path).catch(() => {});
-    if (repo.value !== path || seq !== refreshSeq) return;
-  }
-  remoteLink.value = readJsonObject<Record<string, string>>("gz.remoteLinks", {})[path] ?? "";
-  try {
-    const [s, l, b, tg] = await Promise.all([
-      api.status(path),
-      fetchLog(0, path),
-      api.branches(path),
-      api.tagList(path),
-    ]);
-    // 结果属于已切走的仓库：丢弃，别写进新仓库的视图与 LRU 槽（否则切回来还是错数据）
-    // seq 过期同理丢弃：已有更新的一次刷新在跑，它的结果才是真相
-    if (repo.value !== path || seq !== refreshSeq) return;
-    status.value = s;
-    commits.value = l;
-    branchList.value = b;
-    tags.value = tg;
-    canLoadMore.value = l.length >= 300;
-    cachePut(path, { status: s, commits: l, branchList: b, tags: tg });
-  } catch (e) {
-    if (repo.value === path && seq === refreshSeq) showError(String(e));
-  }
-}
+// 历史加载遮罩（切仓库、换历史范围时盖住历史区）
+const historyLoading = ref(false);
 
 // 窗口标题显示未推送数
 // core:window:allow-set-title 已由 src-tauri/capabilities/default.json 授权；
@@ -192,51 +134,6 @@ function updateTitle() {
     .catch(() => {});
 }
 watch(status, updateTitle);
-
-const canLoadMore = ref(false);
-const loadingMore = ref(false);
-
-async function loadMorePage() {
-  if (!repo.value || !canLoadMore.value || filter.value || loadingMore.value) return;
-  const path = repo.value; // 仓库身份快照：翻页期间可能已切走
-  loadingMore.value = true;
-  try {
-    const next = await fetchLog(commits.value.length, path);
-    // 仓库已切走：丢弃过期分页，别把上一仓库的提交 push 进新仓库的历史数组
-    if (repo.value !== path) return;
-    commits.value.push(...next);
-    canLoadMore.value = next.length >= 300;
-  } catch (e) {
-    showError(String(e));
-  } finally {
-    loadingMore.value = false;
-  }
-}
-
-// 打开/切回仓库时后台 fetch 一次，成功后把 status 一并重拉——
-// 否则 refs 已更新而头部 ahead/behind 徽标还停在 fetch 前的旧值（分支树与徽标不一致）。
-// 静默失败（离线时保留本地视图）；切换期间的过期结果按 path 守卫丢弃
-function fetchOnce() {
-  const path = repo.value;
-  if (!path) return;
-  api.fetchAll(path)
-    .then(async () => {
-      if (repo.value !== path || busy.value) return;
-      const [s, b] = await Promise.all([api.status(path), api.branches(path)]);
-      if (repo.value !== path) return;
-      status.value = s;
-      branchList.value = b;
-      // 缓存快照同步更新，避免切回时又恢复 fetch 前的旧 status
-      const c = cachePeek(path);
-      if (c) cachePut(path, { ...c, status: s, branchList: b });
-    })
-    .catch(() => {});
-  api.remoteUrl(path)
-    .then((u) => {
-      if (repo.value === path) remoteRaw.value = u;
-    })
-    .catch(() => {});
-}
 
 // 视图范围 / 文件路径过滤变化 → 重载当前历史（两段式：遮罩先盖）
 // 仓库身份快照：fetchLog 期间用户可能已切走（Ctrl+Tab / Ctrl+数字绕过 busy），
@@ -846,71 +743,6 @@ function switchRepo(path: string) {
   activate(path);
 }
 
-// 切换仓库：两段式刷新——先拉轻量数据（status/branches）让侧栏/状态栏立即就位，
-// 再拉 log 渲染泳道图，期间盖 loading 遮罩。避免等全部数据才响应。
-// seq token：频繁切换时旧请求直接作废，不互相覆盖（防抖+防竞态）
-let activateSeq = 0;
-async function activate(path: string) {
-  const seq = ++activateSeq;
-  repo.value = path;
-  localStorage.setItem("gz.repo", path);
-  filter.value = "";
-  // 最近使用排序（Ctrl+P 切换器用）
-  mruPaths.value = [path, ...mruPaths.value.filter((p) => p !== path)];
-  // 先切换：立刻清掉旧仓库数据，UI 马上呈现新选项卡的空态+loading
-  status.value = null;
-  commits.value = [];
-  branchList.value = [];
-  tags.value = [];
-  canLoadMore.value = false;
-  fileHistoryModal.value = null;
-  historyFilePath.value = null;
-  remoteRaw.value = "";
-  remoteLink.value = "";
-
-  // LRU 命中：秒开缓存快照，后台静默刷新轻量数据
-  const cached = cacheGet(path);
-  if (cached) {
-    status.value = cached.status;
-    commits.value = cached.commits;
-    branchList.value = cached.branchList;
-    tags.value = cached.tags;
-    canLoadMore.value = cached.commits.length >= 300;
-    fetchOnce();
-    api.branches(path)
-      .then((b) => seq === activateSeq && (branchList.value = b))
-      .catch(() => {});
-    return;
-  }
-
-  historyLoading.value = true;
-  await nextTick();
-  if (seq !== activateSeq) return;
-  try {
-    const [s, b, tg] = await Promise.all([
-      api.status(path),
-      api.branches(path),
-      api.tagList(path),
-    ]);
-    if (seq !== activateSeq) return;
-    status.value = s;
-    branchList.value = b;
-    tags.value = tg;
-    commits.value = [];
-    canLoadMore.value = false;
-    await nextTick();
-    const l = await fetchLog(0, path);
-    if (seq !== activateSeq) return;
-    commits.value = l;
-    canLoadMore.value = l.length >= 300;
-  } catch (e) {
-    if (seq === activateSeq) showError(String(e));
-  } finally {
-    if (seq === activateSeq) historyLoading.value = false;
-  }
-  fetchOnce();
-}
-
 // 关闭选项卡会把仓库从 gz.repos（持久化列表）里摘掉，重开必须再走一次系统目录选择框——
 // 恢复成本远高于一次确认。按项目既有约定（「丢失一条已保存记录」类操作都要确认，
 // 例如删除分支、删除工作流），这里也走确认框；磁盘上的仓库本身不受影响。
@@ -1296,26 +1128,59 @@ function flowMenuItems(): MenuItem[] {
 // 钉在工具栏上的工作流（最多 3 个，在设置页勾）：常用流程不必每次展开下拉
 const pinnedFlows = computed(() => workflows.filter((w) => w.pinned).slice(0, 3));
 
+// ---- 仓库会话：刷新 / 历史分页 / 后台 fetch / 切仓库 ----
+// 实现见 src/composables/useRepoSession.ts
+// 接线位置有讲究：注入项（repo / status / tags / filter / historyLoading…）都在上方，
+// 而紧接着的 useWorkflowRun 需要 refresh —— 会话得建在这两者之间。
+// setup 期间只是接线，真正的调用都在各个 handler 与 onMounted 之后。
+const {
+  refreshing,
+  doRefresh,
+  fetchLog,
+  refresh,
+  canLoadMore,
+  loadingMore,
+  loadMorePage,
+  fetchOnce,
+  activate,
+} = useRepoSession({
+  repo,
+  status,
+  commits,
+  branchList,
+  tags,
+  busy,
+  historyMode,
+  historyFilePath,
+  fileHistoryModal,
+  filter,
+  historyLoading,
+  mruPaths,
+  remoteRaw,
+  remoteLink,
+  cacheGet,
+  cachePeek,
+  cachePut,
+  showError,
+});
+
 // 确认弹窗、进度弹窗、逐步 execStep 与失败重试都抽到 composables/useWorkflowRun.ts
 const {
   wfConfirm,
   wfInputs,
+  wfPrefixes,
   wfRun,
   wfRunOpen,
   runFlow,
   flowInputsReady,
+  slotPlaceholder,
   confirmFlow,
   closeWfRun,
   retryFlow,
 } = useWorkflowRun({ repo, status, busy, runningAction, refresh });
 
 // ---- 创建分支：工具栏按钮 → 弹窗（可选前缀，基于当前分支，创建即切换）----
-const prefixes = computed(() =>
-  settings.branchPrefix
-    .split(/[,，]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-);
+const prefixes = computed(() => parseBranchPrefixes(settings.branchPrefix));
 const showCreateBranch = ref(false);
 const newBranchPrefix = ref("");
 const newBranchName = ref("");
@@ -1337,7 +1202,6 @@ function confirmCreateBranch() {
 
 // ---- 切换分支：单击触发（对齐主流客户端），但工作区有未提交改动时先确认——
 // 兼容时 git 会把改动带到目标分支，用户常意识不到自己带着脏改动在写代码
-const historyLoading = ref(false);
 async function switchBranch(b: Branch) {
   if (b.current || busy.value) return;
   // doSwitch 只做乐观更新 + checkout，刷新交给外层 run（确认路径 run(ok) 已包裹，避免嵌套 run）
@@ -3015,20 +2879,39 @@ onUnmounted(() => {
       <div class="w-dlg-md surface rounded-lg p-5 pop-in">
         <div id="dlg-wf-confirm-title" class="mb-3 text-base font-semibold">执行工作流：{{ wfConfirm.wf.name }}</div>
         <div v-if="wfConfirm.slots.length" class="mb-2 space-y-1.5">
-          <label
+          <!-- 整行不能再用 <label> 包：<button> 也是 labelable 元素，Select 的触发器会
+               把 label 的关联目标从输入框顶掉，点标签文字就会误开下拉。改成 for/id 显式关联 -->
+          <div
             v-for="(slot, k) in wfConfirm.slots"
             :key="slot.index"
             class="flex items-center gap-2"
           >
-            <span class="w-28 shrink-0 truncate text-xs text-muted-foreground">{{ slot.label }}</span>
+            <label
+              :for="`wf-slot-${slot.index}`"
+              class="w-28 shrink-0 truncate text-xs text-muted-foreground"
+              >{{ slot.label }}</label
+            >
+            <!-- 新建分支的槽带一个前缀下拉：候选就是「个性化 → 分支前缀」里配的那些，
+                 不必在流程里手写。没有可选项（没配前缀、步骤也没配）时不显示，
+                 否则就是一个只有「无前缀」的下拉 -->
+            <Select
+              v-if="slot.branch && (prefixes.length || slot.branch.prefix)"
+              v-model="wfPrefixes[slot.index]"
+              class="w-24 shrink-0"
+              :options="[
+                { value: '', label: '无前缀' },
+                ...prefixes.map((p: string) => ({ value: p, label: p })),
+              ]"
+            />
             <Input
+              :id="`wf-slot-${slot.index}`"
               v-model="wfInputs[slot.index]"
               v-focus="k === 0"
               class="h-7 text-xs"
-              :placeholder="slot.placeholder"
+              :placeholder="slotPlaceholder(slot)"
               @keydown.enter.prevent="imeConfirmFlow"
             />
-          </label>
+          </div>
         </div>
         <ol class="space-y-1 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
           <li v-for="(s, i) in wfConfirm.wf.steps" :key="i">

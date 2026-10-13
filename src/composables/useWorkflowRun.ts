@@ -6,8 +6,8 @@ import { ref, type Ref } from "vue";
 import * as api from "../gitApi";
 import type { Status } from "../gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI } from "../ai";
-import { settings } from "../settings";
-import { flowInputSlots } from "../workflow";
+import { parseBranchPrefixes, settings } from "../settings";
+import { defaultBranchPrefix, flowInputSlots } from "../workflow";
 import type { BranchRef, InputSlot, Workflow, WorkflowStep } from "../workflow";
 import { humanize } from "../lib/errors";
 import { toast } from "../components/ui";
@@ -24,10 +24,24 @@ export function useWorkflowRun(opts: {
   // 「先切到 A、再合并 B」这种流程根本配不出来
   const wfConfirm = ref<{ wf: Workflow; slots: InputSlot[] } | null>(null);
   const wfInputs = ref<Record<number, string>>({});
+  // 每个「新建分支」槽当前选中的前缀。候选来自「个性化 → 分支前缀」——
+  // 用户不该在流程里手写前缀，那是设置里配过一次的东西。
+  // 初始值取管理里给该步骤配的前缀；没配就用设置里的第一个（与「创建分支」弹窗同规矩）
+  const wfPrefixes = ref<Record<number, string>>({});
   function runFlow(wf: Workflow) {
     if (!opts.repo.value || opts.busy.value) return;
+    const slots = flowInputSlots(wf);
+    const configured = parseBranchPrefixes(settings.branchPrefix);
     wfInputs.value = {};
-    wfConfirm.value = { wf, slots: flowInputSlots(wf) };
+    wfPrefixes.value = {};
+    for (const s of slots) {
+      if (s.branch) wfPrefixes.value[s.index] = defaultBranchPrefix(s.branch.prefix, configured);
+    }
+    wfConfirm.value = { wf, slots };
+  }
+  // 新建分支槽的占位符跟着选中的前缀走：选了 feat/ 就该看到「feat/分支名」
+  function slotPlaceholder(s: InputSlot): string {
+    return s.branch ? `${wfPrefixes.value[s.index] ?? ""}分支名` : s.placeholder;
   }
   // 有任一必填槽为空就不放行（按钮同时置灰，这里是回车路径的兜底）
   function flowInputsReady(): boolean {
@@ -38,7 +52,7 @@ export function useWorkflowRun(opts: {
     if (!c) return;
     if (!flowInputsReady()) return;
     wfConfirm.value = null;
-    void executeFlow(c.wf, { ...wfInputs.value });
+    void executeFlow(c.wf, { ...wfInputs.value }, { ...wfPrefixes.value });
   }
 
   // 进度：pending/running/done/skip/fail；失败标红停住保留弹窗，成功自动关
@@ -54,6 +68,9 @@ export function useWorkflowRun(opts: {
     repoChanged: boolean;
     /** 本次执行用的运行时输入，重试时原样复用 */
     inputs: Record<number, string>;
+    /** 本次执行选中的分支前缀（按步骤下标），重试时同样原样复用 ——
+        重试可能发生在很久之后，那时设置里的前缀列表可能已经变了 */
+    prefixes: Record<number, string>;
   } | null>(null);
   // 进度弹窗是否可见。执行期间允许把它关掉（多步操作可能跑很久），
   // 状态本身留在 wfRun 里继续更新 —— 早前直接把 wfRun 置空，下一步循环就会读到 null 崩掉
@@ -64,6 +81,7 @@ export function useWorkflowRun(opts: {
   async function executeFlow(
     wf: Workflow,
     inputs: Record<number, string>,
+    prefixes: Record<number, string>,
     resume?: { fromIndex: number; startBranch: string },
   ) {
     if (opts.busy.value || !opts.repo.value) return;
@@ -86,6 +104,7 @@ export function useWorkflowRun(opts: {
       failIndex: -1,
       repoChanged: false,
       inputs: { ...inputs },
+      prefixes: { ...prefixes },
     };
     wfRunOpen.value = true;
     let ok = true;
@@ -102,7 +121,13 @@ export function useWorkflowRun(opts: {
         }
         st.state = "running";
         try {
-          const note = await execStep(path, wf.steps[i]!, inputs[i] ?? "", startBranch);
+          const note = await execStep(
+            path,
+            wf.steps[i]!,
+            inputs[i] ?? "",
+            prefixes[i] ?? "",
+            startBranch,
+          );
           st.note = note ?? "";
           st.state = note ? "skip" : "done";
         } catch (e) {
@@ -139,7 +164,7 @@ export function useWorkflowRun(opts: {
   function retryFlow() {
     const r = wfRun.value;
     if (!r || r.failIndex < 0 || opts.busy.value) return;
-    void executeFlow(r.wf, r.inputs, { fromIndex: r.failIndex, startBranch: r.start });
+    void executeFlow(r.wf, r.inputs, r.prefixes, { fromIndex: r.failIndex, startBranch: r.start });
   }
 
   // path = 流程启动时锁定的仓库：每步都用它，而不是现读 repo.value，
@@ -148,6 +173,7 @@ export function useWorkflowRun(opts: {
     path: string,
     step: WorkflowStep,
     inputBranch: string,
+    inputPrefix: string,
     startBranch: string,
   ): Promise<string | undefined> {
     const refName = (r: BranchRef) =>
@@ -171,8 +197,11 @@ export function useWorkflowRun(opts: {
         await api.merge(path, refName(step.ref)); // 冲突 → 报错停留，后续步骤不执行
         return;
       case "createBranch": {
+        // 前缀用确认弹窗里当场选的那个（候选来自「个性化 → 分支前缀」），
+        // 步骤里写的 prefix 只作为下拉的初始选中项 —— 用户不必每次手写前缀。
+        // 名字已含前缀时不重复加：完全可能有人直接把全名粘进来
         let name = inputBranch;
-        const p = step.prefix?.trim() ?? "";
+        const p = inputPrefix.trim();
         if (p && !name.startsWith(p)) name = p + name;
         await api.branchCreate(path, name);
         return;
@@ -213,10 +242,12 @@ export function useWorkflowRun(opts: {
   return {
     wfConfirm,
     wfInputs,
+    wfPrefixes,
     wfRun,
     wfRunOpen,
     runFlow,
     flowInputsReady,
+    slotPlaceholder,
     confirmFlow,
     closeWfRun,
     retryFlow,

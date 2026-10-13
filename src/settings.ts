@@ -84,6 +84,18 @@ function load(): Settings {
 
 export const settings = reactive<Settings>(load());
 
+/**
+ * 「个性化 → 分支前缀」存的是一个逗号分隔的字符串（中英文逗号都认），
+ * 这里统一解析成列表 —— 创建分支弹窗、设置里的标签编辑器、工作流的运行时前缀下拉
+ * 都要它，各写一份迟早会分叉。
+ */
+export function parseBranchPrefixes(raw: string): string[] {
+  return raw
+    .split(/[,，]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 // 任何字段变更：持久化 + 立即生效（保存按钮把 draft 写回这里即可）
 watch(
   settings,

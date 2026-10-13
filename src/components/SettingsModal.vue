@@ -10,6 +10,7 @@ import {
   THEMES,
   settings,
   clampFontSize,
+  parseBranchPrefixes,
   FONT_SIZE_MIN,
   FONT_SIZE_MAX,
   type Settings,
@@ -324,12 +325,7 @@ const FONT_OPTIONS = [
 
 // 分支前缀：存储为逗号分隔字符串；tag 式编辑
 const prefixInput = ref("");
-const prefixList = computed(() =>
-  draft.branchPrefix
-    .split(/[,，]/)
-    .map((s) => s.trim())
-    .filter(Boolean)
-);
+const prefixList = computed(() => parseBranchPrefixes(draft.branchPrefix));
 // 输入法组词中的 Enter 是确认候选词，不该顺手把半成品前缀加进去
 function onPrefixEnter(e: KeyboardEvent) {
   if (e.isComposing) return;
@@ -734,7 +730,7 @@ const NAV = [
                             v-else-if="s.kind === 'createBranch'"
                             :model-value="s.prefix ?? ''"
                             class="h-7 min-w-0 flex-1 text-xs"
-                            placeholder="前缀（可选，如 feat/）；分支名执行时填写"
+                            placeholder="默认前缀（可选，如 feat/）；执行时可改"
                             @update:model-value="(v: string | number) => (s.prefix = String(v) || undefined)"
                           />
                           <span
@@ -804,7 +800,7 @@ const NAV = [
                         v-else-if="newStepKind === 'createBranch'"
                         v-model="newStepPrefix"
                         class="h-8 min-w-0 flex-1 text-xs"
-                        placeholder="前缀（可选，如 feat/）"
+                        placeholder="默认前缀（可选，如 feat/）"
                       />
                       <Button variant="default" size="sm" class="ml-auto h-8 shrink-0" @click="addStep(w)">
                         <Plus class="size-3.5" /> 添加

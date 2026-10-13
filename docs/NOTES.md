@@ -766,5 +766,22 @@ z-index 就不会误伤「点外面关闭」。
   `line-height` 谁生效，取决于产物 CSS 里的先后顺序（见上面 `@utility` 那条），不该赌。
 - **引导线是装饰**：`aria-hidden="true"` 别让读屏念出来，`pointer-events-none` 别吃点击。
 
+### `<label>` 里放 `<button>` 会顶掉它关联的那个输入框
+
+`App.vue` 的工作流确认弹窗原来用一个 `<label>` 直接包住输入框，靠隐式关联给输入框取可访问名
+（标签文字就是名字）。后来这一行要加一个前缀下拉，而 `ui/Select.vue` 的触发器是 `<button type="button">`，
+于是结构变成 `<label>` 里依次是 `<span>`、`<button>`、`<input>`。
+
+**`<button>` 也是 labelable 元素。** 规范取「tree order 里第一个 labelable 后代」当 label 的关联目标，
+所以关联从输入框变成了那个按钮 —— 点标签文字会去激活按钮（把下拉打开），而不是聚焦输入框。
+页面不报错，类型检查也全绿，只有人去点那行文字才会发现。
+
+改法是拆开：`<label :for="id">` + `<Input :id="id">`。
+
+一句话记住：**「能包就包」的隐式关联，只在被包住的都是纯文本时才安全。**
+一行里一旦多出第二个可交互元素，就该换成显式的 `for`/`id`。
+labelable 元素 = `button` / `input`（非 hidden）/ `meter` / `output` / `progress` / `select` / `textarea` ——
+往一个 `<label>` 里加这类元素之前，先问一句「这一行是不是还有个 label 包着」。
+
 
 
