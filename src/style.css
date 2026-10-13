@@ -148,7 +148,7 @@
   --c-mod: #1a6fb5;
   --c-del: #c53038;
   --c-ren: #6d5ef0;
-  --c-conf: #8f5300;
+  --c-conf: #0b5f77;
 
   --graph-line: #7c7c85;
 
@@ -156,8 +156,8 @@
   --badge-default-fg: #ffffff;
   --badge-info-bg: #1a6fb5;
   --badge-info-fg: #fafafa;
-  --badge-warning-bg: #e5a821;
-  --badge-warning-fg: #33230a;
+  --badge-warning-bg: #0e7490;
+  --badge-warning-fg: #ffffff;
   --badge-danger-bg: #c53038;
   --badge-danger-fg: #fafafa;
 
@@ -252,7 +252,7 @@
   --c-mod: #1a6fb5;
   --c-del: #c53038;
   --c-ren: #6d5ef0;
-  --c-conf: #8f5300;
+  --c-conf: #0b5f77;
 
   --graph-line: #7c7c85;
 
@@ -260,8 +260,8 @@
   --badge-default-fg: #ffffff;
   --badge-info-bg: #1a6fb5;
   --badge-info-fg: #eff1f5;
-  --badge-warning-bg: #e5a821;
-  --badge-warning-fg: #33230a;
+  --badge-warning-bg: #0e7490;
+  --badge-warning-fg: #ffffff;
   --badge-danger-bg: #c53038;
   --badge-danger-fg: #eff1f5;
 
