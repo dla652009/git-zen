@@ -37,29 +37,30 @@ const current = () => props.options.find((o) => o.value === model.value);
     <button
       type="button"
       :disabled="disabled"
+      :title="current()?.label ?? placeholder"
       :class="
         cn(
-          'flex h-8 w-full items-center justify-between gap-2 rounded-sm border border-border bg-input-bg px-2.5 text-base outline-none transition-colors duration-fast focus-visible:border-primary/60 disabled:opacity-45',
+          'flex h-8 w-full items-center justify-between gap-2 rounded-sm border border-border bg-input-bg px-2.5 text-base whitespace-nowrap outline-none transition-colors duration-fast focus-visible:border-primary/60 disabled:opacity-45',
           props.class
         )
       "
       @click="open = !open"
     >
-      <span :class="current() ? '' : 'text-muted-foreground'">
+      <span class="truncate" :class="current() ? '' : 'text-muted-foreground'">
         {{ current()?.label ?? placeholder }}
       </span>
       <ChevronDown class="size-3.5 shrink-0 text-muted-foreground" />
     </button>
     <div
       v-if="open"
-      class="pop-in surface-menu absolute top-full left-0 z-30 mt-1 max-h-56 w-full overflow-y-auto rounded-sm py-1"
+      class="pop-in surface-menu absolute top-full left-0 z-30 mt-1 max-h-56 w-max min-w-full overflow-y-auto rounded-sm py-1"
     >
       <button
         v-for="o in options"
         :key="o.value"
         type="button"
         :class="[
-          'block w-full cursor-pointer px-2.5 py-1.5 text-left text-xs transition-colors duration-fast hover:bg-hover active:bg-active',
+          'block w-full cursor-pointer px-2.5 py-1.5 text-left text-xs whitespace-nowrap transition-colors duration-fast hover:bg-hover active:bg-active',
           o.value === model && 'bg-primary-soft text-primary',
         ]"
         @click="pick(o.value)"
