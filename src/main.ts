@@ -2,12 +2,15 @@ import { createApp } from "vue";
 import App from "./App.vue";
 import { applySettings } from "./settings";
 import { vTrap } from "./lib/focusTrap";
+import { vFocus } from "./lib/focus";
 import "./style.css";
 
 applySettings(); // 主题/字体/diff 颜色在挂载前生效，避免闪默认样式
 
 const app = createApp(App);
 app.directive("trap", vTrap);
+// v-focus 也全局注册：浮层拆成子组件后，局部指令在子组件模板里会静默失效
+app.directive("focus", vFocus);
 
 // ---- 全局崩溃兜底：只记录、不打扰 ----
 // 业务错误路径已经有 showError 提示，这里再弹一次只会重复打扰用户；

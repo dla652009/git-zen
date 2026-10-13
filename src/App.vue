@@ -62,6 +62,7 @@ import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
 import { closeTop, type OverlayLayer, type OverlayName } from "./lib/overlays";
 import { readJsonArray, readJsonObject } from "./lib/safeJson";
+import { imeGuard } from "./lib/imeGuard";
 
 const repo = ref(localStorage.getItem("gz.repo") ?? "");
 const status = ref<Status | null>(null);
@@ -1569,25 +1570,13 @@ function onGlobalKeydown(e: KeyboardEvent) {
 // 实现见 src/composables/useSidebarResize.ts（上限跟窗口宽度联动，避免挤没中间区）
 const { leftW, rightW, startResize, endResize, clampSidebars } = useSidebarResize();
 
-// v-focus：选项卡重命名输入框自动聚焦
-// 值给 false 就不抢焦点：一个弹层里有多个输入框时，只该让第一个自动聚焦
-const vFocus = {
-  mounted: (el: HTMLElement, b: { value?: unknown }) => {
-    if (b.value !== false) el.focus();
-  },
-};
+// v-focus 已提到 src/lib/focus.ts 并在 main.ts 全局注册
+// （浮层正在逐个拆成子组件，局部指令在子组件模板里会静默失效）
 
 // ---- IME 守卫：输入法组词期间 Enter/Esc 属于输入法，不触发弹窗动作 ----
-// 关键：必须监听 keydown。Chromium 里确认候选词那次 keyup 的 e.isComposing 已变回 false，
-// 只在 keyup 上判断等于没判。下面这些是给模板直接引用的处理器常量（不是函数调用），
+// 守卫实现见 src/lib/imeGuard.ts。下面这些是给模板直接引用的处理器常量（不是函数调用），
 // 模板里写 @keydown.enter.prevent="imeConfirmRename" 这样的裸标识符，
 // 避免内联表达式 imeGuard(fn) 把返回的函数当语句丢掉。
-function imeGuard(fn: () => void) {
-  return (e: KeyboardEvent) => {
-    if (e.isComposing) return; // 组词中：Enter/Esc 交给输入法
-    fn();
-  };
-}
 const imeConfirmCreateBranch = imeGuard(confirmCreateBranch);
 const imeConfirmCreateTag = imeGuard(confirmCreateTag);
 const imeConfirmGroupModal = imeGuard(confirmGroupModal);
