@@ -3,38 +3,42 @@
 /* ============================================================================
    设计令牌
    ----------------------------------------------------------------------------
-   分层原则（从下到上，越靠上越亮）：
-     --background  应用画布
-     --card        面板 / 卡片（侧栏、内容区）
-     --elevated    浮层（弹窗、菜单、下拉）——必须比卡片高一层，否则「浮」不起来
-     --muted       内嵌区（输入框、代码块、chip、次级按钮底）
-     --hover       交互叠加层（不占层次，叠在任何表面之上）
+   表面分四层，但只有浮层有硬约束：
+
+     --background  应用画布（色彩基准，尽量沿用各主题的官方画布色）
+     --card        面板 / 卡片（侧栏、内容区、窗口镶边）
+     --elevated    浮层（弹窗、菜单、下拉）——**必须比它盖住的画布亮**，
+                   否则弹窗会显得比背景还凹，「浮」不起来
+     --muted       叠在某个表面上的填充（输入框、代码块、chip、次级按钮底）
+                   它不参与层次排名：深色主题里它比卡片亮（读作抬起），
+                   浅色主题里它比画布暗（读作内嵌），两种都成立
+     --hover       交互叠加层（同样不占层次，叠在任何表面之上）
 
    两条约定：
    1. 交互底色一律用 --hover / --active（半透明叠加），不要写死某个表面色 ——
-      这样同一段样式在画布、卡片、浮层上都成立。
+      这样同一段样式在画布、卡片、浮层上都成立。这也让 --muted 不必再兼任悬停色。
    2. 圆角 / 字号 / 阴影 / 动效都不写魔法数，走下面的尺度与 @theme 注册。
    ============================================================================ */
 
 :root {
   /* ── 表面层次 ───────────────────────────────────────────────── */
-  --background: #0d0d12;
-  --card: #14141a;
-  --elevated: #1b1b22;
-  --muted: #1a1a21;
+  --background: #101014;
+  --card: #17171d;
+  --elevated: #24242d;
+  --muted: #1f1f27;
 
   /* ── 文字 ───────────────────────────────────────────────────── */
-  --foreground: #e9e9f0;
-  --muted-foreground: #9a9aab;
+  --foreground: #e8e8ee;
+  --muted-foreground: #9494a1;
 
   /* ── 描边 ───────────────────────────────────────────────────── */
-  --border: #262630;
+  --border: #2a2a34;
 
   /* ── 品牌与语义 ─────────────────────────────────────────────── */
   --primary: #8b7ff5;
   --primary-foreground: #12101c;
-  --secondary: #1a1a21;
-  --secondary-foreground: #e9e9f0;
+  --secondary: #1f1f27;
+  --secondary-foreground: #e8e8ee;
   --destructive: #f26d78;
 
   --scrollbar-thumb: #33333f;
@@ -111,16 +115,16 @@
 [data-theme="light"],
 [data-theme="github-light"] {
   /* 画布比卡片暗一档：白色卡片才有「放在桌面上」的感觉（原来 #fafafa vs #fff 差 2%，看不出来） */
-  --background: #f5f5f9;
+  --background: #fafafa;
   --foreground: #1c1c23;
   --card: #ffffff;
   --elevated: #ffffff;
-  --muted: #efeff5;
+  --muted: #f0f0f4;
   --muted-foreground: #6c6c76;
-  --border: #e1e1e9;
+  --border: #e4e4ea;
   --primary: #6b5cf0;
   --primary-foreground: #ffffff; /* 深字对 #6b5cf0 只有 3.95:1，反白后 4.76:1（实心主按钮的文字对） */
-  --secondary: #eeeef4;
+  --secondary: #f0f0f4;
   --secondary-foreground: #1c1c23;
   --destructive: #d23b42;
   --scrollbar-thumb: #c9c9d2;
@@ -165,9 +169,9 @@
 }
 
 [data-theme="catppuccin-mocha"] {
-  --background: #181825;
+  --background: #1e1e2e;
   --foreground: #cdd6f4;
-  --card: #1e1e2e;
+  --card: #181825;
   --elevated: #24243a;
   --muted: #313244;
   --muted-foreground: #959bb3;
@@ -215,14 +219,14 @@
      而浮层必须比画布亮，所以这里让卡片走白、内嵌区走 mantle。 */
   --background: #eff1f5;
   --foreground: #4c4f69;
-  --card: #ffffff;
+  --card: #e6e9ef;
   --elevated: #ffffff;
-  --muted: #e6e9ef;
+  --muted: #ccd0da;
   --muted-foreground: #565868;
-  --border: #d3d7e2;
+  --border: #bcc0cc;
   --primary: #5e4eef;
   --primary-foreground: #ffffff;
-  --secondary: #e2e5ee;
+  --secondary: #ccd0da;
   --secondary-foreground: #4c4f69;
   --destructive: #c52d35;
   --scrollbar-thumb: #b4bacb;
@@ -264,17 +268,17 @@
 }
 
 [data-theme="one-dark"] {
-  --background: #21252b;
-  --foreground: #c3cad6;
-  --card: #282c34;
-  --elevated: #30353f;
-  --muted: #343a45;
+  --background: #282c34;
+  --foreground: #abb2bf;
+  --card: #21252b;
+  --elevated: #343943;
+  --muted: #3a3f4b;
   --muted-foreground: #a6aab1;
   --border: #3e4451;
   --primary: #9084f5;
   --primary-foreground: #12101c;
-  --secondary: #343a45;
-  --secondary-foreground: #c3cad6;
+  --secondary: #3a3f4b;
+  --secondary-foreground: #abb2bf;
   --destructive: #f26d78;
   --scrollbar-thumb: #4b5262;
   --diff-add-bg: #223326;
