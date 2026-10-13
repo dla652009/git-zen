@@ -103,6 +103,9 @@ const TEXT_PAIRS = [
   ["--muted-foreground", "--card"],
   ["--muted-foreground", "--elevated"],
   ["--muted-foreground", "--muted"],
+  // 表单控件底：输入框里的正文与 placeholder 都要够（--input-bg 因此不能随便调亮）
+  ["--foreground", "--input-bg"],
+  ["--muted-foreground", "--input-bg"],
   ["--secondary-foreground", "--secondary"],
   ["--primary-foreground", "--primary"],
   ["--diff-add-text", "--diff-add-bg"],

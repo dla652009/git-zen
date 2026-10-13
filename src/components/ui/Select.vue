@@ -39,7 +39,7 @@ const current = () => props.options.find((o) => o.value === model.value);
       :disabled="disabled"
       :class="
         cn(
-          'flex h-8 w-full items-center justify-between gap-2 rounded-sm border border-border bg-background px-2.5 text-base outline-none transition-colors duration-fast focus-visible:border-primary/60 disabled:opacity-45',
+          'flex h-8 w-full items-center justify-between gap-2 rounded-sm border border-border bg-input-bg px-2.5 text-base outline-none transition-colors duration-fast focus-visible:border-primary/60 disabled:opacity-45',
           props.class
         )
       "

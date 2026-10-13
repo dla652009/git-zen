@@ -549,4 +549,26 @@ Consolas **没有中文字形**，代码块里出现中文注释时会掉到系�
 过渡统一到 `duration-fast`（交互反馈）/ `duration-base`（浮层入场）/ `duration-slow`（大面积变化）。
 `prefers-reduced-motion: reduce` 下三档全部压到 0.01ms。
 
+### 输入框在深色主题下像禁用态（用户反馈）
+
+**现象**：用户原话「表单的背景色太深了，有点像禁用的颜色」。
+
+**根因**：`ui/Input.vue` / `ui/Textarea.vue` / `ui/Select.vue` 的底色都是 `--background`（画布色）。
+浅色主题下画布比卡片暗一点点，看着正常；深色主题下新加的浮层 `--elevated` 比画布**亮**，
+于是弹窗里的输入框成了「比弹窗更黑的洞」。**控件底色相对于画布是对的，相对于它所在的表面才是错的那一半**——
+输入框几乎都出现在弹窗里，它该跟 `--elevated` 比，不该跟 `--background` 比。
+放大这个问题的是 `--border`：它对本主题 `--elevated` 的对比只有 1.1x（描边看不见），
+一个没有边框的暗块，读起来就是禁用态。
+
+**修复**：新增 `--input-bg`（六个主题各一个值，`@theme inline` 加 `--color-input-bg`），
+定义为比所在表面**亮一档**（浅色主题反过来，比白弹窗暗一档），四个使用点改用它。
+`--muted` 在深色主题里同样不好用——它比 `--elevated` 还暗。
+
+**取值不是挑的，是算的**：底色越亮，placeholder（`--muted-foreground`）对比度越低。
+求出「在所在表面上叠 `--foreground` 的最大比例」即上限：dark 4.5% / mocha 8.0% /
+one-dark 5.0% / github-dark 5.0% / light 7.0% / latte 13.5%。
+`check-contrast.mjs` 的 `TEXT_PAIRS` 增加 `--foreground`/`--input-bg` 与
+`--muted-foreground`/`--input-bg` 两对（182 → 196 项），并做了负向验证：
+把 dark 的输入框调亮到 `#4a4a58` → placeholder 掉到 2.91，脚本 exit 1。
+
 

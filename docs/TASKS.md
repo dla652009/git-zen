@@ -628,6 +628,25 @@
 - [x] 顶部工具栏统一按钮高度（文字按钮去掉 `size="sm"`）：图标按钮 h-8 而文字按钮 h-7，
       同一行里差 4px，对齐看得很明显
 
+### 14.7 表单控件底色（用户反馈）
+
+用户反馈：「表单的背景色太深了，有点像禁用的颜色」。
+
+根因：输入框 / 文本域 / 下拉沿用 `--background`（画布色）。白色弹窗场景下这没问题，
+但深色主题的弹窗底是 `--elevated`，**画布比它暗**，于是输入框成了「比弹窗更黑的洞」——
+一个没有边框感（`--border` 对本主题的 `--elevated` 几乎不可见）的暗块，读起来就是禁用态。
+
+修法：新增 `--input-bg`，定义为**比它所在的表面亮一档**（浅色主题反过来，比白弹窗暗一档），
+`ui/Input.vue` / `ui/Textarea.vue` / `ui/Select.vue` 与设置页的分支前缀输入容器改用它。
+
+- [x] `--input-bg` 六个主题各一个值，`@theme inline` 加 `--color-input-bg` 映射
+- [x] **取值不是挑好看的，是被对比度定死的**：在所在表面上叠 `--foreground` 的最大比例，
+      上限是「输入框里的正文与 placeholder 仍要 ≥4.5:1」。脚本扫出来的最大值是
+      dark 4.5% / mocha 8.0% / one-dark 5.0% / github-dark 5.0% / light 7.0% / latte 13.5%
+- [x] `scripts/check-contrast.mjs` 的 `TEXT_PAIRS` 加 `--foreground`/`--input-bg` 与
+      `--muted-foreground`/`--input-bg`（182 项 → 196 项），并对新规则做了负向验证
+      （把 dark 的输入框调亮到 `#4a4a58` → placeholder 掉到 2.91，脚本 exit 1）
+
 ## 需求池（无需关注，后面排期）
 
 ### Git 核心补全

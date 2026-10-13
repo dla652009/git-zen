@@ -9,7 +9,10 @@
      --card        面板 / 卡片（侧栏、内容区、窗口镶边）
      --elevated    浮层（弹窗、菜单、下拉）——**必须比它盖住的画布亮**，
                    否则弹窗会显得比背景还凹，「浮」不起来
-     --muted       叠在某个表面上的填充（输入框、代码块、chip、次级按钮底）
+     --muted       叠在某个表面上的填充（代码块、chip、次级按钮底）
+     --input-bg    表单控件（输入框 / 文本域 / 下拉）的底色，必须比它所在的表面亮一档。
+                    这里不能用 --muted：深色主题下它比弹窗（--elevated）还暗，
+                    输入框就成了一个更黑的洞，读起来像「已禁用」
                    它不参与层次排名：深色主题里它比卡片亮（读作抬起），
                    浅色主题里它比画布暗（读作内嵌），两种都成立
      --hover       交互叠加层（同样不占层次，叠在任何表面之上）
@@ -26,6 +29,11 @@
   --card: #17171d;
   --elevated: #24242d;
   --muted: #1f1f27;
+
+  /* 表单控件底色：输入框在弹窗（--elevated）里，若沿用 --background 会是一个更黑的洞，
+     读起来像「已禁用」。取「在所在表面上叠 --foreground」的最大比例即可 —— 上限由
+     「输入框里的次要文字（placeholder）仍要 ≥4.5:1」定死，不是随便挑一个亮色。 */
+  --input-bg: #2d2d36;
 
   /* ── 文字 ───────────────────────────────────────────────────── */
   --foreground: #e8e8ee;
@@ -120,6 +128,7 @@
   --card: #ffffff;
   --elevated: #ffffff;
   --muted: #f0f0f4;
+  --input-bg: #efeff0; /* 浅色主题反过来：比弹窗（白）暗一档才看得出是输入框 */
   --muted-foreground: #6c6c76;
   --border: #e4e4ea;
   --primary: #6b5cf0;
@@ -174,6 +183,7 @@
   --card: #181825;
   --elevated: #24243a;
   --muted: #313244;
+  --input-bg: #323249;
   --muted-foreground: #959bb3;
   --border: #45475a;
   --primary: #8b7ff5;
@@ -222,6 +232,7 @@
   --card: #e6e9ef;
   --elevated: #ffffff;
   --muted: #ccd0da;
+  --input-bg: #e7e7eb;
   --muted-foreground: #565868;
   --border: #bcc0cc;
   --primary: #5e4eef;
@@ -273,6 +284,7 @@
   --card: #21252b;
   --elevated: #343943;
   --muted: #3a3f4b;
+  --input-bg: #3a3f49;
   --muted-foreground: #a6aab1;
   --border: #3e4451;
   --primary: #9084f5;
@@ -321,6 +333,7 @@
   --card: #161b22;
   --elevated: #1c232c;
   --muted: #21262d;
+  --input-bg: #262d36;
   --muted-foreground: #8b949e;
   --border: #30363d;
 
@@ -425,6 +438,7 @@
   --color-card: var(--card);
   --color-elevated: var(--elevated);
   --color-muted: var(--muted);
+  --color-input-bg: var(--input-bg);
   --color-muted-foreground: var(--muted-foreground);
   --color-border: var(--border);
   --color-border-soft: var(--border-soft);

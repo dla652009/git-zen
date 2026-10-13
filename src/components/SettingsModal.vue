@@ -408,7 +408,7 @@ const NAV = [
             <section>
               <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">分支前缀（可多个）</h3>
               <!-- tag 式编辑：回车/逗号添加，点 × 删除；存储仍是逗号分隔字符串，创建弹窗下拉自动同步 -->
-              <div class="flex min-h-[32px] flex-wrap items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1.5">
+              <div class="flex min-h-[32px] flex-wrap items-center gap-1.5 rounded-md border border-border bg-input-bg px-2 py-1.5">
                 <span
                   v-for="p in prefixList"
                   :key="p"
