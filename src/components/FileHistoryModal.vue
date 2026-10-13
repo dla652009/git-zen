@@ -40,7 +40,10 @@ const segsFor = (li: number): Segment[] | null => segs.value?.[li] ?? null;
 const hitRow = computed(() => found.value.hits[cur.value]?.row ?? -1);
 
 watch(q, () => (cur.value = count.value ? 0 : -1));
-watch(cur, async () => {
+// 必须同时盯 found，不能只盯 cur：cur 初值就是 0，敲第一个字符时 watch(q) 把它设回 0，
+// 值没变 → Vue 用 Object.is 比较后不触发 → 高亮已经跳到第 1 个命中，视图却还停在顶部，
+// 回车会「先到第 2 个」。found 是 computed，查询一变引用就变，靠它兜住这一步。
+watch([found, cur], async () => {
   await nextTick();
   rootEl.value?.querySelector('[data-hit="1"]')?.scrollIntoView({ block: "center" });
 });

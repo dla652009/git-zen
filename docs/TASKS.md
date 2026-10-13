@@ -1072,6 +1072,11 @@
 - [x] `FileHistoryModal.vue` 补全屏按钮（`Maximize2` / `Minimize2`，带 `aria-pressed` 与动态 `aria-label`；
       两者之间 `h-full w-full` ↔ `h-[80vh] w-[85vw] rounded-lg` 整组切换，**圆角跟着一起切**）
 - [x] 顺手补上它的关闭按钮缺失的 `aria-label="关闭"` —— 图标按钮没有可访问名，而 `DiffViewer` 那侧本来是有的
+- [x] 修掉一处**「同一功能两处实现」真实产生的行为分叉**：`FileHistoryModal` 的滚动 watcher 只盯 `cur`，
+      而 `cur` 初值就是 0、`watch(q)` 在第一个字符进来时又把它设回 0 → `Object.is` 比较后不触发 →
+      **高亮已经跳到第 1 个命中，视图却停在顶部，回车会「先到第 2 个」**；`DiffViewer` 那侧写的是
+      `watch([found, cur])`（`found` 是 computed，查询一变引用就变）所以没这个问题。已对齐。
+      这处分叉由队友复核时点出，正是下面那条待办想消灭的东西
 - [ ] **仍是两套实现**：这两个 diff 面的 header、搜索栏、高亮渲染是各自一份代码。抽 `useDiffSearch`
       （或把搜索栏做成 `DiffSearchBar.vue`）才有真正的单一来源；本轮先按「两处保持一致」处理
 
