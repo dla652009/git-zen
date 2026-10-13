@@ -408,7 +408,7 @@ async function genCommitMsg() {
           </Button>
         </Tooltip>
       </li>
-      <li v-if="!staged.length" class="px-3 py-1.5 text-xs text-muted-foreground">暂无已暂存的改动</li>
+      <li v-if="!staged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
     </ul>
 
     <!-- 未暂存 -->
@@ -473,7 +473,7 @@ async function genCommitMsg() {
           </Button>
         </Tooltip>
       </li>
-      <li v-if="!unstaged.length" class="px-3 py-1.5 text-xs text-muted-foreground">暂无未暂存的改动</li>
+      <li v-if="!unstaged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
     </ul>
 
     <!-- 文件右键菜单（ui/ContextMenu 统一渲染） -->
