@@ -12,7 +12,6 @@ import {
   GitCommitHorizontal,
   RotateCcw,
   Sparkles,
-  History,
   Archive,
   ArchiveRestore,
   Trash2,
@@ -40,7 +39,6 @@ const props = defineProps<{
   status: Status | null;
   busy: boolean;
   commitCount: number; // 已加载提交数：>0 才可 amend，>1 才可撤销（根提交无 HEAD~1）
-  recentMessages?: string[]; // 最近提交信息（提交框为空时可一键复用）
 }>();
 
 // 所有操作都抛回 App.run() 统一执行+刷新；diff 打开事件抛给 App
@@ -268,16 +266,7 @@ function doCommit() {
   });
 }
 
-// ---- 最近提交信息复用：提交框为空时从 History 按钮选一条填入 ----
-const recentMsgMenu = ref<{ x: number; y: number } | null>(null);
-function recentMsgItems(): MenuItem[] {
-  return (props.recentMessages ?? []).map((m) => ({
-    label: m,
-    fn: () => applyGenerated(m),
-  }));
-}
-
-// ---- B6：生成/复用的信息不静默覆盖已输入草稿——挂起待确认（覆盖 / 保留原内容）----
+// ---- B6：AI 生成的信息不静默覆盖已输入草稿——挂起待确认（覆盖 / 保留原内容）----
 const pendingMsg = ref("");
 function applyGenerated(text: string) {
   if (message.value.trim()) pendingMsg.value = text;
@@ -522,22 +511,10 @@ async function genCommitMsg() {
         <Textarea
           v-model="message"
           rows="4"
-          class="pl-8 pr-9 text-fixed"
+          class="pr-9 text-fixed"
           placeholder="提交信息…  Ctrl+⏎ 提交"
           @keydown.ctrl.enter="onCommitKeydown"
         />
-        <Tooltip text="复用最近提交信息">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="absolute top-1.5 left-1.5 h-6 w-6"
-            :disabled="busy || !recentMessages?.length"
-            aria-label="复用最近提交信息"
-            @click="recentMsgMenu = { x: $event.clientX, y: $event.clientY }"
-          >
-            <History class="size-3.5" />
-          </Button>
-        </Tooltip>
         <Tooltip text="AI 生成提交信息">
           <Button
             variant="ghost"
@@ -597,15 +574,6 @@ async function genCommitMsg() {
         {{ busy ? "处理中…" : `提交${staged.length ? ` (${staged.length})` : ""}` }}
       </Button>
     </div>
-
-    <!-- 最近提交信息选择菜单 -->
-    <ContextMenu
-      v-if="recentMsgMenu"
-      :x="recentMsgMenu.x"
-      :y="recentMsgMenu.y"
-      :items="recentMsgItems()"
-      @close="recentMsgMenu = null"
-    />
 
     <!-- stash 下拉菜单：收纳入口 + 记录列表（恢复/恢复并删除/删除） -->
     <div

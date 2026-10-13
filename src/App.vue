@@ -2365,7 +2365,6 @@ onUnmounted(() => {
           :status="status"
           :busy="busy"
           :commit-count="commits.length"
-          :recent-messages="[...new Set(commits.slice(0, 8).map((c) => c.subject))].slice(0, 5)"
           @action="(fn: () => Promise<unknown>) => run(fn)"
           @open-diff="(t: DiffTarget) => (diffState = { kind: 'file', target: t })"
           @file-history="(p: string) => (fileHistoryModal = p)"

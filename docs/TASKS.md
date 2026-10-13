@@ -288,7 +288,7 @@
 - [x] **diff 折行开关**：7.4 改为永远折行后加一个 折行/不折行 切换按钮，localStorage 记忆
 - [x] **导出 patch**：DiffViewer 头部「导出 .patch」，当前 commit/文件 diff 存盘（复用保存对话框）
 - [x] **右键复制补齐**：历史行右键加 复制提交信息/作者/短 hash；文件行右键加 复制路径
-- [x] **最近提交信息复用**：提交框为空时出最近 5 条提交信息下拉一键填入
+- [x] **最近提交信息复用**：提交框为空时出最近 5 条提交信息下拉一键填入 —— **已于 15.3 移除**
 - [x] **搜索命中高亮**：历史区过滤时高亮命中关键词（过滤逻辑已有，只差渲染）
 
 ### 11.3 主题与可及性（已完成）
@@ -773,6 +773,19 @@
       断言「`git_merge` 返回 Err」与「`git_status` 里已出现冲突文件」同时成立。
 - [x] **AGENTS.md 硬性规则 4 已改写**：从「任何操作成功后统一重拉」改为
       「任何操作结束后（无论成功还是失败）统一重拉」。
+
+### 15.3 移除「复用最近提交信息」（用户反馈）
+
+用户说「我觉得可以删除：复用最近提交信息 这个功能，完全用不上」。
+
+- [x] `src/components/ChangesPanel.vue`：删掉提交框左上角的 History 按钮、`recentMessages` prop、
+      `recentMsgMenu` 与 `recentMsgItems()`、以及那个 `ContextMenu` 选择菜单；
+      提交框的 `pl-8`（原本是给按钮让位）一并去掉，`History` 图标 import 也随之删除。
+- [x] `src/App.vue:2368` 的 `:recent-messages="[...new Set(commits.slice(0, 8)…)]"` 删除 ——
+      这是该 prop 唯一的调用方，删掉后 `App.vue` 也不必在每次刷新时为这个按钮算一遍去重数组。
+- [x] **保留 `applyGenerated` / `pendingMsg`（B6 草稿保护）**：那是 AI 生成提交信息在用的路径，
+      与本次移除无关，别一起删掉。
+- [x] 保留 `ContextMenu` 与 `MenuItem` 的 import：文件右键菜单仍在用。
 
 ## 需求池（无需关注，后面排期）
 
