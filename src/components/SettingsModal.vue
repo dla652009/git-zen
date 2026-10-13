@@ -2,7 +2,7 @@
 import { computed, reactive, ref, nextTick, onMounted, watch, type Component } from "vue";
 import {
   X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe, Workflow as WorkflowIcon, ChevronDown,
-  GripVertical, Pin, Pencil, Trash2, TriangleAlert,
+  GripVertical, Pin, Pencil, Trash2, TriangleAlert, Copy,
   GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload,
 } from "@lucide/vue";
 import { VueDraggable } from "vue-draggable-plus";
@@ -128,6 +128,24 @@ function addFlow() {
   const wf: Workflow = { id: newFlowId(), name: `工作流 ${workflows.length + 1}`, steps: [] };
   workflows.push(wf);
   wfExpanded.value = wf.id;
+}
+// 复制：深拷贝后插在原工作流后面。步骤是嵌套结构，浅拷贝会让两份共用同一个 steps
+// 数组（改一个另一个跟着变），所以走 JSON 往返 —— 工作流数据是纯 JSON，没有函数/Date。
+function copyFlow(w: Workflow) {
+  const i = workflows.indexOf(w);
+  if (i < 0) return;
+  const copy: Workflow = JSON.parse(JSON.stringify(w));
+  copy.id = newFlowId();
+  copy.name = `${w.name} 副本`;
+  copy.pinned = false; // 钉住名额只有 3 个，副本不该悄悄占掉一个
+  workflows.splice(i + 1, 0, copy);
+  wfExpanded.value = copy.id;
+}
+// 复制步骤：同样深拷贝后插在下一步，省去重新配一遍参数
+function copyStep(w: Workflow, i: number) {
+  const s = w.steps[i];
+  if (!s) return;
+  w.steps.splice(i + 1, 0, JSON.parse(JSON.stringify(s)) as WorkflowStep);
 }
 function renameFlow(w: Workflow) {
   wfRename.value = { id: w.id, draft: w.name };
@@ -603,6 +621,17 @@ const NAV = [
                         <Pin class="size-3.5" :fill="w.pinned ? 'currentColor' : 'none'" />
                       </Button>
                     </Tooltip>
+                    <Tooltip text="复制">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="h-7 w-7 text-muted-foreground hover:text-primary"
+                        :aria-label="`复制 ${w.name}`"
+                        @click="copyFlow(w)"
+                      >
+                        <Copy class="size-3.5" />
+                      </Button>
+                    </Tooltip>
                     <Tooltip text="重命名">
                       <Button
                         variant="ghost"
@@ -713,10 +742,21 @@ const NAV = [
                             class="min-w-0 flex-1 text-xs text-muted-foreground"
                           >{{ s.kind === "pull" ? "拉取并合并远程更新" : s.kind === "push" ? "推送当前分支（无上游自动 -u）" : "回到执行开始时所在的分支" }}</span>
                         </div>
+                        <Tooltip text="复制步骤">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            class="ml-auto h-7 w-7 text-muted-foreground hover:text-primary"
+                            aria-label="复制步骤"
+                            @click="copyStep(w, si)"
+                          >
+                            <Copy class="size-3.5" />
+                          </Button>
+                        </Tooltip>
                         <Button
                           variant="ghost"
                           size="icon"
-                          class="ml-auto h-7 w-7 text-muted-foreground hover:text-destructive"
+                          class="h-7 w-7 text-muted-foreground hover:text-destructive"
                           aria-label="删除步骤"
                           @click="w.steps.splice(si, 1)"
                         >

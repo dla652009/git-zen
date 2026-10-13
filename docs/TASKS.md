@@ -866,12 +866,18 @@
 
 **委派给 fix-components 的（只动 `src/components/SettingsModal.vue`，见共享任务 task-15）**
 
-- [ ] 步骤拖拽排序（用项目既有的 vue-draggable-plus，`force-fallback: true`；不用 HTML5 DnD API）
-- [ ] 工作流列表拖拽排序，重命名改双击 + Enter/Esc
-- [ ] 步骤参数行内编辑：`ask` 模式补「提示文字」（存 `BranchRef.label` 可选字段）
-- [ ] 复制工作流 / 复制步骤
-- [ ] 钉住按钮（`Pin` 图标 + `aria-pressed`；已钉满 3 个时其余置灰）
-- [ ] 添加步骤失败时给出提示（原来点「添加」毫无反应）
+- [x] 步骤拖拽排序（用项目既有的 vue-draggable-plus，`force-fallback: true`；不用 HTML5 DnD API）
+      —— 另补了键盘路径 Alt+↑/↓，并撤掉原来的上移/下移箭头按钮
+- [x] 工作流列表拖拽排序；重命名补上了真弹窗（原来的 `wfRename` 是死代码，pencil 点了没反应）
+- [x] 步骤参数行内编辑：`ask` 模式补「提示文字」（存 `BranchRef.label` 可选字段）
+- [x] 钉住按钮（`Pin` 图标 + `aria-pressed`；已钉满 3 个时其余置灰）
+- [x] 添加步骤失败时给出提示（原来点「添加」毫无反应）
+- [x] 补上漏做的「复制工作流 / 复制步骤」（Lead 复核委派结果时发现整项没人做，自己补的）
+- [x] 附带：步骤卡补类型图标，`merge` / `commitPush` 加危险标记与 tooltip
+
+**复核结论（Lead）**：队友交付方向正确，但**整项漏做了「复制」**；同时**主动上报了一个我们自己的盲区** ——
+他中途漏写 `</VueDraggable>` 时 `vue-tsc` 仍 exit 0，只有 `vite build` 才报 `Element is missing end tag`。
+已据此把 `vite build` 加进 `pnpm verify`（详见 `docs/NOTES.md` 的「`vue-tsc` 不检查模板结构」）。
 
 ## 需求池（无需关注，后面排期）
 
