@@ -197,6 +197,14 @@
       垂直贴底同理上翻。不再只压缩宽度
 - [x] 默认字体现代化 → 默认栈换成 Segoe UI Variable Text（Win11 原生，平滑清晰），回退 Segoe UI/雅黑
 - [x] 字体输入框改下拉 → ui/Select 组件，8 个热门选项（默认/Segoe UI Variable/雅黑/Inter/MiSans/HarmonyOS Sans/思源黑体/等宽），未安装的字体自动回退不会白屏
+- [x] 按钮变禁用后 tooltip 不消失（用户反馈）→ 点「AI 生成提交信息」后提示一直挂在界面上。
+      根因：那个按钮是 `:disabled="aiBusy || !staged.length || busy"`，**点下即变禁用**，而
+      **Chrome 不会因为「指针底下那个元素被禁用」而补发 `mouseleave`**（指针不动就永远不重算
+      hover），tooltip 的 leave 处理器收不到事件，于是它一直挂着直到鼠标移开。
+      修在共用的 `ui/Tooltip.vue`，所以全应用的 tooltip 一起受益：展开时对触发元素挂
+      `MutationObserver` 监听 `disabled` 属性，一出现就收起；另外 `@click` 上也收起
+      （提示的使命就是把这次点击说清楚）。绑定放在每次 `enter()` 而不是 `onMounted()` ——
+      槽位内容可能被 `v-if` 换掉，只绑一次会指向旧节点。
 
 ## 全面审查修复（M13）
 
