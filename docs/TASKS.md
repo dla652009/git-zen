@@ -984,16 +984,18 @@
 
 ### 16.1 script → composables（进行中）
 
-按耦合度从低到高排，**每抽一个是独立提交 + 一次 `pnpm verify`**：
+按耦合度从低到高排，**每抽一个是独立提交 + 一次 `pnpm verify`**。
+`App.vue` 起点 3461 行（task-16 交付后），当前 **3326 行**。
 
 - [x] `src/composables/useSidebarResize.ts` 侧栏拖宽 + 持久化（只依赖 window / localStorage）
-- [x] `src/composables/useRepoCache.ts` 仓库数据 LRU 缓存（只依赖 `settings.repoCacheSize`）
-- [ ] **接线**：把 `App.vue` 里这两段删掉改为调用 —— 等 task-16（分组管理）交付后再做，
-      避免同一个文件并发写
-- [ ] `useSwitcher.ts`：Ctrl+P 仓库切换器 + Ctrl+B 分支切换器
-- [ ] `useWorkflowRun.ts`：工作流执行 / 进度弹窗 / 从失败处重试
-- [ ] `useAiPanel.ts`：AI Review 与 Release Notes 两个报告弹窗
-- [ ] `useRepoSession.ts`：`activate` / `refresh` / `fetchLog` / 分页 —— 依赖最多，放最后
+- [x] `src/composables/useRepoCache.ts` 仓库数据 LRU 缓存（只依赖 `settings.repoCacheSize`；
+      另导出 `cachePeek` / `cacheDrop`，前者给刷新流程做不触碰 LRU 顺序的读）
+- [x] **接线上述两个**（提交 `b50c43c`，净减 56 行）
+- [x] `src/composables/useSwitcher.ts`：Ctrl+P 仓库切换器 + Ctrl+B 分支切换器（提交 `937e5b1`，净减 79 行）
+- [ ] `useWorkflowRun.ts` / `useAiPanel.ts` / `useRepoSession.ts` —— **task-17** 已派给 `fix-appvue`
+
+**每抽一个都要重跑 `pnpm verify`**，其中 `vite build` 那一步不可省：`vue-tsc` 不检查模板结构，
+只有构建能拦住缺结束标签这类错（见 NOTES.md）。
 
 ### 16.2 template → 子组件（未开始）
 
