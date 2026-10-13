@@ -1043,7 +1043,11 @@
       另导出 `cachePeek` / `cacheDrop`，前者给刷新流程做不触碰 LRU 顺序的读）
 - [x] **接线上述两个**（提交 `b50c43c`，净减 56 行）
 - [x] `src/composables/useSwitcher.ts`：Ctrl+P 仓库切换器 + Ctrl+B 分支切换器（提交 `937e5b1`，净减 79 行）
-- [ ] `useWorkflowRun.ts` / `useAiPanel.ts` / `useRepoSession.ts` —— **task-17** 已派给 `fix-appvue`
+- [x] `useWorkflowRun.ts` / `useAiPanel.ts` / `useRepoSession.ts` —— **task-17** 交付完毕（提交 `7c94a67` 为最后一支）
+- [x] **两个共用机制的抽取（16.2 的前置条件）**：`v-focus` → `src/lib/focus.ts` + `main.ts` 全局注册；
+      `imeGuard` → `src/lib/imeGuard.ts`。两者原本都是 `App.vue` 的**局部**定义 ——
+      浮层一旦拆成子组件，「局部指令只在定义它的那个组件模板里有效」会让 `v-focus` **静默失效**
+      （不报错、只是不聚焦），而 IME 守卫各自带一份迟早漂移（漏一处就是「组词期间回车把弹窗提交了」）
 
 **每抽一个都要重跑 `pnpm verify`**，其中 `vite build` 那一步不可省：`vue-tsc` 不检查模板结构，
 只有构建能拦住缺结束标签这类错（见 NOTES.md）。
@@ -1056,6 +1060,47 @@
 
 **目录约定**：`src/composables/` 放「有状态、依赖 Vue 响应式、返回 ref 或函数」的模块；
 `src/lib/` 保持「无状态纯函数」（`focusTrap.ts` 是指令，属历史遗留的例外）。
+
+## M17 diff 阅读体验
+
+### 17.1 文件变更历史的 diff 补全屏（用户反馈，bug）
+
+全屏是 14.12 加的功能，但它只加进了 `src/components/DiffViewer.vue`；
+`src/components/FileHistoryModal.vue` 里那第二个 diff 面一直没有 —— **同一个功能在两个组件里各写一遍，
+就只会改一处**。用户直接指出了这一处。
+
+- [x] `FileHistoryModal.vue` 补全屏按钮（`Maximize2` / `Minimize2`，带 `aria-pressed` 与动态 `aria-label`；
+      两者之间 `h-full w-full` ↔ `h-[80vh] w-[85vw] rounded-lg` 整组切换，**圆角跟着一起切**）
+- [x] 顺手补上它的关闭按钮缺失的 `aria-label="关闭"` —— 图标按钮没有可访问名，而 `DiffViewer` 那侧本来是有的
+- [ ] **仍是两套实现**：这两个 diff 面的 header、搜索栏、高亮渲染是各自一份代码。抽 `useDiffSearch`
+      （或把搜索栏做成 `DiffSearchBar.vue`）才有真正的单一来源；本轮先按「两处保持一致」处理
+
+### 17.2 所有 diff 弹窗支持搜索（用户需求，feature）
+
+- [x] 新增 `src/lib/diffSearch.ts`：`buildSegments(text, query)` 把 patch 行切成「命中 / 非命中」片段。
+      **纯计算、不碰 DOM 也不持有状态**，所以两个弹窗的高亮行为必然一致。已配 `src/lib/diffSearch.test.ts`，
+      并登记进 `package.json` 的 `verify` 与 `tsconfig.json` 的 `exclude`（提交 `ea49d09`）
+- [x] `DiffViewer.vue` 接入：header 搜索按钮 + `Ctrl+F`（监听在 `window` 上，但焦点不在本弹窗内就不抢），
+      `Enter` / `Shift+Enter` 跳转、`当前/总数` 计数、逐个高亮（当前命中加重底色）、无匹配提示；
+      左侧文件列表显示各文件命中数
+- [x] 命中跨文件连续编号：跳转时自动切到命中所在的那个文件，`Enter` 才是一条完整的走查路径；
+      反过来手动点左列表时把游标挪到该文件的首个命中（否则计数停在一个文件、高亮在另一个）
+- [x] 查询为空时 `segments` 返回 `null`，模板走回 `{{ l.text }}` 的纯文本渲染 ——
+      搜索是偶尔才用的功能，不该让不搜的时候为每一行白建片段数组
+- [x] 命中定位用 `data-hit` + `scrollIntoView({ block: "center" })`，**不手算行高**：
+      diff 行开着 `whitespace-pre-wrap`，一行可能折成多行，行高常量一定会错
+- [x] `FileHistoryModal.vue` 同款全屏 + 搜索（`fix-components` 交付，116 → 236 行）
+- [x] **关搜索后把焦点交还给搜索开关**：输入框随 `v-if` 卸载时浏览器会把焦点丢回 `body`，
+      而 `v-trap` 的 Tab 循环是绑在弹层容器上的（`focusTrap.ts` 的 `el.addEventListener`）——
+      焦点一旦离开容器，那个「拉回来」分支就收不到事件，下一次 Tab 直接穿透到弹层背后
+- [x] **`Ctrl+F` 判归属时要放行 `document.body`**：点过 diff 文本（`select-text`）之后焦点会落回 `body`，
+      原先的 `!rootEl.contains(act)` 会把它当成「别处在用」而静默失效 —— 而这个组件挂载期间，
+      它自己就是打开着的那个弹窗
+
+**取舍**：搜索栏不常驻，由按钮或 `Ctrl+F` 开关 —— 常驻会白占约 36px 高，而它绝大多数时间是关着的。
+**没做成「首次输入就滚过去」的问题**：不存在。`watch([found, cur])` 同时盯着 `found`，
+而 `found` 每次查询变化都是新对象，所以第一次输入就会滚（用 Vue 响应式单独跑探针确认过：
+打开搜索 `cur=-1` → 敲第一个字符 `cur=0` 且滚动回调触发 1 次）。
 
 ## 需求池（无需关注，后面排期）
 

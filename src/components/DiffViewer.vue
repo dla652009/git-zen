@@ -203,10 +203,17 @@ function toggleSearch() {
   cur.value = count.value ? 0 : -1;
   focusSearch();
 }
+// 关搜索要把焦点交还给搜索开关：输入框随 v-if 一起被卸掉，浏览器会把焦点丢回 body，
+// 而 v-trap 的 Tab 循环是绑在弹层容器上的（focusTrap.ts 的 el.addEventListener）——
+// 焦点一旦离开容器它就收不到事件，下一次 Tab 会直接穿透到弹层背后。
+function focusSearchToggle() {
+  void nextTick(() => rootEl.value?.querySelector<HTMLElement>("[data-search-toggle]")?.focus());
+}
 function closeSearch() {
   searchOpen.value = false;
   q.value = "";
   cur.value = -1;
+  focusSearchToggle();
 }
 // 左列表手动切文件时把游标挪到该文件的第一个命中，否则计数还停在别的文件上、当前文件里却一个高亮都没有
 function pickFile(file: string) {
@@ -230,7 +237,9 @@ watch([found, cur], async () => {
 function onFindKey(e: KeyboardEvent) {
   if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "f") return;
   const act = document.activeElement as HTMLElement | null;
-  if (act && rootEl.value && !rootEl.value.contains(act)) return;
+  // 焦点在 body 也算「没在别的浮层里」：点过右侧 diff 文本（select-text）之后焦点会落回 body，
+  // 若把它当成「别处在用」，Ctrl+F 就会静默失效 —— 而这个组件挂载期间，它自己就是打开着的浮层
+  if (act && act !== document.body && rootEl.value && !rootEl.value.contains(act)) return;
   e.preventDefault();
   toggleSearch();
 }
@@ -371,6 +380,7 @@ onUnmounted(() => {
             variant="ghost"
             size="icon"
             class="h-6 w-6"
+            data-search-toggle
             aria-label="在 diff 里搜索"
             :aria-pressed="searchOpen"
             @click="toggleSearch"
