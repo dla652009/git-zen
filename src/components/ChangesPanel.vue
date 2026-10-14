@@ -29,7 +29,7 @@ import { AI_PROMPTS, aiComplete, clipForAI } from "../ai";
 import { settings } from "../settings";
 import { humanizeMsg } from "../lib/errors";
 import { isUnmerged } from "../lib/conflict";
-import { buildFileRows, tailName, type FileRow } from "../lib/fileTree";
+import { buildFileRows, displayPath, tailName, type FileRow } from "../lib/fileTree";
 import {
   Button,
   Badge,
@@ -230,20 +230,24 @@ function toggleChangeView() {
   settings.changeView = flatView.value ? "tree" : "flat";
 }
 
+// pathOf 给的是 git 认的新路径；matchOf 额外把 porcelain 的原始串（重命名是 "old -> new"）
+// 也算进过滤 —— 用旧名也能搜到，这是它一直以来的行为，重构时别弄丢
 const stagedRows = computed(() =>
-  buildFileRows(staged.value, {
+  buildFileRows(staged.value, displayPath, {
     section: "s",
     collapsed: collapsedDirs.value,
     filter: fileFilter.value,
     flat: flatView.value,
+    matchOf: (f) => f.path,
   })
 );
 const unstagedRows = computed(() =>
-  buildFileRows(unstaged.value, {
+  buildFileRows(unstaged.value, displayPath, {
     section: "u",
     collapsed: collapsedDirs.value,
     filter: fileFilter.value,
     flat: flatView.value,
+    matchOf: (f) => f.path,
   })
 );
 
@@ -542,15 +546,15 @@ async function genCommitMsg() {
           class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-sm py-1.5 pr-2 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
           :class="selKey === row.key && 'bg-primary-soft'"
           :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
-          @click="onRowClick(row.key, () => emit('openDiff', { path: row.path, cached: !isUnmerged(row.file), untracked: false, conflict: isUnmerged(row.file) }))"
-          @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f: row.file, cached: true }"
+          @click="onRowClick(row.key, () => emit('openDiff', { path: row.path, cached: !isUnmerged(row.item), untracked: false, conflict: isUnmerged(row.item) }))"
+          @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f: row.item, cached: true }"
         >
-          <component :is="statusMeta(row.file).icon" :class="statusMeta(row.file).cls" class="size-4 shrink-0" />
-          <Tooltip :text="`${statusMeta(row.file).desc} · ${row.file.path}（单击选中 · 再单击查看变更）`">
+          <component :is="statusMeta(row.item).icon" :class="statusMeta(row.item).cls" class="size-4 shrink-0" />
+          <Tooltip :text="`${statusMeta(row.item).desc} · ${row.item.path}（单击选中 · 再单击查看变更）`">
             <span class="truncate text-sm">
-              <template v-if="renameNames(row.file)">
-                <span class="text-muted-foreground line-through">{{ renameNames(row.file)![0] }}</span>
-                → {{ renameNames(row.file)![1] }}
+              <template v-if="renameNames(row.item)">
+                <span class="text-muted-foreground line-through">{{ renameNames(row.item)![0] }}</span>
+                → {{ renameNames(row.item)![1] }}
               </template>
               <template v-else>{{ row.label }}</template>
             </span>
@@ -647,15 +651,15 @@ async function genCommitMsg() {
           class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-sm py-1.5 pr-2 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
           :class="selKey === row.key && 'bg-primary-soft'"
           :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
-          @click="onRowClick(row.key, () => emit('openDiff', { path: row.path, cached: false, untracked: row.file.x === '?', conflict: isUnmerged(row.file) }))"
-          @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f: row.file, cached: false }"
+          @click="onRowClick(row.key, () => emit('openDiff', { path: row.path, cached: false, untracked: row.item.x === '?', conflict: isUnmerged(row.item) }))"
+          @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f: row.item, cached: false }"
         >
-          <component :is="statusMeta(row.file).icon" :class="statusMeta(row.file).cls" class="size-4 shrink-0" />
-          <Tooltip :text="`${statusMeta(row.file).desc} · ${row.file.path}（单击选中 · 再单击查看变更）`">
+          <component :is="statusMeta(row.item).icon" :class="statusMeta(row.item).cls" class="size-4 shrink-0" />
+          <Tooltip :text="`${statusMeta(row.item).desc} · ${row.item.path}（单击选中 · 再单击查看变更）`">
             <span class="truncate text-sm">
-              <template v-if="renameNames(row.file)">
-                <span class="text-muted-foreground line-through">{{ renameNames(row.file)![0] }}</span>
-                → {{ renameNames(row.file)![1] }}
+              <template v-if="renameNames(row.item)">
+                <span class="text-muted-foreground line-through">{{ renameNames(row.item)![0] }}</span>
+                → {{ renameNames(row.item)![1] }}
               </template>
               <template v-else>{{ row.label }}</template>
             </span>

@@ -1,11 +1,15 @@
-// 变更列表的目录树：建树 → 压平单子链 → 拍平成渲染行。
+// 文件列表的目录树：建树 → 压平单子链 → 拍平成渲染行。
 //
-// 为什么是「拍平成行」而不是像 BranchTree.vue 那样做递归组件：拍平之后
-// ChangesPanel 的模板仍然是「一个 <ul> + 一个 v-for」，现成的滚动容器、max-h、
-// hover 组、右键菜单、Tooltip 全都不用动。
+// 为什么是「拍平成行」而不是像 BranchTree.vue 那样做递归组件：拍平之后调用方的模板
+// 仍然是「一个 <ul> + 一个 v-for」，现成的滚动容器、max-h、hover 组、右键菜单、
+// Tooltip 全都不用动。
 //
-// 树必须从 porcelain 的路径建，**不能去遍历文件系统**：删除的文件已经不在磁盘上，
+// 树必须从 git 报出来的路径建，**不能去遍历文件系统**：删除的文件已经不在磁盘上，
 // 但照样要出现在它原来的位置。
+//
+// 泛型是为了让「变更列表」（元素是 StatusFile）与「diff 弹窗左侧文件列表」
+// （元素是 patch 的一段 section）共用同一套层级逻辑 —— 两边对「文件列表」的期待
+// 是一样的，第二份实现迟早会分叉（`docs/NOTES.md` 记过这类账）。
 import type { StatusFile } from "../gitApi";
 
 interface RowBase {
@@ -28,15 +32,17 @@ export interface DirRow extends RowBase {
   collapsed: boolean;
 }
 
-export interface FileItemRow extends RowBase {
+export interface FileItemRow<T> extends RowBase {
   kind: "file";
-  /** 重命名行的 `file.path` 仍是 "old -> new" 整串，展示交给调用方 */
-  file: StatusFile;
+  /** 行对应的原始元素。变更列表里是 StatusFile（重命名行的 `path` 仍是 "old -> new" 整串，
+   *  展示交给调用方）；diff 弹窗里是那个文件的 patch section。 */
+  item: T;
 }
 
 /** 判别联合：模板里 `v-if="row.kind === 'dir'"` 之后 `row.count` 才存在、
- *  `row.kind === 'file'` 之后 `row.file` 一定在 —— 不用到处写 `!` */
-export type FileRow = DirRow | FileItemRow;
+ *  `row.kind === 'file'` 之后 `row.item` 一定在 —— 不用到处写 `!`。
+ *  默认参数面向变更列表，diff 弹窗传自己的元素类型即可。 */
+export type FileRow<T = StatusFile> = DirRow | FileItemRow<T>;
 
 /** git 认的路径：porcelain 的重命名行是 "old -> new" 整串，只有新名才是有效 pathspec */
 export function displayPath(f: StatusFile): string {
@@ -49,28 +55,29 @@ export function tailName(p: string): string {
   return i === -1 ? p : p.slice(i + 1);
 }
 
-interface Node {
+interface Node<T> {
   seg: string;
   path: string;
-  children: Map<string, Node>;
-  file?: StatusFile;
+  children: Map<string, Node<T>>;
+  item?: T;
   count: number;
 }
 
-function bySeg(a: Node, b: Node): number {
+function bySeg<T>(a: Node<T>, b: Node<T>): number {
   return a.seg < b.seg ? -1 : a.seg > b.seg ? 1 : 0;
 }
 
 /** 后序累计后代文件数 */
-function countUp(n: Node): number {
-  let c = n.file ? 1 : 0;
+function countUp<T>(n: Node<T>): number {
+  let c = n.item ? 1 : 0;
   for (const ch of n.children.values()) c += countUp(ch);
   n.count = c;
   return c;
 }
 
-export interface BuildOptions {
-  /** "s"（已暂存）/ "u"（未暂存）：折叠与选中的 key 必须分开，两边可能同时有同一个文件 */
+export interface BuildOptions<T> {
+  /** "s"（已暂存）/ "u"（未暂存）/ "d"（diff）：折叠与选中的 key 必须分开，
+   *  两边可能同时有同一个文件 */
   section: string;
   /** 已收起的目录 key 集合（`${section}d:${顶层目录路径}`） */
   collapsed: ReadonlySet<string>;
@@ -80,33 +87,47 @@ export interface BuildOptions {
   compact?: boolean;
   /** 平铺视图：不建目录行，按传入顺序一行一个文件，`label` 用完整路径 */
   flat?: boolean;
+  /** 过滤时拿来做匹配的原串，默认用 `pathOf` 的结果。变更列表传 porcelain 的原始 path
+   *  （重命名是 "old -> new"），这样用旧名也能搜到 —— 保持它一直以来的行为 */
+  matchOf?: (t: T) => string;
 }
 
-export function buildFileRows(files: StatusFile[], opts: BuildOptions): FileRow[] {
+/** 把一批「有路径的东西」拍成可渲染的行。`pathOf` 负责说明「路径从哪来」，
+ *  换一种元素类型不需要改这里的任何一行逻辑。 */
+export function buildFileRows<T>(
+  items: T[],
+  pathOf: (t: T) => string,
+  opts: BuildOptions<T>,
+): FileRow<T>[] {
   const q = (opts.filter ?? "").trim().toLowerCase();
   const forceOpen = q.length > 0;
   const compact = opts.compact ?? true;
+  const matchOf = opts.matchOf ?? pathOf;
+  const match = (t: T) => matchOf(t).toLowerCase();
 
   if (opts.flat) {
     // 平铺模式不建树：树靠层级省掉了路径前缀，平铺没有层级，前缀就得自己带上，
     // 所以 label 取完整路径。key 的构造与树模式一致，切换视图时选中项不会丢。
-    return files
-      .filter((f) => !q || f.path.toLowerCase().includes(q))
-      .map((f) => ({
-        kind: "file" as const,
-        key: `${opts.section}f:${displayPath(f)}`,
-        label: displayPath(f),
-        path: displayPath(f),
-        depth: 0,
-        file: f,
-      }));
+    return items
+      .filter((t) => !q || match(t).includes(q))
+      .map((t) => {
+        const p = pathOf(t);
+        return {
+          kind: "file" as const,
+          key: `${opts.section}f:${p}`,
+          label: p,
+          path: p,
+          depth: 0,
+          item: t,
+        };
+      });
   }
 
   // 过滤在建树之前做：只留下命中文件的祖先目录，不会出现空目录
-  const root: Node = { seg: "", path: "", children: new Map(), count: 0 };
-  for (const f of files) {
-    if (q && !f.path.toLowerCase().includes(q)) continue;
-    const p = displayPath(f);
+  const root: Node<T> = { seg: "", path: "", children: new Map(), count: 0 };
+  for (const t of items) {
+    if (q && !match(t).includes(q)) continue;
+    const p = pathOf(t);
     const parts = p.split("/").filter(Boolean);
     let cur = root;
     for (let i = 0; i < parts.length - 1; i++) {
@@ -121,35 +142,35 @@ export function buildFileRows(files: StatusFile[], opts: BuildOptions): FileRow[
     }
     const seg = parts[parts.length - 1] ?? p;
     // 同一路径不会出现两行；重命名的两边若撞进同一格，后写入的胜出即可
-    const leaf: Node = cur.children.get(seg) ?? { seg, path: p, children: new Map(), count: 0 };
-    leaf.file = f;
+    const leaf: Node<T> = cur.children.get(seg) ?? { seg, path: p, children: new Map(), count: 0 };
+    leaf.item = t;
     leaf.path = p;
     cur.children.set(seg, leaf);
   }
   countUp(root);
 
-  const rows: FileRow[] = [];
+  const rows: FileRow<T>[] = [];
 
-  function emitFile(n: Node, depth: number) {
+  function emitFile(n: Node<T>, depth: number) {
     rows.push({
       kind: "file",
       key: `${opts.section}f:${n.path}`,
       label: n.seg,
       path: n.path,
       depth,
-      file: n.file!,
+      item: n.item!,
     });
   }
 
-  function emitDir(n: Node, depth: number) {
+  function emitDir(n: Node<T>, depth: number) {
     // 压平：只含一个子目录时把它接上来。唯一的孩子是文件就不压 ——
     // 那样会变成「目录行 + 文件名」两行说同一件事，反而多一行
     let label = n.seg;
     let tail = n;
     if (compact) {
-      while (!tail.file && tail.children.size === 1) {
+      while (!tail.item && tail.children.size === 1) {
         const only = [...tail.children.values()][0]!;
-        if (only.file) break;
+        if (only.item) break;
         label = `${label}/${only.seg}`;
         tail = only;
       }

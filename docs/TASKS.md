@@ -1145,7 +1145,7 @@
 目录整块收起来** —— 变更列表是有噪声的清单，树让「噪声」变成一次点击就能消失的东西。
 
 - [x] 新增 `src/lib/fileTree.ts`（纯函数，不碰 DOM、不持有状态）：
-      `buildFileRows(files, { collapsed, filter })` 把扁平的 `StatusFile[]` 折成 `FileRow[]`
+      `buildFileRows(items, pathOf, { collapsed, filter })` 把一批「有路径的东西」折成 `FileRow<T>[]`
       （目录行 + 文件行，各自带 `key` / `depth` / `label`），`tailName(path)` 取路径末段。
       已配 `src/lib/fileTree.test.ts`，并登记进 `package.json` 的 `verify` 与 `tsconfig.json` 的 `exclude`
 - [x] 目录行有自己的折叠箭头、子项计数，折叠状态与分支树同构（`Set<string>`），
@@ -1161,6 +1161,11 @@
       平铺模式的 `key` 与树模式**完全一致**，所以来回切时选中项不会丢（`docs/NOTES.md` 有同名条目）。
       默认**平铺**（用户反馈）：树是可选增强，默认保持大家熟悉的样子。默认值只写在
       `DEFAULTS.changeView`，`load()` 的回退也指向它 —— 在那里写死会让改默认值悄悄不生效
+- [x] **diff 弹窗左侧的文件列表也支持切换**（用户反馈）。为此把 `buildFileRows` 改成泛型：
+      元素由调用方给 `pathOf` 说明「路径从哪来」，同一套层级逻辑于是同时服务
+      `StatusFile[]`（变更列表）与 `PatchSection[]`（diff 弹窗）—— 两边对「文件列表」的期待
+      是一样的，第二份实现迟早会分叉。section 用 `"d"`，与 `"s"` / `"u"` 的折叠状态互不影响。
+      偏好**共用** `settings.changeView`；只有一个文件时按钮不出现（没有层级可省）
 - [ ] 目录树只在变更列表里；`FileHistoryModal` 与提交详情不受影响（本轮范围如此）
 
 **取舍**：默认**全展开**而不是全折叠 —— 折叠是为了收掉不关心的，而第一眼还没看，无从判断谁不关心。

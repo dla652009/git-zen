@@ -155,9 +155,14 @@ git-zen/
 │   ├── style.css       # Tailwind v4 入口 + 各主题 token + 组合式工具类
 │   ├── lib/            # 无 DOM 依赖或可独立自检的纯模块
 │   │   ├── patch.ts         # unified / combined diff 解析
+│   │   ├── diffSearch.ts    # diff 内查找：把行切成命中/非命中片段
+│   │   ├── fileTree.ts      # 文件列表的目录树（变更列表与 diff 弹窗共用）
+│   │   ├── conflict.ts      # 冲突状态判定（isUnmerged）
 │   │   ├── safeJson.ts      # localStorage 安全解析
 │   │   ├── errors.ts        # humanize：git 错误 → 人话
 │   │   ├── overlays.ts      # 浮层优先级表（Esc 分层关闭）
+│   │   ├── focus.ts         # v-focus 指令
+│   │   ├── imeGuard.ts      # 中文输入法组合态守卫
 │   │   └── focusTrap.ts     # v-trap 指令
 │   ├── shims-vue.d.ts
 │   └── components/

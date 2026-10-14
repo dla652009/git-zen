@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
-import { X, Bot, Maximize2, Minimize2, Search, ChevronUp, ChevronDown } from "@lucide/vue";
+import { X, Bot, Maximize2, Minimize2, Search, ChevronUp, ChevronDown, ListTree, List, Folder } from "@lucide/vue";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, isAbortError } from "../ai";
 import { settings } from "../settings";
-import { patchSections, type PatchLine } from "../lib/patch";
+import { patchSections, type PatchLine, type PatchSection } from "../lib/patch";
 import { searchSections, type Segment } from "../lib/diffSearch";
+// 左侧文件列表的层级与「变更列表」共用一套逻辑：元素类型不同，但「这是不是一个文件列表」
+// 的期待是一样的，第二份实现迟早会分叉
+import { buildFileRows, type FileRow } from "../lib/fileTree";
 import { humanizeMsg } from "../lib/errors";
 import { FileDown } from "@lucide/vue";
 
@@ -163,6 +166,30 @@ watch(sections, (list) => {
   }
 }, { immediate: true });
 
+// ---- 左侧文件列表的层级视图 ----
+// 偏好与变更列表**共用** settings.changeView：我喜欢怎么看文件列表是一件事，
+// 不该在两个地方各问一次（真要分开再加一个键即可）。
+const collapsedDirs = ref(new Set<string>());
+const flatView = computed(() => settings.changeView === "flat");
+function toggleChangeView() {
+  settings.changeView = flatView.value ? "tree" : "flat";
+}
+function toggleDir(key: string) {
+  const s = new Set(collapsedDirs.value);
+  if (s.has(key)) s.delete(key);
+  else s.add(key);
+  collapsedDirs.value = s;
+}
+// section 用 "d"（diff）：key 与变更列表的 "s"/"u" 分开，折叠状态互不影响。
+// 这里不接 filter —— q 是「在 diff 里查找」，不是列表过滤，命中数仍然逐文件显示。
+const viewRows = computed<FileRow<PatchSection>[]>(() =>
+  buildFileRows(sections.value, (s) => s.file, {
+    section: "d",
+    collapsed: collapsedDirs.value,
+    flat: flatView.value,
+  })
+);
+
 // ---- diff 内搜索 ----
 // 命中跨文件连续编号，跳转时自动切到命中所在的文件 —— 多文件 diff 里只搜当前文件
 // 会让人以为没找到；左侧列表会显示每个文件各命中几处。
@@ -185,7 +212,17 @@ const segments = computed<Segment[][] | null>(() =>
   q.value.trim() ? (found.value.sections[curSectionIdx.value]?.rows ?? null) : null,
 );
 const segsFor = (li: number): Segment[] | null => segments.value?.[li] ?? null;
-const hitsOf = (si: number): number => found.value.sections[si]?.hits.length ?? 0;
+// 每个文件命中几处：左侧列表按文件取，行里拿到的是 section 而不是下标
+const hitCounts = computed(() => {
+  const m = new Map<string, number>();
+  found.value.sections.forEach((s, i) => {
+    const n = s?.hits.length ?? 0;
+    const f = sections.value[i]?.file;
+    if (n && f) m.set(f, n);
+  });
+  return m;
+});
+const hitsOfFile = (file: string): number => hitCounts.value.get(file) ?? 0;
 
 function go(d: number) {
   if (!count.value) return;
@@ -388,6 +425,20 @@ onUnmounted(() => {
             <Search class="size-3.5" />
           </Button>
         </Tooltip>
+        <!-- 视图切换：只有一个文件时没有层级可省，按钮就不出现。
+             图标画的是「切过去会变成什么」，不是当前是什么 -->
+        <Tooltip v-if="sections.length > 1" :text="flatView ? '切换到目录树' : '切换到平铺列表'">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6"
+            :aria-label="flatView ? '切换到目录树' : '切换到平铺列表'"
+            @click="toggleChangeView"
+          >
+            <ListTree v-if="flatView" class="size-3.5" />
+            <List v-else class="size-3.5" />
+          </Button>
+        </Tooltip>
         <Tooltip :text="fullscreen ? '退出全屏' : '全屏查看'">
           <Button
             variant="ghost"
@@ -452,26 +503,51 @@ onUnmounted(() => {
           :style="{ width: listWShown + 'px' }"
         >
           <ul>
-            <li
-              v-for="(s, si) in sections"
-              :key="s.file"
-              :class="[
-                'cursor-pointer border-b border-border/60 px-3 py-2 transition-colors duration-fast hover:bg-hover',
-                selectedFile === s.file && 'bg-primary-soft',
-              ]"
-              :title="s.file"
-              @click="pickFile(s.file)"
-            >
-              <div class="truncate text-xs font-medium">{{ s.file }}</div>
-              <div class="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                <span>{{ s.lines.length }} 行</span>
-                <span
-                  v-if="q.trim() && hitsOf(si)"
-                  class="shrink-0 rounded-xs bg-primary/15 px-1 text-2xs text-primary"
-                  >{{ hitsOf(si) }} 处</span
-                >
-              </div>
-            </li>
+            <template v-for="row in viewRows" :key="row.key">
+              <!-- 目录行：点整行展开/收起（与变更列表同一套交互） -->
+              <li
+                v-if="row.kind === 'dir'"
+                class="flex cursor-pointer items-center gap-1 border-b border-border/60 py-2 pr-3 text-xs whitespace-nowrap transition-colors duration-fast select-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
+                :style="{ paddingLeft: 12 + row.depth * 12 + 'px' }"
+                tabindex="0"
+                role="button"
+                :aria-expanded="!row.collapsed"
+                @click="toggleDir(row.key)"
+                @keydown.enter.prevent="toggleDir(row.key)"
+                @keydown.space.prevent="toggleDir(row.key)"
+              >
+                <ChevronDown
+                  class="size-3 shrink-0 text-muted-foreground transition-transform duration-fast"
+                  :class="row.collapsed && '-rotate-90'"
+                />
+                <Folder class="size-3 shrink-0 text-muted-foreground" />
+                <span class="truncate text-muted-foreground" :title="row.path">{{ row.label }}</span>
+                <!-- 收起时才报数量：展开着就能看见里面有几个，再报一遍是噪音 -->
+                <span v-if="row.collapsed" class="shrink-0 text-2xs text-muted-foreground">{{
+                  row.count
+                }}</span>
+              </li>
+              <!-- 文件行：位置已经表达了目录，树模式只显示文件名（完整路径在 tooltip 里）；
+                   平铺模式 label 就是完整路径 -->
+              <li
+                v-if="row.kind === 'file'"
+                class="cursor-pointer border-b border-border/60 py-2 pr-3 transition-colors duration-fast hover:bg-hover"
+                :class="selectedFile === row.item.file && 'bg-primary-soft'"
+                :style="{ paddingLeft: 12 + row.depth * 12 + 'px' }"
+                :title="row.item.file"
+                @click="pickFile(row.item.file)"
+              >
+                <div class="truncate text-xs font-medium">{{ row.label }}</div>
+                <div class="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>{{ row.item.lines.length }} 行</span>
+                  <span
+                    v-if="q.trim() && hitsOfFile(row.item.file)"
+                    class="shrink-0 rounded-xs bg-primary/15 px-1 text-2xs text-primary"
+                    >{{ hitsOfFile(row.item.file) }} 处</span
+                  >
+                </div>
+              </li>
+            </template>
           </ul>
         </aside>
         <!-- 文件列表拖宽把手 -->
