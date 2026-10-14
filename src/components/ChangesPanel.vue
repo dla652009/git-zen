@@ -47,6 +47,8 @@ const props = defineProps<{
   status: Status | null;
   busy: boolean;
   commitCount: number; // 已加载提交数：>0 才可 amend，>1 才可撤销（根提交无 HEAD~1）
+  /** App 每改动一次 stash 就自增：菜单开着时据此重取列表（index 是位置，过期列表会点错记录） */
+  stashRev?: number;
 }>();
 
 // 所有操作都抛回 App.run() 统一执行+刷新；diff 打开事件抛给 App
@@ -97,6 +99,16 @@ const stashUntracked = ref(false);
 const stashPopConfirm = ref<StashEntry | null>(null);
 const stashPopCancelBtn = ref<{ $el: HTMLButtonElement } | null>(null);
 
+// 每次打开菜单都重取：stash 列表会被别处改动（终端里的 git stash、App 自己的删除）
+async function loadStash() {
+  stashErr.value = "";
+  stashEntries.value = null; // null = 加载中
+  try {
+    stashEntries.value = await api.stashList(props.repo);
+  } catch (e) {
+    stashErr.value = humanizeMsg(e);
+  }
+}
 async function toggleStashMenu(ev: MouseEvent) {
   if (stashMenuOpen.value) {
     stashMenuOpen.value = false;
@@ -108,14 +120,17 @@ async function toggleStashMenu(ev: MouseEvent) {
     y: rect.bottom + 4,
   };
   stashMenuOpen.value = true;
-  stashErr.value = "";
-  stashEntries.value = null;
-  try {
-    stashEntries.value = await api.stashList(props.repo);
-  } catch (e) {
-    stashErr.value = humanizeMsg(e);
-  }
+  await loadStash();
 }
+// 删除记录后 index 整体前移（stash@{0}、stash@{1}… 是位置，不是身份），所以列表必须重取：
+// 留着旧列表不只是显示不对，下一次「恢复」会落到另一条记录上。列表是懒加载的、
+// 不在 App 统一重拉的 status/log/branches 里，所以靠 stashRev 自增来通知。
+watch(
+  () => props.stashRev,
+  () => {
+    if (stashMenuOpen.value) void loadStash();
+  },
+);
 // 恢复：pop=true 恢复并删除记录（冲突时 git 自动保留），pop=false 仅恢复
 function stashRestore(index: number, pop: boolean) {
   stashMenuOpen.value = false;

@@ -51,7 +51,7 @@ const DEFAULTS: Settings = {
   aiModel: "gpt-4o-mini",
   aiCommitLang: "中文",
   aiEnabled: "on",
-  changeView: "tree",
+  changeView: "flat",
 };
 
 const pickStr = (v: unknown, dflt: string): string =>
@@ -82,8 +82,12 @@ function load(): Settings {
     aiModel: pickStr(saved.aiModel, DEFAULTS.aiModel),
     aiCommitLang: pickStr(saved.aiCommitLang, DEFAULTS.aiCommitLang),
     aiEnabled: pickStr(saved.aiEnabled, DEFAULTS.aiEnabled),
-    // 只认这两个值：历史值或手改的脏值一律回退成目录树
-    changeView: saved.changeView === "flat" ? "flat" : "tree",
+    // 只认这两个值，其余（历史值、手改的脏值）回退默认值 —— 别在这里写死，
+    // 否则改 DEFAULTS 的时候会悄悄不生效
+    changeView:
+      saved.changeView === "flat" || saved.changeView === "tree"
+        ? saved.changeView
+        : DEFAULTS.changeView,
   };
 }
 

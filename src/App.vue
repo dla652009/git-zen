@@ -1498,13 +1498,20 @@ function askUndoCommit() {
     ok: () => api.undoCommit(repo.value),
   });
 }
+// stash 列表由 ChangesPanel 在打开菜单时才懒加载，不在 run() 重拉的 status/log/branches 里。
+// 而 stash 的 index 是**位置**（stash@{0}、stash@{1}…）：删掉一条之后其余记录整体前移，
+// 列表若不跟着重取，下一次「恢复」就会落到另一条记录上 —— 不只是显示不对。
+const stashRev = ref(0);
 // 删除 stash 记录（不恢复内容，不可找回）
 function askStashDrop(index: number, subject: string) {
   openConfirm({
     title: "删除 Stash 记录",
     okText: "删除记录",
     body: `确认删除「${subject}」？这条记录收纳的改动将无法恢复。`,
-    ok: () => api.stashDrop(repo.value, index),
+    ok: async () => {
+      await api.stashDrop(repo.value, index);
+      stashRev.value++;
+    },
   });
 }
 
@@ -2073,6 +2080,7 @@ onUnmounted(() => {
           :status="status"
           :busy="busy"
           :commit-count="commits.length"
+          :stash-rev="stashRev"
           @action="(fn: () => Promise<unknown>) => run(fn)"
           @open-diff="(t: DiffTarget) => (diffState = { kind: 'file', target: t })"
           @file-history="(p: string) => (fileHistoryModal = p)"
