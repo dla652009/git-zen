@@ -15,7 +15,7 @@
 
 ```bash
 pnpm tauri dev                                # 开发（首次 Rust 编译 3-5 分钟）
-pnpm verify                                   # 一把梭：契约检查 + 对比度检查 + 类型检查 + 6 个前端自检 + 构建
+pnpm verify                                   # 一把梭：契约检查 + 对比度检查 + 类型检查 + 8 个前端自检 + 构建
 npx vue-tsc --noEmit                          # 类型检查（pnpm build 内置）
 node scripts/check-contract.mjs               # 契约检查：command 注册 + gitApi↔git.rs 结构体镜像
 node scripts/check-contrast.mjs               # 对比度检查：7 套主题的 WCAG AA（改主题/配色后必跑）
@@ -24,13 +24,15 @@ node --experimental-strip-types src/lib/patch.test.ts    # diff 解析自检
 node --experimental-strip-types src/lib/overlays.test.ts # 浮层优先级自检
 node --experimental-strip-types src/lib/safeJson.test.ts # localStorage 安全解析自检
 node --experimental-strip-types src/lib/conflict.test.ts # 冲突状态码判定自检
+node --experimental-strip-types src/lib/diffSearch.test.ts # diff 内搜索自检
+node --experimental-strip-types src/lib/fileTree.test.ts  # 变更列表目录树自检
 node --experimental-strip-types src/workflow.test.ts     # 工作流数据层自检
 cd src-tauri && cargo check                   # Rust 检查
 cd src-tauri && cargo test --lib              # Rust 单测（路径校验/超时/大输出）
 pnpm tauri build                              # release（产物 src-tauri/target/release/）
 ```
 
-注意：六个 *.test.ts 自检脚本被 tsconfig `exclude` 逐个列出（不是通配），不参与 vue-tsc；**新增自检脚本必须同时加进 tsconfig.json 的 exclude，否则 `pnpm verify` 会在 vue-tsc 这一步报 `Cannot find module 'node:assert'`**。改布局/diff 解析/浮层优先级/localStorage 读写/冲突判定后手动跑（或直接 `pnpm verify`）。
+注意：八个 *.test.ts 自检脚本被 tsconfig `exclude` 逐个列出（不是通配），不参与 vue-tsc；**新增自检脚本必须同时加进 tsconfig.json 的 exclude 与 package.json 的 verify，否则 `pnpm verify` 会在 vue-tsc 这一步报 `Cannot find module 'node:assert'`**。改布局/diff 解析/浮层优先级/localStorage 读写/冲突判定/diff 搜索/目录树后手动跑（或直接 `pnpm verify`）。
 
 **`vue-tsc` 不检查模板结构**：组件少写一个结束标签（如漏 `</VueDraggable>`）它照样 exit 0，只有 Vite 的 SFC 编译会报 `Element is missing end tag`。所以 `pnpm verify` 末尾那步 `vite build` 不是多余的——它是目前**唯一**能拦住这类错误的关卡（实测：故意在探针组件里删掉一个结束标签 → `vue-tsc` exit 0、`vite build` exit 1）。
 

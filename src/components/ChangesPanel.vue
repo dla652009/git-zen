@@ -15,6 +15,10 @@ import {
   Archive,
   ArchiveRestore,
   Trash2,
+  ChevronDown,
+  Folder,
+  Search,
+  X,
 } from "@lucide/vue";
 import * as api from "../gitApi";
 import type { Status, StatusFile, StashEntry } from "../gitApi";
@@ -23,8 +27,10 @@ import { AI_PROMPTS, aiComplete, clipForAI } from "../ai";
 import { settings } from "../settings";
 import { humanizeMsg } from "../lib/errors";
 import { isUnmerged } from "../lib/conflict";
+import { buildFileRows, tailName, type FileRow } from "../lib/fileTree";
 import {
   Button,
+  Badge,
   Textarea,
   Tooltip,
   Spinner,
@@ -186,6 +192,58 @@ const unstaged = computed(() =>
   (props.status?.files ?? []).filter((f) => f.x === "?" || f.y !== " ")
 );
 
+// ---- 变更列表的目录树 ----
+// 折叠状态只活在内存里（与分支树的折叠一致，都不跨重启保留）。
+// key 自带 section 命名空间（"sd:src" / "uf:a.txt"），所以两个列表共用一个 Set 不会互相干扰。
+const collapsedDirs = ref(new Set<string>());
+function toggleDir(key: string) {
+  const next = new Set(collapsedDirs.value);
+  if (!next.delete(key)) next.add(key);
+  collapsedDirs.value = next;
+}
+
+// 过滤框：树解决了「文件去哪了」，剩下的问题是「文件在哪」。
+// 过滤在建树之前做，所以不会留下空目录；命中时目录一律展开，否则命中的文件会被藏起来。
+const fileFilter = ref("");
+const stagedRows = computed(() =>
+  buildFileRows(staged.value, {
+    section: "s",
+    collapsed: collapsedDirs.value,
+    filter: fileFilter.value,
+  })
+);
+const unstagedRows = computed(() =>
+  buildFileRows(unstaged.value, {
+    section: "u",
+    collapsed: collapsedDirs.value,
+    filter: fileFilter.value,
+  })
+);
+
+// 目录行的暂存/取消暂存：git 的 pathspec 本来就认目录，把目录当路径传进去就会展开整棵子树
+function stageDir(row: FileRow) {
+  emit("action", async () => {
+    await api.stage(props.repo, [row.path]);
+    toast(`已暂存 ${row.label}`);
+  });
+}
+function unstageDir(row: FileRow) {
+  emit("action", async () => {
+    await api.unstage(props.repo, [row.path]);
+    toast(`已取消暂存 ${row.label}`);
+  });
+}
+
+// 树里位置已经表达了目录，重命名行只显示两个**文件名**（完整路径在 tooltip 里）；
+// 两个名字相同（整目录改名，位移已经说明了一切）时返回 null，退化成只显示文件名
+function renameNames(f: StatusFile): [string, string] | null {
+  const rp = renameParts(f.path);
+  if (!rp) return null;
+  const a = tailName(rp[0]);
+  const b = tailName(rp[1]);
+  return a === b ? null : [a, b];
+}
+
 function label(f: StatusFile): string {
   if (f.x === "?") return "?"; // 未跟踪
   return (f.y !== " " ? f.y : f.x).toUpperCase();
@@ -345,6 +403,29 @@ async function genCommitMsg() {
       </Button>
     </div>
 
+    <!-- 过滤框：树解决了「文件去哪了」，剩下的问题是「文件在哪」—— 几十个文件在两个列表里
+         各滚一遍太慢。放在面板顶部而不是「未暂存」标题行，因为一个词要同时过滤两个列表，
+         而那两个标题行都已经挤满了（标签 + 徽标 + 两个按钮）。 -->
+    <div v-if="staged.length + unstaged.length" class="relative mx-3 mt-2">
+      <Search
+        class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
+      />
+      <Input
+        v-model="fileFilter"
+        class="h-7 pr-7 pl-7 text-xs"
+        placeholder="过滤文件路径"
+        aria-label="过滤文件路径"
+      />
+      <button
+        v-if="fileFilter"
+        class="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground transition-colors duration-fast hover:text-foreground"
+        aria-label="清空过滤"
+        @click="fileFilter = ''"
+      >
+        <X class="size-3.5" />
+      </button>
+    </div>
+
     <!-- 已暂存 -->
     <div class="flex items-center gap-2 px-3 pt-3 pb-1.5">
       <span class="text-2xs font-semibold tracking-wide text-muted-foreground">已暂存</span>
@@ -378,37 +459,77 @@ async function genCommitMsg() {
       </Tooltip>
     </div>
     <ul class="max-h-[34%] overflow-y-auto px-1.5">
-      <li
-        v-for="f in staged"
-        :key="'s' + f.path"
-        class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-sm px-2 py-1.5 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
-        :class="selKey === 's' + f.path && 'bg-primary-soft'"
-        @click="onRowClick('s' + f.path, () => emit('openDiff', { path: filePath(f), cached: !isUnmerged(f), untracked: false, conflict: isUnmerged(f) }))"
-        @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: true }"
-      >
-        <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
-        <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（单击选中 · 再单击查看变更）`">
-          <span class="truncate text-sm">
-            <template v-if="renameParts(f.path)">
-              <span class="text-muted-foreground line-through">{{ renameParts(f.path)![0] }}</span>
-              → {{ renameParts(f.path)![1] }}
-            </template>
-            <template v-else>{{ f.path }}</template>
-          </span>
-        </Tooltip>
-        <Tooltip text="取消暂存">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="ml-auto size-6 shrink-0 opacity-60 transition-opacity duration-fast group-hover/li:opacity-100 hover:!opacity-100 focus-visible:opacity-100"
-            :aria-label="`取消暂存 ${f.path}`"
-            @click.stop="emit('action', () => api.unstage(repo, [filePath(f)]))"
-          >
-            <Undo2 class="size-3.5" />
-          </Button>
-        </Tooltip>
-      </li>
+      <template v-for="row in stagedRows" :key="row.key">
+        <!-- 目录行：点整行展开/收起，右侧按钮对整棵子树生效 -->
+        <li
+          v-if="row.kind === 'dir'"
+          class="group/li flex cursor-pointer items-center gap-1 rounded-sm py-1.5 pr-2 text-xs whitespace-nowrap transition-colors duration-fast hover:bg-hover focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
+          :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
+          tabindex="0"
+          role="button"
+          :aria-expanded="!row.collapsed"
+          @click="toggleDir(row.key)"
+          @keydown.enter.prevent="toggleDir(row.key)"
+          @keydown.space.prevent="toggleDir(row.key)"
+        >
+          <ChevronDown
+            class="size-3 shrink-0 text-muted-foreground transition-transform duration-fast"
+            :class="row.collapsed && '-rotate-90'"
+          />
+          <Folder class="size-3.5 shrink-0 text-muted-foreground" />
+          <Tooltip :text="`${row.path} · 共 ${row.count} 个文件（单击展开/收起）`">
+            <span class="truncate text-muted-foreground">{{ row.label }}</span>
+          </Tooltip>
+          <!-- 收起时才报数量：展开着就能看见里面有几个，再报一遍是噪音 -->
+          <span v-if="row.collapsed" class="shrink-0 text-2xs text-muted-foreground">{{ row.count }}</span>
+          <Tooltip text="取消暂存此目录下的全部改动">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="ml-auto size-6 shrink-0 opacity-60 transition-opacity duration-fast group-hover/li:opacity-100 hover:!opacity-100 focus-visible:opacity-100"
+              :aria-label="`取消暂存 ${row.path}`"
+              @click.stop="unstageDir(row)"
+            >
+              <Undo2 class="size-3.5" />
+            </Button>
+          </Tooltip>
+        </li>
+        <!-- 文件行：位置已经表达了目录，名字只显示文件名（完整路径在 tooltip 里） -->
+        <li
+          v-if="row.kind === 'file'"
+          class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-sm py-1.5 pr-2 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
+          :class="selKey === row.key && 'bg-primary-soft'"
+          :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
+          @click="onRowClick(row.key, () => emit('openDiff', { path: row.path, cached: !isUnmerged(row.file), untracked: false, conflict: isUnmerged(row.file) }))"
+          @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f: row.file, cached: true }"
+        >
+          <component :is="statusMeta(row.file).icon" :class="statusMeta(row.file).cls" class="size-4 shrink-0" />
+          <Tooltip :text="`${statusMeta(row.file).desc} · ${row.file.path}（单击选中 · 再单击查看变更）`">
+            <span class="truncate text-sm">
+              <template v-if="renameNames(row.file)">
+                <span class="text-muted-foreground line-through">{{ renameNames(row.file)![0] }}</span>
+                → {{ renameNames(row.file)![1] }}
+              </template>
+              <template v-else>{{ row.label }}</template>
+            </span>
+          </Tooltip>
+          <Tooltip text="取消暂存">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="ml-auto size-6 shrink-0 opacity-60 transition-opacity duration-fast group-hover/li:opacity-100 hover:!opacity-100 focus-visible:opacity-100"
+              :aria-label="`取消暂存 ${row.path}`"
+              @click.stop="emit('action', () => api.unstage(repo, [row.path]))"
+            >
+              <Undo2 class="size-3.5" />
+            </Button>
+          </Tooltip>
+        </li>
+      </template>
       <li v-if="!staged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
+      <li v-else-if="!stagedRows.length" class="px-3 py-1.5 text-xs text-muted-foreground">
+        没有匹配的文件
+      </li>
     </ul>
 
     <!-- 未暂存 -->
@@ -443,37 +564,77 @@ async function genCommitMsg() {
       </Tooltip>
     </div>
     <ul class="min-h-[80px] flex-1 overflow-y-auto px-1.5">
-      <li
-        v-for="f in unstaged"
-        :key="'u' + f.path"
-        class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-sm px-2 py-1.5 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
-        :class="selKey === 'u' + f.path && 'bg-primary-soft'"
-        @click="onRowClick('u' + f.path, () => emit('openDiff', { path: filePath(f), cached: false, untracked: f.x === '?', conflict: isUnmerged(f) }))"
-        @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f, cached: false }"
-      >
-        <component :is="statusMeta(f).icon" :class="statusMeta(f).cls" class="size-4 shrink-0" />
-        <Tooltip :text="`${statusMeta(f).desc} · ${f.path}（单击选中 · 再单击查看变更）`">
-          <span class="truncate text-sm">
-            <template v-if="renameParts(f.path)">
-              <span class="text-muted-foreground line-through">{{ renameParts(f.path)![0] }}</span>
-              → {{ renameParts(f.path)![1] }}
-            </template>
-            <template v-else>{{ f.path }}</template>
-          </span>
-        </Tooltip>
-        <Tooltip text="暂存">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="ml-auto size-6 shrink-0 opacity-60 transition-opacity duration-fast group-hover/li:opacity-100 hover:!opacity-100 focus-visible:opacity-100"
-            :aria-label="`暂存 ${f.path}`"
-            @click.stop="emit('action', () => api.stage(repo, [filePath(f)]))"
-          >
-            <Plus class="size-3.5" />
-          </Button>
-        </Tooltip>
-      </li>
+      <template v-for="row in unstagedRows" :key="row.key">
+        <!-- 目录行：点整行展开/收起，右侧按钮对整棵子树生效 -->
+        <li
+          v-if="row.kind === 'dir'"
+          class="group/li flex cursor-pointer items-center gap-1 rounded-sm py-1.5 pr-2 text-xs whitespace-nowrap transition-colors duration-fast hover:bg-hover focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
+          :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
+          tabindex="0"
+          role="button"
+          :aria-expanded="!row.collapsed"
+          @click="toggleDir(row.key)"
+          @keydown.enter.prevent="toggleDir(row.key)"
+          @keydown.space.prevent="toggleDir(row.key)"
+        >
+          <ChevronDown
+            class="size-3 shrink-0 text-muted-foreground transition-transform duration-fast"
+            :class="row.collapsed && '-rotate-90'"
+          />
+          <Folder class="size-3.5 shrink-0 text-muted-foreground" />
+          <Tooltip :text="`${row.path} · 共 ${row.count} 个文件（单击展开/收起）`">
+            <span class="truncate text-muted-foreground">{{ row.label }}</span>
+          </Tooltip>
+          <!-- 收起时才报数量：展开着就能看见里面有几个，再报一遍是噪音 -->
+          <span v-if="row.collapsed" class="shrink-0 text-2xs text-muted-foreground">{{ row.count }}</span>
+          <Tooltip text="暂存此目录下的全部改动">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="ml-auto size-6 shrink-0 opacity-60 transition-opacity duration-fast group-hover/li:opacity-100 hover:!opacity-100 focus-visible:opacity-100"
+              :aria-label="`暂存 ${row.path}`"
+              @click.stop="stageDir(row)"
+            >
+              <Plus class="size-3.5" />
+            </Button>
+          </Tooltip>
+        </li>
+        <!-- 文件行：位置已经表达了目录，名字只显示文件名（完整路径在 tooltip 里） -->
+        <li
+          v-if="row.kind === 'file'"
+          class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-sm py-1.5 pr-2 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
+          :class="selKey === row.key && 'bg-primary-soft'"
+          :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
+          @click="onRowClick(row.key, () => emit('openDiff', { path: row.path, cached: false, untracked: row.file.x === '?', conflict: isUnmerged(row.file) }))"
+          @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f: row.file, cached: false }"
+        >
+          <component :is="statusMeta(row.file).icon" :class="statusMeta(row.file).cls" class="size-4 shrink-0" />
+          <Tooltip :text="`${statusMeta(row.file).desc} · ${row.file.path}（单击选中 · 再单击查看变更）`">
+            <span class="truncate text-sm">
+              <template v-if="renameNames(row.file)">
+                <span class="text-muted-foreground line-through">{{ renameNames(row.file)![0] }}</span>
+                → {{ renameNames(row.file)![1] }}
+              </template>
+              <template v-else>{{ row.label }}</template>
+            </span>
+          </Tooltip>
+          <Tooltip text="暂存">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="ml-auto size-6 shrink-0 opacity-60 transition-opacity duration-fast group-hover/li:opacity-100 hover:!opacity-100 focus-visible:opacity-100"
+              :aria-label="`暂存 ${row.path}`"
+              @click.stop="emit('action', () => api.stage(repo, [row.path]))"
+            >
+              <Plus class="size-3.5" />
+            </Button>
+          </Tooltip>
+        </li>
+      </template>
       <li v-if="!unstaged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
+      <li v-else-if="!unstagedRows.length" class="px-3 py-1.5 text-xs text-muted-foreground">
+        没有匹配的文件
+      </li>
     </ul>
 
     <!-- 文件右键菜单（ui/ContextMenu 统一渲染） -->

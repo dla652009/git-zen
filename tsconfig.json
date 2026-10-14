@@ -15,6 +15,7 @@
     "src/graph.test.ts",
     "src/lib/conflict.test.ts",
     "src/lib/diffSearch.test.ts",
+    "src/lib/fileTree.test.ts",
     "src/lib/overlays.test.ts",
     "src/lib/patch.test.ts",
     "src/lib/safeJson.test.ts",
