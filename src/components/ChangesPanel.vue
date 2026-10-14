@@ -17,6 +17,8 @@ import {
   Trash2,
   ChevronDown,
   Folder,
+  ListTree,
+  List,
   Search,
   X,
 } from "@lucide/vue";
@@ -205,11 +207,20 @@ function toggleDir(key: string) {
 // 过滤框：树解决了「文件去哪了」，剩下的问题是「文件在哪」。
 // 过滤在建树之前做，所以不会留下空目录；命中时目录一律展开，否则命中的文件会被藏起来。
 const fileFilter = ref("");
+
+// 视图切换：目录树 ↔ 平铺。偏好写在 settings 里而不是组件内 —— 能跨重启保留，
+// 也和主题、字号这些界面偏好待在同一处。
+const flatView = computed(() => settings.changeView === "flat");
+function toggleChangeView() {
+  settings.changeView = flatView.value ? "tree" : "flat";
+}
+
 const stagedRows = computed(() =>
   buildFileRows(staged.value, {
     section: "s",
     collapsed: collapsedDirs.value,
     filter: fileFilter.value,
+    flat: flatView.value,
   })
 );
 const unstagedRows = computed(() =>
@@ -217,6 +228,7 @@ const unstagedRows = computed(() =>
     section: "u",
     collapsed: collapsedDirs.value,
     filter: fileFilter.value,
+    flat: flatView.value,
   })
 );
 
@@ -406,8 +418,9 @@ async function genCommitMsg() {
     <!-- 过滤框：树解决了「文件去哪了」，剩下的问题是「文件在哪」—— 几十个文件在两个列表里
          各滚一遍太慢。放在面板顶部而不是「未暂存」标题行，因为一个词要同时过滤两个列表，
          而那两个标题行都已经挤满了（标签 + 徽标 + 两个按钮）。 -->
-    <div v-if="staged.length + unstaged.length" class="relative mx-3 mt-2">
-      <Search
+    <div v-if="staged.length + unstaged.length" class="mx-3 mt-2 flex items-center gap-1.5">
+      <div class="relative flex-1">
+        <Search
         class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
       />
       <Input
@@ -416,14 +429,28 @@ async function genCommitMsg() {
         placeholder="过滤文件路径"
         aria-label="过滤文件路径"
       />
-      <button
-        v-if="fileFilter"
-        class="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground transition-colors duration-fast hover:text-foreground"
-        aria-label="清空过滤"
-        @click="fileFilter = ''"
-      >
-        <X class="size-3.5" />
-      </button>
+        <button
+          v-if="fileFilter"
+          class="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground transition-colors duration-fast hover:text-foreground"
+          aria-label="清空过滤"
+          @click="fileFilter = ''"
+        >
+          <X class="size-3.5" />
+        </button>
+      </div>
+      <!-- 视图切换：图标画的是「切过去会变成什么」，不是当前是什么 —— 配 tooltip 读才没有歧义 -->
+      <Tooltip :text="flatView ? '切换到目录树' : '切换到平铺列表'">
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-7 w-7 shrink-0 text-muted-foreground"
+          :aria-label="flatView ? '切换到目录树' : '切换到平铺列表'"
+          @click="toggleChangeView"
+        >
+          <ListTree v-if="flatView" class="size-3.5" />
+          <List v-else class="size-3.5" />
+        </Button>
+      </Tooltip>
     </div>
 
     <!-- 已暂存 -->

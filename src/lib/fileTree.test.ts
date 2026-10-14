@@ -141,4 +141,42 @@ assert.deepStrictEqual(shape(buildFileRows([sf("new/dir/x.txt", "?", "?")], base
   "  x.txt",
 ]);
 
+// ---- 平铺视图：不建目录行，label 是完整路径，顺序与传入一致 ----
+{
+  const files = [sf("z.txt"), sf("src/a.ts"), sf("src/b.ts")];
+  const rows = buildFileRows(files, { ...base, flat: true });
+  assert.deepStrictEqual(shape(rows), ["z.txt", "src/a.ts", "src/b.ts"]);
+  assert.deepStrictEqual(rows.map((r) => r.depth), [0, 0, 0]);
+  assert.strictEqual(rows.every((r) => r.kind === "file"), true);
+}
+
+// ---- 平铺的 key 必须与树模式一致：来回切视图时选中项不该丢 ----
+{
+  const files = [sf("src/a.ts")];
+  const treeFile = buildFileRows(files, base).find((r) => r.kind === "file")!;
+  const flat = buildFileRows(files, { ...base, flat: true })[0]!;
+  assert.strictEqual(flat.key, treeFile.key);
+  assert.strictEqual(flat.path, "src/a.ts");
+}
+
+// ---- 平铺也过滤；没有目录行，所以收起集合对它毫无影响 ----
+{
+  const files = [sf("src/a.ts"), sf("docs/b.md")];
+  assert.deepStrictEqual(shape(buildFileRows(files, { ...base, flat: true, filter: "B.MD" })), [
+    "docs/b.md",
+  ]);
+  assert.deepStrictEqual(
+    shape(buildFileRows(files, { ...base, flat: true, collapsed: new Set(["sd:src"]) })),
+    ["src/a.ts", "docs/b.md"],
+  );
+}
+
+// ---- 平铺里的重命名同样只认新路径 ----
+{
+  const rows = buildFileRows([sf("old/x.txt -> new/x.txt", "R", " ")], { ...base, flat: true });
+  assert.deepStrictEqual(shape(rows), ["new/x.txt"]);
+  assert.strictEqual(rows[0]!.kind, "file");
+  if (rows[0]!.kind === "file") assert.strictEqual(rows[0]!.file.path, "old/x.txt -> new/x.txt");
+}
+
 console.log("file tree tests passed");

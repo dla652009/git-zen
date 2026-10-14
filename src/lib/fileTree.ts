@@ -78,12 +78,29 @@ export interface BuildOptions {
   filter?: string;
   /** 压平只含一个子目录的链，默认开 */
   compact?: boolean;
+  /** 平铺视图：不建目录行，按传入顺序一行一个文件，`label` 用完整路径 */
+  flat?: boolean;
 }
 
 export function buildFileRows(files: StatusFile[], opts: BuildOptions): FileRow[] {
   const q = (opts.filter ?? "").trim().toLowerCase();
   const forceOpen = q.length > 0;
   const compact = opts.compact ?? true;
+
+  if (opts.flat) {
+    // 平铺模式不建树：树靠层级省掉了路径前缀，平铺没有层级，前缀就得自己带上，
+    // 所以 label 取完整路径。key 的构造与树模式一致，切换视图时选中项不会丢。
+    return files
+      .filter((f) => !q || f.path.toLowerCase().includes(q))
+      .map((f) => ({
+        kind: "file" as const,
+        key: `${opts.section}f:${displayPath(f)}`,
+        label: displayPath(f),
+        path: displayPath(f),
+        depth: 0,
+        file: f,
+      }));
+  }
 
   // 过滤在建树之前做：只留下命中文件的祖先目录，不会出现空目录
   const root: Node = { seg: "", path: "", children: new Map(), count: 0 };

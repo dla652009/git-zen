@@ -13,6 +13,8 @@ export interface Settings {
   aiModel: string;
   aiCommitLang: string; // AI 生成提交信息的语言：中文 / English
   aiEnabled: string; // "on" / "off"，AI 功能总开关
+  /** 变更列表视图：目录树 / 平铺。放在设置里而不是组件内，这样能跨重启保留 */
+  changeView: "tree" | "flat";
 }
 
 export const THEMES = [
@@ -49,6 +51,7 @@ const DEFAULTS: Settings = {
   aiModel: "gpt-4o-mini",
   aiCommitLang: "中文",
   aiEnabled: "on",
+  changeView: "tree",
 };
 
 const pickStr = (v: unknown, dflt: string): string =>
@@ -79,6 +82,8 @@ function load(): Settings {
     aiModel: pickStr(saved.aiModel, DEFAULTS.aiModel),
     aiCommitLang: pickStr(saved.aiCommitLang, DEFAULTS.aiCommitLang),
     aiEnabled: pickStr(saved.aiEnabled, DEFAULTS.aiEnabled),
+    // 只认这两个值：历史值或手改的脏值一律回退成目录树
+    changeView: saved.changeView === "flat" ? "flat" : "tree",
   };
 }
 
