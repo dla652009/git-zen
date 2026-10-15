@@ -73,6 +73,9 @@ watch(
     stashMenuOpen.value = false;
     stashPushOpen.value = false;
     stashPopConfirm.value = null;
+    // AI 报错属于上一个仓库的那次尝试，不该跟着新仓库继续挂着
+    aiErr.value = "";
+    aiHint.value = false;
   },
 );
 
@@ -373,13 +376,30 @@ function applyPending() {
 // ---- AI 生成提交信息：暂存区 diff → 提交框，人工可改后再提交（不自动提交）----
 const aiBusy = ref(false);
 const aiErr = ref("");
+// 这个位置承载两种东西，生命周期不同，不能混为一谈：
+//   前置条件提示 —— 「你点了但什么都没发生」的原因，条件一满足就该自己退场
+//     （给它关闭按钮等于把「没做的事」说成做了）；
+//   请求失败 —— 常带可执行的解决办法（例如「换个模型代号」），交给用户点 × 收起。
+//     不猜秒数自动消失：读到一半就没了比一直挂着更糟。
+const aiHint = ref(false);
+
+// 前置条件成立后提示自己退场，不需要用户动手
+watch([() => settings.aiEnabled, () => staged.value.length], () => {
+  if (aiHint.value) {
+    aiErr.value = "";
+    aiHint.value = false;
+  }
+});
+
 async function genCommitMsg() {
   if (aiBusy.value) return;
   if (settings.aiEnabled !== "on") {
+    aiHint.value = true;
     aiErr.value = "AI 功能已关闭：设置 → AI 页可开启";
     return;
   }
   if (!staged.value.length) {
+    aiHint.value = true;
     aiErr.value = "先暂存文件，AI 才有 diff 可读";
     return;
   }
@@ -403,6 +423,7 @@ async function genCommitMsg() {
     if (props.repo !== repo) return; // 生成期间切走了：结果属于旧仓库，写进去会串草稿
     applyGenerated(text);
   } catch (e) {
+    aiHint.value = false;
     aiErr.value = humanizeMsg(e);
   } finally {
     aiBusy.value = false;
@@ -741,7 +762,18 @@ async function genCommitMsg() {
           </Button>
         </Tooltip>
       </div>
-      <div v-if="aiErr" class="text-xs leading-relaxed text-destructive">{{ aiErr }}</div>
+      <div v-if="aiErr" class="flex items-start gap-1.5 text-xs leading-relaxed text-destructive">
+        <span class="flex-1 break-words">{{ aiErr }}</span>
+        <!-- 前置条件提示不给关闭按钮：它随条件达成自己消失，关掉反而把「没做的事」说成做了 -->
+        <button
+          v-if="!aiHint"
+          class="shrink-0 rounded-xs p-1 text-destructive transition-opacity duration-fast hover:opacity-60"
+          aria-label="关闭提示"
+          @click="aiErr = ''"
+        >
+          <X class="size-3.5" />
+        </button>
+      </div>
       <!-- 已有草稿时不静默覆盖：覆盖 / 保留，二选一 -->
       <div
         v-if="pendingMsg"
