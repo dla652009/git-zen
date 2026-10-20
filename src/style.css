@@ -162,11 +162,12 @@
   --badge-danger-fg: #a9323b;
 
   /* 危险按钮专用色对（见 :root 注释）。
-     亮色主题偏珊瑚红而不是纯正红：#d23b42 在白底上像「血」一样压得重，
-     珊瑚色同样满足白字 4.5（bg 4.64 / hover 5.95），观感轻一档 */
-  --btn-danger-bg: #c84b3a;
-  --btn-danger-fg: #ffffff;
-  --btn-danger-bg-hover: #ae3e2f;
+     亮色主题走「浅粉底 + 深字」，和深色主题同一套语言：白字方案下配色亮度被
+     4.5:1 卡死（白字要求底色够深），想再浅就只能把字反过来。
+     bg 5.94 / hover 4.98（对 #12101c），都过 4.5 */
+  --btn-danger-bg: #ee6273;
+  --btn-danger-fg: #12101c;
+  --btn-danger-bg-hover: #dd5566;
 
   /* 关闭态轨道：原 --muted-foreground/40 合成出 #c4c4c8，白滑块只有 1.8:1，压暗到 5.2:1 */
   --switch-off-bg: #6c6c76;
