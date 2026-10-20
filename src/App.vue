@@ -258,7 +258,7 @@ async function doPush() {
 
   // 预览失败（无上游、range 不合法等）一律不挡推送本身
   let details: { hash: string; text: string }[] = [];
-  let stat = "";
+  let stats: { add: number; del: number } | undefined;
   if (upstream) {
     try {
       const list = await api.commitsRange(path, "@{upstream}");
@@ -266,7 +266,7 @@ async function doPush() {
       // 提交多的时候整段 diff 可能很大，只在小批量时数增删行
       if (ahead <= 20) {
         const { add, del } = countDiffStat(await api.diffUnpushed(path));
-        if (add || del) stat = `，+${add} −${del}`;
+        if (add || del) stats = { add, del };
       }
     } catch {
       /* 忽略：预览只是辅助信息 */
@@ -281,9 +281,10 @@ async function doPush() {
     okVariant: "default",
     action: "push",
     body: upstream
-      ? `${branch} → ${upstream}${stat}`
+      ? `${branch} → ${upstream}`
       : `${branch} 还没有上游分支。推送会在 origin 上新建 origin/${branch} 并建立跟踪。`,
     details,
+    stats,
     note: "可在 设置 › 个性化 关闭推送前预览。",
     ok: () => api.push(path, branch).then(() => toast("已推送")),
   });
@@ -1355,6 +1356,8 @@ interface ConfirmState {
   details?: { hash: string; text: string }[];
   /** 清单下方的一行补充说明 */
   note?: string;
+  /** 推送预览的增删行数（渲染成彩色胶囊，所以不能混进 body 字符串） */
+  stats?: { add: number; del: number };
   /** 透传给 run() 的动作名：run 靠它做副作用（如 push 成功后清 AI Review 缓存） */
   action?: string;
   ok: (checked: boolean) => Promise<unknown>;
@@ -2770,6 +2773,7 @@ onUnmounted(() => {
       :ok-variant="confirmState?.okVariant"
       :details="confirmState?.details"
       :note="confirmState?.note"
+      :stats="confirmState?.stats"
       @confirm="confirmOk()"
     />
   </div>

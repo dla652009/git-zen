@@ -18,6 +18,10 @@ defineProps<{
   details?: { hash: string; text: string }[];
   /** 清单下面的一行补充说明（例如「可在设置里关掉」） */
   note?: string;
+  /** 本次推送的增删行数。用 diff 的两组色（bg+text）渲染成小胶囊：
+   *  直接拿 --c-add/--c-del 当文字色在 catppuccin-latte(4.18) 与 one-dark(3.73) 上不达 4.5，
+   *  而 --diff-add-text 对 --diff-add-bg 这组本来就按文字阈值入过门 */
+  stats?: { add: number; del: number };
 }>();
 
 const emit = defineEmits<{ confirm: [] }>();
@@ -35,7 +39,17 @@ const emit = defineEmits<{ confirm: [] }>();
   >
     <div class="w-dlg-md surface rounded-lg p-5 pop-in">
       <div id="dlg-confirm-title" class="mb-3 text-base font-semibold">{{ title }}</div>
-      <div>{{ body }}</div>
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span>{{ body }}</span>
+        <span v-if="stats" class="inline-flex items-center gap-1 font-mono text-xs">
+          <span class="rounded bg-[var(--diff-add-bg)] px-1.5 py-0.5 text-[var(--diff-add-text)]">
+            +{{ stats.add }}
+          </span>
+          <span class="rounded bg-[var(--diff-del-bg)] px-1.5 py-0.5 text-[var(--diff-del-text)]">
+            −{{ stats.del }}
+          </span>
+        </span>
+      </div>
       <div
         v-if="details?.length"
         class="mt-3 max-h-56 overflow-auto rounded-md border border-border-soft bg-background/40 p-2"
