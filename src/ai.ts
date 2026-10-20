@@ -77,7 +77,13 @@ async function aiFetch(
     if (ac.signal.aborted) {
       throw timedOut ? new Error(TIMEOUT_MSG) : new AiAbortError();
     }
-    throw new Error(netMsg);
+    // 原始错误必须带出来：插件的 scope 拦截、DNS 失败、证书错误在界面上长得一模一样，
+    // 统一替换成「网络不通」时根本无从定位（本地 Base URL 连不上就是这么被藏起来的）
+    const raw = e instanceof Error ? e.message : String(e);
+    if (/url not allowed on the configured scope/i.test(raw)) {
+      throw new Error(`${netMsg} —— 该地址不在应用的网络白名单内（${raw}）`);
+    }
+    throw new Error(`${netMsg}（${raw}）`);
   } finally {
     clearTimeout(timer);
     inflight.delete(ac);

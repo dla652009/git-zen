@@ -780,3 +780,29 @@ latte 的 `--card` 是 `#e6e9ef`（比白卡暗），深色文字压在上面对
 rebase 保持明确报错（GUI 里没有终端，与其半途变基不如让人在终端处理）。命令名保留不变
 （`gitApi.ts` 与既有调用无需改动）。
 
+### 本地 AI 服务（非默认端口的 http）连不上（用户反馈）
+
+**现象**：Base URL 填 `http://127.0.0.1:3425/v1`，Key 与模型都对，服务本身用 curl 打
+`/v1/models` 与 `/v1/chat/completions` 都是 200，但应用里一律报「网络不通：无法连接 AI 服务」。
+
+**根因**两层，第二层把第一层藏了起来：
+
+1. **capability 的 URL 白名单不认非默认端口**。`http:default` 里写的是 `"http://**"`，
+   它经 urlpattern 解析后是 `hostname="**" port=""`（`parse_constructor_string` 对省略的
+   port 给出空串，空串表示「必须没有显式端口」）。于是只要带端口就匹配不上：
+   `http://127.0.0.1:3425/v1/models` → `url not allowed on the configured scope`。
+   远程服务一直正常，是因为 `https://**` 的默认端口 443 会被规范成空串 —— **这套配置从来
+   没放行过任何带端口的地址**，而本地模型服务（Ollama `11434`、LM Studio `1234`、各种代理
+   端口）全都有端口。实测对照：`http://**` / `http://*/*` 全 false，
+   `http://*:*/*` true。
+2. **`aiFetch` 把原始错误整个替换成了固定文案**（`throw new Error(netMsg)`），插件的
+   scope 拒绝、DNS 失败、证书错误在界面上长得一模一样，根本无从定位。
+
+**修复**：capabilities 补 `"http://*:*/*"` 与 `"https://*:*/*"`（任意端口、任意路径），
+opener 同步补一份；`aiFetch` 的 catch 改为把原始 message 附在文案后面，并对
+`url not allowed on the configured scope` 单独给出「不在应用的网络白名单内」的说明。
+
+**注意**：capabilities 是编译期内嵌进二进制的，改完必须重新构建才生效（`pnpm tauri dev`
+或重新打包）。
+
+
