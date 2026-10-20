@@ -166,7 +166,7 @@
      4.5:1 卡死（白字要求底色够深），想再浅就只能把字反过来。
      bg 5.94 / hover 4.98（对 #12101c），都过 4.5 */
   --btn-danger-bg: #ee6273;
-  --btn-danger-fg: #12101c;
+  --btn-danger-fg: #ffffff;
   --btn-danger-bg-hover: #dd5566;
 
   /* 关闭态轨道：原 --muted-foreground/40 合成出 #c4c4c8，白滑块只有 1.8:1，压暗到 5.2:1 */
