@@ -49,6 +49,8 @@ const props = defineProps<{
   commitCount: number; // 已加载提交数：>0 才可 amend，>1 才可撤销（根提交无 HEAD~1）
   /** App 每改动一次 stash 就自增：菜单开着时据此重取列表（index 是位置，过期列表会点错记录） */
   stashRev?: number;
+  /** 进行中的多步操作（合并/拣选/撤销/变基）：冲突全解决后要给「完成」出口 */
+  op?: { operation: string; conflicts: string[] };
 }>();
 
 // 所有操作都抛回 App.run() 统一执行+刷新；diff 打开事件抛给 App
@@ -62,6 +64,7 @@ const emit = defineEmits<{
   undo: []; // 撤销上次提交（App 侧确认）
   stashDrop: [index: number, subject: string]; // 删除 stash 记录（App 侧确认）
   abortMerge: []; // 放弃合并（App 侧确认）
+  opContinue: []; // 完成进行中的操作（App 侧调用 + 刷新）
   // 丢弃暂存区全部改动（App 侧确认：新增文件删不删要用户定）
   discardStaged: [p: { paths: string[]; count: number; newCount: number; conflictCount: number }];
 }>();
@@ -287,6 +290,20 @@ function label(f: StatusFile): string {
 // 否则只能自己去终端 merge --abort（这是唯一会把用户踢出应用的高频场景）
 const conflictFiles = computed(() => (props.status?.files ?? []).filter(isUnmerged));
 
+// 进行中的多步操作：冲突态不只是 merge，cherry-pick / revert 也会停在半路。
+// 把「还差几个文件」「能不能收尾」直接说清楚，用户不用回终端猜下一步。
+const opInfo = computed(() => {
+  const op = props.op?.operation ?? "";
+  const meta: Record<string, { title: string; noun: string }> = {
+    merge: { title: "正在合并", noun: "合并" },
+    "cherry-pick": { title: "正在拣选提交", noun: "拣选" },
+    revert: { title: "正在撤销提交", noun: "撤销" },
+    rebase: { title: "正在变基", noun: "变基" },
+  };
+  const m = meta[op];
+  return m ? { ...m, left: props.op?.conflicts.length ?? 0 } : null;
+});
+
 // 状态 → 图标 + 颜色 + 中文说明（替代字母徽标）
 const STATUS_META: Record<string, { icon: Component; cls: string; desc: string }> = {
   A: { icon: FilePlus, cls: "text-[var(--c-add)]", desc: "新增" },
@@ -433,9 +450,47 @@ async function genCommitMsg() {
 
 <template>
   <div class="flex h-full flex-col">
-    <!-- 冲突态横幅：给出「放弃合并」出口，不必回终端 -->
+    <!-- 进行中的多步操作：冲突全解决后给「完成」出口，不必回终端跑 --continue -->
     <div
-      v-if="conflictFiles.length"
+      v-if="opInfo"
+      class="mx-3 mt-3 flex items-start gap-2 rounded-md border px-2.5 py-2"
+      :class="
+        opInfo.left
+          ? 'border-[var(--c-mod)]/40 bg-[var(--c-mod)]/10'
+          : 'border-[var(--c-add)]/40 bg-[var(--c-add)]/10'
+      "
+    >
+      <GitMerge
+        class="mt-0.5 size-3.5 shrink-0"
+        :class="opInfo.left ? 'text-[var(--c-mod)]' : 'text-[var(--c-add)]'"
+      />
+      <div class="min-w-0 flex-1 text-xs leading-relaxed">
+        <div class="font-medium">
+          {{ opInfo.title }}
+          <template v-if="opInfo.left">（还剩 {{ opInfo.left }} 个冲突文件）</template>
+        </div>
+        <div class="mt-0.5 text-muted-foreground">
+          <template v-if="opInfo.left">逐个解决后「暂存」，全部暂存完就能收尾。</template>
+          <template v-else>冲突已全部解决，可以{{ opInfo.noun }}了。</template>
+        </div>
+      </div>
+      <Button
+        v-if="opInfo.left"
+        variant="ghost"
+        size="sm"
+        class="h-6 shrink-0 px-2 text-xs"
+        @click="emit('abortMerge')"
+      >
+        放弃{{ opInfo.noun }}
+      </Button>
+      <Button v-else size="sm" class="h-6 shrink-0 px-2 text-xs" @click="emit('opContinue')">
+        完成{{ opInfo.noun }}
+      </Button>
+    </div>
+
+    <!-- 冲突态横幅：没有 op 状态时（例如外部操作留下的冲突）兜底给「放弃合并」出口 -->
+    <div
+      v-if="!opInfo && conflictFiles.length"
       class="mx-3 mt-3 flex items-start gap-2 rounded-md border border-[var(--c-mod)]/40 bg-[var(--c-mod)]/10 px-2.5 py-2"
     >
       <GitMerge class="mt-0.5 size-3.5 shrink-0 text-[var(--c-mod)]" />

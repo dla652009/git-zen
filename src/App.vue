@@ -26,10 +26,12 @@ import {
   X,
   ExternalLink,
   GripVertical,
+  History,
+  LayoutGrid,
 } from "@lucide/vue";
 import * as api from "./gitApi";
 import { abortAi } from "./ai";
-import type { Status, LogEntry, Branch, TagEntry } from "./gitApi";
+import type { Status, LogEntry, Branch, TagEntry, ReflogEntry } from "./gitApi";
 import { parseBranchPrefixes, settings } from "./settings";
 import { workflows } from "./workflowStore";
 import {
@@ -64,6 +66,9 @@ import RepoSwitcher from "./components/RepoSwitcher.vue";
 import BranchSwitcher from "./components/BranchSwitcher.vue";
 import WorkflowConfirmDialog from "./components/WorkflowConfirmDialog.vue";
 import WorkflowRunDialog from "./components/WorkflowRunDialog.vue";
+import ReflogModal from "./components/ReflogModal.vue";
+import ReposOverviewModal from "./components/ReposOverviewModal.vue";
+import type { RepoOverviewRow } from "./components/ReposOverviewModal.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
@@ -1242,6 +1247,7 @@ const {
   doRefresh,
   fetchLog,
   refresh,
+  op,
   canLoadMore,
   loadingMore,
   loadMorePage,
@@ -1454,6 +1460,111 @@ function askDiscardUnpushed() {
   });
 }
 
+// ---- 时间线（reflog）：reset / amend / 覆盖掉的提交都还留在这里，是界面内的后悔药 ----
+const showReflog = ref(false);
+const reflogEntries = ref<ReflogEntry[]>([]);
+const reflogLoading = ref(false);
+
+async function openReflog() {
+  const path = repo.value;
+  if (!path) return;
+  showReflog.value = true;
+  reflogLoading.value = true;
+  try {
+    const list = await api.reflog(path);
+    // 读取期间可能已切走仓库：上一仓库的时间线挂在新仓库上会点错提交
+    if (repo.value === path) reflogEntries.value = list;
+  } catch (e) {
+    showError(String(e));
+    showReflog.value = false;
+  } finally {
+    reflogLoading.value = false;
+  }
+}
+
+function askResetTo(hash: string) {
+  const path = repo.value;
+  const dirty = status.value?.files.length ?? 0;
+  showReflog.value = false;
+  openConfirm({
+    title: "回到这个时间点",
+    okText: "回到这里",
+    body:
+      `把 ${status.value?.branch || "当前分支"} 重置到 ${hash.slice(0, 7)}。` +
+      (dirty ? `工作区 ${dirty} 个未提交的文件改动会一并丢弃。` : "") +
+      "被移走的提交仍能在时间线里找回。",
+    ok: () => api.resetTo(path, hash, "hard"),
+  });
+}
+
+// ---- 所有仓库总览：多仓库时一屏看完谁落后、谁有未提交改动 ----
+const showRepos = ref(false);
+const reposLoading = ref(false);
+const repoRows = ref<RepoOverviewRow[]>([]);
+
+async function loadRepoRows() {
+  reposLoading.value = true;
+  try {
+    const list = await Promise.all(
+      repos.value.map(async (r) => {
+        const s = await api.status(r.path).catch(() => null);
+        return {
+          path: r.path,
+          name: r.name,
+          branch: s?.branch ?? "",
+          ahead: s?.ahead ?? 0,
+          behind: s?.behind ?? 0,
+          dirty: s?.files.length ?? 0,
+        } satisfies RepoOverviewRow;
+      }),
+    );
+    repoRows.value = list;
+  } finally {
+    reposLoading.value = false;
+  }
+}
+
+function openReposOverview() {
+  showRepos.value = true;
+  void loadRepoRows();
+}
+
+// 顺序拉：并发 pull 在多仓库上是同一条网络与同一把索引锁，串行反而更快也更稳
+async function pullAllRepos() {
+  const targets = repoRows.value.filter((r) => r.behind > 0);
+  if (!targets.length) return;
+  reposLoading.value = true;
+  let ok = 0;
+  try {
+    for (const t of targets) {
+      try {
+        await api.pull(t.path);
+        ok += 1;
+      } catch {
+        // 单个失败不打断整批：失败的那个留在列表里仍然是「落后」，用户能看出来
+      }
+    }
+  } finally {
+    reposLoading.value = false;
+  }
+  await loadRepoRows();
+  if (ok) {
+    await refresh();
+    toast(`已拉取 ${ok} 个仓库`);
+  }
+}
+
+// ---- 进行中的多步操作（合并/拣选/撤销）：冲突全解决后一键收尾 ----
+function doOpContinue() {
+  const path = repo.value;
+  openConfirm({
+    title: "完成进行中的操作",
+    okText: "完成",
+    body: "冲突都已解决，继续生成这次操作的提交。",
+    ok: () => api.opContinue(path),
+  });
+}
+
 // 把当前分支合并进目标分支：切过去合并后就留在目标分支（用户要求不切回）
 function askMergeInto(b: Branch) {
   const target = b.name;
@@ -1628,6 +1739,8 @@ const overlayLayers: Record<OverlayName, OverlayLayer> = {
     open: () => !!fileHistoryModal.value,
     close: () => (fileHistoryModal.value = null),
   },
+  reflog: { open: () => showReflog.value, close: () => (showReflog.value = false) },
+  repos: { open: () => showRepos.value, close: () => (showRepos.value = false) },
   diff: { open: () => !!diffState.value, close: () => (diffState.value = null) },
 };
 
@@ -1839,6 +1952,17 @@ onUnmounted(() => {
           <GitBranchPlus class="size-4" />
         </Button>
       </Tooltip>
+      <Tooltip text="时间线（reflog：找回被覆盖的提交）">
+        <Button
+          variant="quiet"
+          size="icon"
+          :disabled="!repo || busy"
+          aria-label="时间线"
+          @click="openReflog"
+        >
+          <History class="size-4" />
+        </Button>
+      </Tooltip>
       <Tooltip text="设置">
         <Button variant="quiet" size="icon" aria-label="设置" @click="showSettings = true">
           <SettingsIcon class="size-4" />
@@ -1924,6 +2048,17 @@ onUnmounted(() => {
           </div>
         </template>
       </VueDraggable>
+      <Tooltip text="所有仓库总览">
+        <Button
+          variant="ghost"
+          size="icon"
+          class="mr-1 mb-0.5 h-6 w-6 shrink-0"
+          aria-label="所有仓库总览"
+          @click="openReposOverview"
+        >
+          <LayoutGrid class="size-4" />
+        </Button>
+      </Tooltip>
       <Tooltip text="管理分组">
         <Button variant="ghost" size="icon" class="mr-1 mb-0.5 h-6 w-6 shrink-0" @click="openGroupMgr">
           <FolderPlus class="size-4" />
@@ -2153,6 +2288,8 @@ onUnmounted(() => {
           :busy="busy"
           :commit-count="commits.length"
           :stash-rev="stashRev"
+          :op="op ?? undefined"
+          @op-continue="doOpContinue"
           @action="(fn: () => Promise<unknown>) => run(fn)"
           @open-diff="(t: DiffTarget) => (diffState = { kind: 'file', target: t })"
           @file-history="(p: string) => (fileHistoryModal = p)"
@@ -2760,6 +2897,24 @@ onUnmounted(() => {
       :detail="errDetail"
       :can-retry="!!retryFn"
       @retry="retryLast()"
+    />
+
+    <!-- 时间线（reflog）：渲染在 ReflogModal.vue -->
+    <ReflogModal
+      v-model:open="showReflog"
+      :entries="reflogEntries"
+      :loading="reflogLoading"
+      @pick="askResetTo"
+    />
+
+    <!-- 所有仓库总览：渲染在 ReposOverviewModal.vue -->
+    <ReposOverviewModal
+      v-model:open="showRepos"
+      :rows="repoRows"
+      :loading="reposLoading"
+      @open-repo="switchRepo"
+      @pull-all="pullAllRepos"
+      @refresh="loadRepoRows"
     />
 
     <!-- 确认框（删除分支/丢弃/强推/推送预览）：渲染在 ConfirmDialog.vue -->

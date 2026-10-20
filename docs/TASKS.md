@@ -1197,16 +1197,24 @@
 - [x] 可关：`settings.pushPreview`（**缺省 true**，老用户 localStorage 里没这个键也不该少掉预览），
       开关在 设置 › 个性化 › 交互。**「不再询问」式的关法必须留后路**，所以给的是设置项而不是
       弹框里的一次性勾选
-- [ ] **19.2 reflog 时间线（后悔药）**：应用里有 6 个破坏性出口（丢弃全部改动 / 丢弃暂存 /
+- [x] **19.2 reflog 时间线（后悔药）**：应用里有 6 个破坏性出口（丢弃全部改动 / 丢弃暂存 /
       硬重置回上游 / 强推 / 撤销提交 / 放弃合并），每个都有确认框 —— 但确认框只防「点错」，
       防不了「点对了但想错了」。补 `git reflog` 列表 + 回到某一步
-- [ ] **19.3 冲突的「下一步」引导**：现在冲突后唯一的出口是「放弃合并」（`ChangesPanel.vue` 的
+- [x] **19.3 冲突的「下一步」引导**：现在冲突后唯一的出口是「放弃合并」（`ChangesPanel.vue` 的
       注释自己写着「这是唯一会把用户踢出应用的高频场景」）。补「未解决 / 已解决」状态与完成合并
 - [ ] **19.4 多选提交 + 批量操作**：批量 cherry-pick / revert / 压成一条 / 导出 patch / 比较 `A..B`。
       「压成一条」（soft reset + commit）是**interactive rebase 的替代品** —— 覆盖 80% 的整理需求，
       风险低一个量级
-- [ ] **19.5 全部仓库总览**：`fetchAll` 这个名字有误导性，它其实是「fetch 一个仓库的全部 remote」。
+- [x] **19.5 全部仓库总览**：`fetchAll` 这个名字有误导性，它其实是「fetch 一个仓库的全部 remote」。
       多仓库只能逐个 tab 点，补一屏总览（落后/领先/脏工作区）+ 全部拉取
+
+- 实现记录（19.2 / 19.3 / 19.5）：`ReflogModal.vue` 列表 + 「回到这里」（走确认框，硬重置）；
+  `ChangesPanel` 新增可选 `op` prop 与 `opContinue` emit，冲突条按 merge / cherry-pick /
+  revert / rebase 分派文案与按钮；`git_merge_abort` 改为按 `detect_op` 分派 `--abort`
+  （原先只跑 `merge --abort`，在拣选 / 撤销冲突时会报「There is no merge to abort」）；
+  `ReposOverviewModal.vue` + 工具栏「时间线」与 tab 栏「所有仓库总览」两个入口；
+  `useRepoSession` 的 `refresh()` 与 `activate()` 把 `git_op_state` 并进 `Promise.all` ——
+  冲突文件是「暂存即减少」的，不跟着 status 一起刷新就会停在第一次的数字上
 
 **排序理由**：19.2 必须排在 19.4 之前 —— 后者的「压成一条」会改写历史，
 后悔药得先到位，再给可能让人后悔的操作。

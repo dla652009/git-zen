@@ -26,6 +26,8 @@ export const overlayOrder = [
   "flowRun",
   "settings",
   "fileHistory",
+  "reflog",
+  "repos",
   "diff",
 ] as const;
 

@@ -766,3 +766,17 @@ latte 的 `--card` 是 `#e6e9ef`（比白卡暗），深色文字压在上面对
 **范围**：全仓 `absolute top-1/2` 共 4 处，另外 3 处（提交搜索框、仓库切换器、分支切换器）
 的定位父级要么没有内边距、要么上下内边距对称（`p-2`），都不受影响。
 
+### 拣选 / 撤销冲突时「放弃」按钮必然失败
+
+**现象**：`git_merge_abort` 只执行 `git merge --abort`。在 cherry-pick 或 revert 因冲突停住时，
+点「放弃合并」会报 `There is no merge to abort` —— 三种操作共用同一个冲突横幅，于是其中两种
+只有「继续」没有「放弃」。
+
+**根因**：命令按单一场景命名（merge_abort）后，实现也只考虑了 merge。冲突态其实是
+`detect_op` 能识别的四种之一（merge / cherry-pick / revert / rebase），**状态探测早已泛化，
+动作没有跟着泛化**。
+
+**修复**：`git_merge_abort` 改为按 `detect_op` 分派 `merge|cherry-pick|revert --abort`，
+rebase 保持明确报错（GUI 里没有终端，与其半途变基不如让人在终端处理）。命令名保留不变
+（`gitApi.ts` 与既有调用无需改动）。
+

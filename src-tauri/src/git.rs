@@ -907,10 +907,23 @@ pub async fn git_merge(repo: String, name: String) -> Result<(), String> {
     .await
 }
 
-/// 中断冲突中的合并，工作区回到 merge 之前（git merge --abort）
+/// 中断冲突中的多步操作，工作区回到操作之前。
+///
+/// 按 detect_op 分派：原来只跑 `merge --abort`，在 cherry-pick / revert 冲突时
+/// 会报「There is no merge to abort」，于是这三种操作在界面上有「继续」没有「放弃」。
 #[tauri::command]
 pub async fn git_merge_abort(repo: String) -> Result<(), String> {
-    offload(move || run(&repo, &["merge", "--abort"]).map(|_| ())).await
+    offload(move || {
+        match detect_op(&repo)?.as_deref() {
+            Some("merge") => run(&repo, &["merge", "--abort"]),
+            Some("cherry-pick") => run(&repo, &["cherry-pick", "--abort"]),
+            Some("revert") => run(&repo, &["revert", "--abort"]),
+            Some(other) => Err(format!("当前是 {other} 状态，请在终端里放弃")),
+            None => Err("当前没有进行中的合并或拣选".into()),
+        }
+        .map(|_| ())
+    })
+    .await
 }
 
 /// 删除远程分支：git push <remote> --delete <name>

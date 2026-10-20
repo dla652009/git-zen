@@ -79,6 +79,10 @@ export function useRepoSession(opts: {
   // 操作后的刷新（run()）不带 fetch：pull/push 已更新过 refs，无需重复网络请求
   // 刷新序号：窗口聚焦、F5、操作后刷新可能并发（focus 那条不看 busy），
   // 让「后发起的那次」胜出——否则先发起的旧请求晚回来会把提交后的新状态覆盖回旧值
+  // 进行中的多步操作（合并/拣选/撤销/变基）与剩余冲突数。冲突文件是「暂存即减少」的，
+  // 所以它必须跟 status 一起刷新，否则右侧那条进度永远停在第一次的数字上。
+  const op = ref<api.OpState | null>(null);
+
   let refreshSeq = 0;
   async function refresh(opts: { fetch?: boolean } = {}) {
     // 仓库身份快照：await 期间用户可能已切走（Ctrl+Tab / Ctrl+数字绕过 busy 检查）
@@ -91,11 +95,12 @@ export function useRepoSession(opts: {
     }
     remoteLink.value = readJsonObject<Record<string, string>>("gz.remoteLinks", {})[path] ?? "";
     try {
-      const [s, l, b, tg] = await Promise.all([
+      const [s, l, b, tg, o] = await Promise.all([
         api.status(path),
         fetchLog(0, path),
         api.branches(path),
         api.tagList(path),
+        api.opState(path),
       ]);
       // 结果属于已切走的仓库：丢弃，别写进新仓库的视图与 LRU 槽（否则切回来还是错数据）
       // seq 过期同理丢弃：已有更新的一次刷新在跑，它的结果才是真相
@@ -104,6 +109,7 @@ export function useRepoSession(opts: {
       commits.value = l;
       branchList.value = b;
       tags.value = tg;
+      op.value = o;
       canLoadMore.value = l.length >= 300;
       cachePut(path, { status: s, commits: l, branchList: b, tags: tg });
     } catch (e) {
@@ -190,6 +196,9 @@ export function useRepoSession(opts: {
       api.branches(path)
         .then((b) => seq === activateSeq && (branchList.value = b))
         .catch(() => {});
+      api.opState(path)
+        .then((o) => seq === activateSeq && (op.value = o))
+        .catch(() => {});
       return;
     }
 
@@ -197,15 +206,17 @@ export function useRepoSession(opts: {
     await nextTick();
     if (seq !== activateSeq) return;
     try {
-      const [s, b, tg] = await Promise.all([
+      const [s, b, tg, o] = await Promise.all([
         api.status(path),
         api.branches(path),
         api.tagList(path),
+        api.opState(path),
       ]);
       if (seq !== activateSeq) return;
       status.value = s;
       branchList.value = b;
       tags.value = tg;
+      op.value = o;
       commits.value = [];
       canLoadMore.value = false;
       await nextTick();
@@ -226,6 +237,7 @@ export function useRepoSession(opts: {
     doRefresh,
     fetchLog,
     refresh,
+    op,
     canLoadMore,
     loadingMore,
     loadMorePage,
