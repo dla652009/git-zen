@@ -55,7 +55,12 @@ pub fn run() {
             git::git_commits_range,
             git::git_latest_tag,
             git::git_check_repo,
-            git::git_init
+            git::git_init,
+            git::git_reflog,
+            git::git_reset_to,
+            git::git_op_state,
+            git::git_op_continue,
+            git::git_squash_recent
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1424,6 +1424,184 @@ pub async fn git_init(path: String) -> Result<(), String> {
     .await
 }
 
+// ---------- 后悔药与多步操作（M19） ----------
+
+#[derive(Serialize)]
+pub struct ReflogEntry {
+    hash: String,
+    /// `HEAD@{3}` 这类选择器。它跟 `stash@{n}` 一样是**按位置编号**的，列表一变同一编号就
+    /// 指向另一条记录 —— 所以「回到这一步」永远回传 hash，不回传 selector
+    selector: String,
+    /// git 自己记的动作摘要，如 `commit: 修复 x` / `reset: moving to HEAD~1`
+    action: String,
+    date: String,
+}
+
+/// reflog：当前 HEAD 最近 200 次位置变动。
+///
+/// 应用里 6 个破坏性出口都有确认框，但确认框只防「点错」，防不了「点对了想错了」。
+/// 这是那一层缺失的兜底。
+#[tauri::command]
+pub async fn git_reflog(repo: String) -> Result<Vec<ReflogEntry>, String> {
+    offload(move || {
+        let out = match run(
+            &repo,
+            &[
+                "reflog",
+                "--date=relative",
+                "--no-color",
+                "-n",
+                "200",
+                "--pretty=format:%H%x1f%gd%x1f%gs%x1f%ad",
+            ],
+        ) {
+            Ok(o) => o,
+            // 空仓库还没有 reflog，不算错误
+            Err(e) if e.contains("does not have any commits yet") => return Ok(vec![]),
+            Err(e) => return Err(e),
+        };
+        Ok(out
+            .lines()
+            .filter_map(|l| {
+                let f: Vec<&str> = l.split('\x1f').collect();
+                (f.len() == 4).then(|| ReflogEntry {
+                    hash: f[0].into(),
+                    selector: f[1].into(),
+                    action: f[2].into(),
+                    date: f[3].into(),
+                })
+            })
+            .collect())
+    })
+    .await
+}
+
+/// 回到某个提交。mode = `hard`（工作区一起回到那一刻，会丢未提交改动）或
+/// `soft`（只挪 HEAD，改动全部留在暂存区）。
+#[tauri::command]
+pub async fn git_reset_to(repo: String, hash: String, mode: Option<String>) -> Result<(), String> {
+    offload(move || {
+        check_hex(&hash)?;
+        let hard = !matches!(mode.as_deref(), Some("soft"));
+        let flag = if hard { "--hard" } else { "--soft" };
+        run(
+            &repo,
+            &["-c", "alias.reset=reset", "reset", flag, hash.trim()],
+        )
+        .map(|_| ())
+    })
+    .await
+}
+
+/// 检测进行中的多步操作。
+///
+/// 用 `rev-parse --absolute-git-dir` 再拼文件名，而不是直接拼 `repo/.git/MERGE_HEAD`：
+/// worktree、子目录、GIT_DIR 重定向下前者才是对的。用绝对路径则是因为子进程的 cwd
+/// 是仓库根，而我们自己进程的 cwd 不是 —— 相对路径的 exists() 会判到别处去。
+fn detect_op(repo: &str) -> Result<Option<String>, String> {
+    let git_dir = run(repo, &["rev-parse", "--absolute-git-dir"])?;
+    let dir = std::path::Path::new(git_dir.trim());
+    for (name, probe) in [
+        ("merge", "MERGE_HEAD"),
+        ("cherry-pick", "CHERRY_PICK_HEAD"),
+        ("revert", "REVERT_HEAD"),
+        ("rebase", "rebase-merge"),
+    ] {
+        if dir.join(probe).exists() {
+            return Ok(Some(name.to_string()));
+        }
+    }
+    Ok(None)
+}
+
+#[derive(Serialize)]
+pub struct OpState {
+    /// "" = 没有进行中的操作；否则 merge / cherry-pick / revert / rebase
+    operation: String,
+    /// 仍未解决的冲突文件（`--diff-filter=U`）
+    conflicts: Vec<String>,
+}
+
+/// 合并/拣选/变基的状态：冲突没解决完时，前端要能告诉用户「下一步做什么」，
+/// 而不是只给一个「放弃合并」。
+#[tauri::command]
+pub async fn git_op_state(repo: String) -> Result<OpState, String> {
+    offload(move || {
+        let operation = detect_op(&repo)?.unwrap_or_default();
+        if operation.is_empty() {
+            return Ok(OpState {
+                operation,
+                conflicts: vec![],
+            });
+        }
+        let conflicts = run(&repo, &["diff", "--name-only", "--diff-filter=U"])?
+            .lines()
+            .map(String::from)
+            .collect();
+        Ok(OpState {
+            operation,
+            conflicts,
+        })
+    })
+    .await
+}
+
+/// 继续完成 merge / cherry-pick / revert。
+///
+/// 必须带 `-c core.editor=true`：`--continue` 会打开编辑器让人确认提交信息，而 GUI 里
+/// 没有终端，编辑器起不来就会永远卡在「操作进行中」——那正是「把用户踢出应用」的老毛病。
+#[tauri::command]
+pub async fn git_op_continue(repo: String) -> Result<(), String> {
+    offload(move || {
+        let op = detect_op(&repo)?;
+        let editor = ["-c", "core.editor=true"];
+        match op.as_deref() {
+            Some("merge") => run(&repo, &[editor[0], editor[1], "merge", "--continue"]),
+            Some("cherry-pick") => {
+                run(&repo, &[editor[0], editor[1], "cherry-pick", "--continue"])
+            }
+            Some("revert") => run(&repo, &[editor[0], editor[1], "revert", "--continue"]),
+            Some(other) => Err(format!("当前是 {other} 状态，请在终端里完成")),
+            None => Err("当前没有进行中的合并或拣选".into()),
+        }
+        .map(|_| ())
+    })
+    .await
+}
+
+/// 把最近 count 个提交压成一条：soft reset 到 HEAD~count 再重新提交。
+///
+/// 这是 interactive rebase 的**替代品**，不是它的完整实现：只覆盖「最近几条整理成一条」
+/// 这个 80% 的场景，但不动 reflog 以外的东西，风险低一个量级。
+///
+/// 抽成同步函数是为了能直接被单测调用（command 那层只有 offload，没有逻辑）。
+fn squash_recent_impl(repo: &str, count: u32, message: &str) -> Result<(), String> {
+    if count < 2 {
+        return Err("至少要合并 2 个提交".into());
+    }
+    let msg = message.trim();
+    if msg.is_empty() {
+        return Err("提交信息不能为空".into());
+    }
+    let target = format!("HEAD~{count}");
+    // 先验目标存在再动手：soft reset 已经改了 HEAD，才发现越界就晚了。
+    // 边界是「根提交不能一起压」—— 它没有父提交可以回退，这不是 bug 而是刻意不做的部分
+    run(repo, &["rev-parse", "--verify", "--quiet", &target]).map_err(|_| {
+        format!("当前分支的提交不足 {count} 个（最早的提交不能一起压）")
+    })?;
+    run(repo, &["-c", "alias.reset=reset", "reset", "--soft", &target])?;
+    run(repo, &["-c", "alias.commit=commit", "commit", "-m", msg]).map(|_| ())
+}
+
+#[tauri::command]
+pub async fn git_squash_recent(
+    repo: String,
+    count: u32,
+    message: String,
+) -> Result<(), String> {
+    offload(move || squash_recent_impl(&repo, count, &message)).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1962,6 +2140,120 @@ mod tests {
             conflicts,
             vec!["c.txt"],
             "冲突文件应当出现在 status 里（前端靠它显示冲突横幅）"
+        );
+    }
+
+    // ---------- M19：后悔药与多步操作 ----------
+
+    #[test]
+    fn reflog_and_reset_to_step_back() {
+        let repo = TempRepo::new("reflog");
+        commit_files(&repo, &[("a.txt", "1")], "one");
+        commit_files(&repo, &[("a.txt", "2")], "two");
+
+        let entries = tauri::async_runtime::block_on(git_reflog(repo.path().to_string())).unwrap();
+        assert!(entries.len() >= 2, "两次提交后 reflog 至少两条");
+        assert_eq!(entries[0].action, "commit: two", "reflog 最新一条在最前");
+        assert_eq!(entries[1].action, "commit (initial): one");
+
+        // 回到「那一刻」：工作区也一起回去
+        tauri::async_runtime::block_on(git_reset_to(
+            repo.path().to_string(),
+            entries[1].hash.clone(),
+            Some("hard".into()),
+        ))
+        .unwrap();
+        assert_eq!(
+            run(repo.path(), &["log", "--pretty=format:%s"]).unwrap().trim(),
+            "one"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.0.join("a.txt")).unwrap().trim(),
+            "1",
+            "hard 重置后工作区内容也回到那一刻"
+        );
+
+        // 非法 hash 在进 git 之前就该被挡住
+        assert!(tauri::async_runtime::block_on(git_reset_to(
+            repo.path().to_string(),
+            "-f".into(),
+            None
+        ))
+        .is_err());
+    }
+
+    #[test]
+    fn op_state_tracks_merge_until_continue() {
+        let repo = TempRepo::new("opstate");
+        commit_files(&repo, &[("c.txt", "base")], "base");
+        let base = branch_name(&repo);
+        run(repo.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        commit_files(&repo, &[("c.txt", "side")], "side");
+        run(repo.path(), &["checkout", "-q", &base]).unwrap();
+        commit_files(&repo, &[("c.txt", "main")], "main");
+        let _ = tauri::async_runtime::block_on(git_merge(
+            repo.path().to_string(),
+            "side".to_string(),
+        ));
+
+        let st = tauri::async_runtime::block_on(git_op_state(repo.path().to_string())).unwrap();
+        assert_eq!(st.operation, "merge", "冲突后应处于 merge 状态");
+        assert_eq!(st.conflicts, vec!["c.txt"], "未解决冲突要能列出来");
+
+        // 冲突没解决完就 continue 必须失败 —— 不能静默「成功」把用户骗过去
+        assert!(
+            tauri::async_runtime::block_on(git_op_continue(repo.path().to_string())).is_err(),
+            "冲突未解决时 --continue 应当报错"
+        );
+
+        std::fs::write(repo.0.join("c.txt"), "merged").unwrap();
+        run(repo.path(), &["add", "c.txt"]).unwrap();
+        let solved = tauri::async_runtime::block_on(git_op_state(repo.path().to_string())).unwrap();
+        assert!(
+            solved.conflicts.is_empty(),
+            "全部标记已解决后冲突列表应为空（前端据此把按钮点亮）"
+        );
+
+        // core.editor=true 是关键：没有它这里会挂起等编辑器
+        tauri::async_runtime::block_on(git_op_continue(repo.path().to_string())).unwrap();
+        let after = tauri::async_runtime::block_on(git_op_state(repo.path().to_string())).unwrap();
+        assert_eq!(after.operation, "", "完成后不应再有进行中的操作");
+        assert!(run(repo.path(), &["log", "-1", "--pretty=format:%s"])
+            .unwrap()
+            .contains("side"));
+    }
+
+    #[test]
+    fn squash_recent_keeps_content_and_guards() {
+        let repo = TempRepo::new("squash");
+        commit_files(&repo, &[("base.txt", "0")], "base");
+        commit_files(&repo, &[("a.txt", "1")], "one");
+        commit_files(&repo, &[("b.txt", "2")], "two");
+        commit_files(&repo, &[("c.txt", "3")], "three");
+
+        squash_recent_impl(repo.path(), 3, "all in one").unwrap();
+        // 4 条压掉后 3 条 → 2 条（根提交留着，它没有父可回退）
+        assert_eq!(
+            run(repo.path(), &["rev-list", "--count", "HEAD"]).unwrap().trim(),
+            "2"
+        );
+        assert_eq!(
+            run(repo.path(), &["log", "-1", "--pretty=format:%s"]).unwrap().trim(),
+            "all in one"
+        );
+        // soft reset 不动工作区：三个文件一个都不能少
+        for f in ["a.txt", "b.txt", "c.txt"] {
+            assert!(repo.0.join(f).exists(), "压成一条后 {f} 应当还在");
+        }
+
+        // 守卫：数量太少 / 提交不足 / 空提交信息，且失败时不能已经动了 HEAD
+        assert!(squash_recent_impl(repo.path(), 1, "x").is_err());
+        assert!(squash_recent_impl(repo.path(), 5, "x").is_err());
+        assert!(squash_recent_impl(repo.path(), 2, "   ").is_err());
+        assert_eq!(
+            run(repo.path(), &["rev-list", "--count", "HEAD"]).unwrap().trim(),
+            "2",
+            "被守卫拦下时 HEAD 必须原封不动"
         );
     }
 }

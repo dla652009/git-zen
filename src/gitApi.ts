@@ -210,3 +210,32 @@ export const checkRepo = (path: string) =>
 export const initRepo = (path: string) => invoke<void>("git_init", { path });
 export const writeTextFile = (path: string, content: string) =>
   invoke<void>("git_write_file", { path, content });
+
+// ---- M19 ----
+
+// reflog 时间线：selector 是按位置编号的（列表一变就指向别处），回到某一步请用 hash
+export interface ReflogEntry {
+  hash: string;
+  selector: string;
+  action: string;
+  date: string;
+}
+export const reflog = (repo: string) =>
+  invoke<ReflogEntry[]>("git_reflog", { repo });
+// 回到某一步：hard = 工作区一起回去（丢未提交改动），soft = 只挪 HEAD、改动留在暂存区
+export const resetTo = (repo: string, hash: string, mode?: "hard" | "soft") =>
+  invoke<void>("git_reset_to", { repo, hash, mode: mode ?? null });
+
+// 进行中的多步操作：operation 为空串表示没有；conflicts 是仍未解决的冲突文件
+export interface OpState {
+  operation: string;
+  conflicts: string[];
+}
+export const opState = (repo: string) =>
+  invoke<OpState>("git_op_state", { repo });
+// 继续完成 merge / cherry-pick / revert（冲突全部标记为已解决之后才有意义）
+export const opContinue = (repo: string) =>
+  invoke<void>("git_op_continue", { repo });
+// 把最近 count 个提交压成一条（soft reset + commit；interactive rebase 的有界替代品）
+export const squashRecent = (repo: string, count: number, message: string) =>
+  invoke<void>("git_squash_recent", { repo, count, message });
