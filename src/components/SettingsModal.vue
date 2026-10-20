@@ -599,6 +599,19 @@ const NAV = [
               </p>
             </section>
 
+            <section>
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">交互</h3>
+              <div class="flex items-start justify-between gap-3 rounded-md border border-border bg-muted/25 px-3 py-2">
+                <div class="min-w-0">
+                  <div class="text-xs">推送前预览</div>
+                  <p class="mt-0.5 text-xs text-muted-foreground">
+                    点推送时先列出这次要推哪些提交。推送发出去就没有撤销，建议保留。
+                  </p>
+                </div>
+                <Switch v-model="draft.pushPreview" />
+              </div>
+            </section>
+
           </template>
 
           <!-- 工作流 -->

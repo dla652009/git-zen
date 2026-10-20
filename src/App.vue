@@ -221,11 +221,72 @@ function doPull() {
     toast("已拉取");
   }, "pull");
 }
-function doPush() {
-  run(async () => {
-    await api.push(repo.value, status.value?.branch ?? "");
-    toast("已推送");
-  }, "push");
+
+// 推送前预览：推送是日常操作里唯一「做了就收不回」的一个（普通 push 没有撤销），
+// 却偏偏是工具栏上唯一不看一眼就发出去的按钮。这里先把「这次推什么」摆出来。
+// 已是最新（有上游且 ahead=0）时不拦 —— 没内容可推的弹框只会教人闭眼点确认。
+function countDiffStat(diff: string): { add: number; del: number } {
+  let add = 0;
+  let del = 0;
+  for (const line of diff.split("\n")) {
+    // 文件头 +++/--- 不是增删行，先排除，否则每个文件白送一行
+    if (line.startsWith("+++") || line.startsWith("---")) continue;
+    if (line.startsWith("+")) add++;
+    else if (line.startsWith("-")) del++;
+  }
+  return { add, del };
+}
+
+async function doPush() {
+  const path = repo.value;
+  if (!path) return;
+  const branch = status.value?.branch ?? "";
+  const ahead = status.value?.ahead ?? 0;
+  const upstream =
+    branchList.value.find((x) => x.current && !x.remote)?.upstream || "";
+
+  const pushNow = () =>
+    run(async () => {
+      await api.push(path, branch);
+      toast("已推送");
+    }, "push");
+
+  if (!settings.pushPreview || (ahead === 0 && upstream)) {
+    pushNow();
+    return;
+  }
+
+  // 预览失败（无上游、range 不合法等）一律不挡推送本身
+  let details: { hash: string; text: string }[] = [];
+  let stat = "";
+  if (upstream) {
+    try {
+      const list = await api.commitsRange(path, "@{upstream}");
+      details = list.slice(0, 100).map((c) => ({ hash: c.hash, text: c.subject }));
+      // 提交多的时候整段 diff 可能很大，只在小批量时数增删行
+      if (ahead <= 20) {
+        const { add, del } = countDiffStat(await api.diffUnpushed(path));
+        if (add || del) stat = `，+${add} −${del}`;
+      }
+    } catch {
+      /* 忽略：预览只是辅助信息 */
+    }
+  }
+  // 期间切了仓库就别再问「要不要推上一个仓库」
+  if (repo.value !== path) return;
+
+  openConfirm({
+    title: upstream ? `推送 ${ahead} 个提交` : "首次推送这个分支",
+    okText: "推送",
+    okVariant: "default",
+    action: "push",
+    body: upstream
+      ? `${branch} → ${upstream}${stat}`
+      : `${branch} 还没有上游分支。推送会在 origin 上新建 origin/${branch} 并建立跟踪。`,
+    details,
+    note: "可在 设置 › 个性化 关闭推送前预览。",
+    ok: () => api.push(path, branch).then(() => toast("已推送")),
+  });
 }
 
 async function openRepo() {
@@ -1280,7 +1341,7 @@ async function switchBranch(b: Branch) {
   await run(doSwitch);
 }
 
-// ---- 危险操作确认框（删分支/合并），支持强制删除勾选项 ----
+// ---- 危险操作确认框（删分支/合并/推送预览），支持强制删除勾选项 ----
 interface ConfirmState {
   title: string;
   body: string;
@@ -1288,6 +1349,14 @@ interface ConfirmState {
   // 按钮上直接写后果（「删除分支」而不是「确认」）：用户无法从「确认」预判会发生什么，
   // 而错误框里同一个「确认」意思是「我知道了」——同一个词两种相反语义最容易点错
   okText?: string;
+  /** 只有真正的破坏性操作才用红色主按钮（默认）；推送预览这类「确认但不是破坏」传 default */
+  okVariant?: "destructive" | "default";
+  /** 结构化清单（待推送的提交列表） */
+  details?: { hash: string; text: string }[];
+  /** 清单下方的一行补充说明 */
+  note?: string;
+  /** 透传给 run() 的动作名：run 靠它做副作用（如 push 成功后清 AI Review 缓存） */
+  action?: string;
   ok: (checked: boolean) => Promise<unknown>;
 }
 const confirmState = ref<ConfirmState | null>(null);
@@ -1313,7 +1382,7 @@ function confirmOk() {
   if (!s) return;
   const ok = s.ok;
   confirmState.value = null;
-  run(() => ok(confirmChecked.value));
+  run(() => ok(confirmChecked.value), s.action);
 }
 
 function askDelete(b: Branch) {
@@ -2690,7 +2759,7 @@ onUnmounted(() => {
       @retry="retryLast()"
     />
 
-    <!-- 危险操作确认框（删除分支/合并）：渲染在 ConfirmDialog.vue -->
+    <!-- 确认框（删除分支/丢弃/强推/推送预览）：渲染在 ConfirmDialog.vue -->
     <ConfirmDialog
       v-model:open="confirmOpen"
       v-model:checked="confirmChecked"
@@ -2698,6 +2767,9 @@ onUnmounted(() => {
       :body="confirmState?.body ?? ''"
       :checkbox="confirmState?.checkbox"
       :ok-text="confirmState?.okText"
+      :ok-variant="confirmState?.okVariant"
+      :details="confirmState?.details"
+      :note="confirmState?.note"
       @confirm="confirmOk()"
     />
   </div>

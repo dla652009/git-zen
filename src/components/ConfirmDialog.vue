@@ -11,6 +11,13 @@ defineProps<{
   body: string;
   checkbox?: string;
   okText?: string;
+  /** 默认 destructive：这个框原本只为删除/丢弃/强推这类操作而生。
+   *  推送前预览是「确认但不是破坏」，传 default 才不会误用红色当主按钮 */
+  okVariant?: "destructive" | "default";
+  /** 结构化清单（如待推送的提交）。有它就用列表渲染，正文只留一句结论 */
+  details?: { hash: string; text: string }[];
+  /** 清单下面的一行补充说明（例如「可在设置里关掉」） */
+  note?: string;
 }>();
 
 const emit = defineEmits<{ confirm: [] }>();
@@ -29,6 +36,20 @@ const emit = defineEmits<{ confirm: [] }>();
     <div class="w-dlg-md surface rounded-lg p-5 pop-in">
       <div id="dlg-confirm-title" class="mb-3 text-base font-semibold">{{ title }}</div>
       <div>{{ body }}</div>
+      <div
+        v-if="details?.length"
+        class="mt-3 max-h-56 overflow-auto rounded-md border border-border-soft bg-background/40 p-2"
+      >
+        <div
+          v-for="d in details"
+          :key="d.hash + d.text"
+          class="flex gap-2 py-0.5 text-xs"
+        >
+          <code class="shrink-0 font-mono text-muted-foreground">{{ d.hash }}</code>
+          <span class="min-w-0 break-words">{{ d.text }}</span>
+        </div>
+      </div>
+      <p v-if="note" class="mt-2 text-xs text-muted-foreground">{{ note }}</p>
       <label v-if="checkbox" class="mt-2 flex cursor-pointer items-center gap-2 text-xs">
         <input v-model="checked" type="checkbox" class="accent-[var(--primary)]" />
         {{ checkbox }}
@@ -36,7 +57,7 @@ const emit = defineEmits<{ confirm: [] }>();
       <div class="mt-5 flex justify-end gap-2">
         <!-- 危险操作的安全默认：焦点落「取消」，Enter 天然触发取消而非确认 -->
         <Button v-focus variant="ghost" size="sm" @click="open = false">取消</Button>
-        <Button variant="destructive" size="sm" @click="emit('confirm')">
+        <Button :variant="okVariant ?? 'destructive'" size="sm" @click="emit('confirm')">
           {{ okText ?? "确认执行" }}
         </Button>
       </div>

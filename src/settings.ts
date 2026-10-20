@@ -15,6 +15,9 @@ export interface Settings {
   aiEnabled: string; // "on" / "off"，AI 功能总开关
   /** 变更列表视图：目录树 / 平铺。放在设置里而不是组件内，这样能跨重启保留 */
   changeView: "tree" | "flat";
+  /** 推送前先列出这次要推哪些提交。推送是唯一一个「做了就收不回」的日常操作，
+   *  也是工具栏上唯一没有确认的按钮；嫌烦可在 设置 › 个性化 关掉 */
+  pushPreview: boolean;
 }
 
 export const THEMES = [
@@ -52,6 +55,7 @@ const DEFAULTS: Settings = {
   aiCommitLang: "中文",
   aiEnabled: "on",
   changeView: "flat",
+  pushPreview: true,
 };
 
 const pickStr = (v: unknown, dflt: string): string =>
@@ -88,6 +92,8 @@ function load(): Settings {
       saved.changeView === "flat" || saved.changeView === "tree"
         ? saved.changeView
         : DEFAULTS.changeView,
+    // 缺省即开：老用户的 localStorage 里没有这个键，不该因此少掉预览
+    pushPreview: saved.pushPreview !== false,
   };
 }
 
