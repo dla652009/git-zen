@@ -33,9 +33,26 @@ const tab = ref<"user" | "ai" | "appearance" | "personal" | "workflow" | "remote
   (props.initialTab as "user" | "ai" | "appearance" | "personal" | "workflow" | "shortcuts") || "user"
 );
 
-// AI 配置验通
-const verifying = ref(false);
-const verifyErr = ref("");
+// AI 连通性自测。原来这件事在「保存」里顺手做，结果是网络一断连设置都改不了——
+// 连通性属于「想知道就问」的问题，改成显式按钮，保存只管保存。
+const testing = ref(false);
+const testResult = ref<{ ok: boolean; msg: string } | null>(null);
+
+async function testConn() {
+  if (testing.value || !draft.aiBaseUrl.trim()) return;
+  testing.value = true;
+  testResult.value = null;
+  try {
+    await aiVerify(draft.aiBaseUrl, draft.aiApiKey);
+    testResult.value = { ok: true, msg: "连接成功" };
+  } catch (e) {
+    // 关弹窗会 abortAi()：那是用户自己的动作，不算失败
+    if (isAbortError(e)) return;
+    testResult.value = { ok: false, msg: humanizeMsg(e) };
+  } finally {
+    testing.value = false;
+  }
+}
 
 // 仓库网页链接：按仓库存 localStorage（gz.remoteLinks），留空自动推断
 const remoteLink = ref("");
@@ -72,22 +89,9 @@ onMounted(async () => {
   }
 });
 
-async function save() {
-  // AI 配了 Key 才验通；失败不关弹窗，展示错误
-  if (draft.aiBaseUrl.trim() && draft.aiApiKey.trim()) {
-    verifyErr.value = "";
-    verifying.value = true;
-    try {
-      await aiVerify(draft.aiBaseUrl, draft.aiApiKey);
-    } catch (e) {
-      verifying.value = false;
-      // 关设置页会 abortAi()：那是用户自己的动作，不算「验通失败」，别报红字
-      if (isAbortError(e)) return;
-      verifyErr.value = humanizeMsg(e);
-      return;
-    }
-    verifying.value = false;
-  }
+function save() {
+  // 保存不再顺手做网络验通：断网时连主题、字号都改不了是本末倒置，
+  // 连通性交给 AI 页的「测试连接」按钮，结果就地显示。
   Object.assign(settings, draft);
   if (props.repo && (userName.value.trim() || userEmail.value.trim())) {
     api.configUser(props.repo, userName.value.trim(), userEmail.value.trim()).catch(() => {});
@@ -492,6 +496,24 @@ const NAV = [
                     ]"
                   />
                 </div>
+              </div>
+              <div class="mt-3 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="quiet"
+                  size="sm"
+                  :disabled="testing || !draft.aiBaseUrl.trim()"
+                  @click="testConn"
+                >
+                  <Spinner v-if="testing" :size="14" />
+                  {{ testing ? "测试中…" : "测试连接" }}
+                </Button>
+                <span
+                  v-if="testResult"
+                  class="break-words text-xs"
+                  :class="testResult.ok ? 'text-foreground' : 'text-destructive'"
+                >
+                  <template v-if="testResult.ok">✓ </template>{{ testResult.msg }}
+                </span>
               </div>
               <p class="mt-2 text-xs text-muted-foreground">
                 兼容 OpenAI/DeepSeek/Kimi 等任意兼容服务；本地 Ollama 填
@@ -904,12 +926,8 @@ const NAV = [
 
         <!-- 底部操作条 -->
         <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-2.5">
-          <span v-if="verifyErr" class="mr-auto text-xs text-destructive">{{ verifyErr }}</span>
-          <Button variant="ghost" size="sm" :disabled="verifying" @click="emit('close')">取消</Button>
-          <Button variant="default" size="sm" :disabled="verifying" @click="save">
-            <Spinner v-if="verifying" :size="14" />
-            {{ verifying ? "验通中…" : "保存" }}
-          </Button>
+          <Button variant="ghost" size="sm" @click="emit('close')">取消</Button>
+          <Button variant="default" size="sm" @click="save">保存</Button>
         </footer>
       </div>
     </div>

@@ -1232,10 +1232,22 @@
 - 文件列表目录树/平铺双视图切换
 - 拖拽文件到暂存区批量 stage（「全部暂存」已覆盖主场景，优先级低）
 
-### AI 拓展（衔接 M6）
+### AI 拓展（衔接 M6，已完成）
 
-- AI 从 CONTRIBUTING.md/仓库文档学习提交规范（不只靠近期提交推断）
-- AI 总结单文件的演进历史（这个文件为什么长成这样）
+- [x] AI 从 CONTRIBUTING.md/仓库文档学习提交规范（不只靠近期提交推断）
+      —— 新增只读命令 `git_read_repo_file`（限仓库内路径、默认 16KB、二进制当不存在、
+      截断回退到 UTF-8 边界）+ `src/lib/repoDocs.ts` 按 `CONTRIBUTING.md` →
+      `.github/CONTRIBUTING.md` → `docs/CONTRIBUTING.md` → `.gitmessage` 依次找；
+      找到就作为「仓库贡献规范」喂给 `AI_PROMPTS.commitMessage.system(lang, convention)`，
+      并在提示词里明确它的优先级高于「从历史提交猜风格」
+- [x] AI 总结单文件的演进历史（这个文件为什么长成这样）
+      —— `FileHistoryModal.vue` 的头像按钮 + 可收起面板；取「首尾 + 均匀取样」最多 5 次
+      diff（最早那次改动才是理解现状的钥匙，只看最近几条讲不清）按时间正序喂给
+      `AI_PROMPTS.fileEvolution`；结果按 `${repo}::${path}` 进 aiCache，重开直接复用
+- [x] AI 设置页「测试连接」按钮：显式测试并在按钮旁就地显示结果（成功/失败原因），
+      同时把「保存」从网络验通里解耦 —— 断网时连主题都改不了是本末倒置；本地服务常无 Key，
+      所以按钮只要 Base URL 非空即可点（`aiVerify` 本来就按 Key 是否为空决定带不带 Authorization）
+
 
 ### 体验
 

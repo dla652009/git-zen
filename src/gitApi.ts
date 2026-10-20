@@ -72,6 +72,13 @@ export const diffUnpushed = (repo: string) =>
   invoke<string>("git_diff_unpushed", { repo });
 export const showFile = (repo: string, hash: string, path: string) =>
   invoke<string>("git_show_file", { repo, hash, path });
+/** 读仓库内文本文件（工作区内容）。文件不存在 / 是二进制时返回 null，不算错误 */
+export const readRepoFile = (repo: string, path: string, maxBytes?: number) =>
+  invoke<string | null>("git_read_repo_file", {
+    repo,
+    path,
+    maxBytes: maxBytes ?? null,
+  });
 export const blame = (repo: string, rev: string | null, path: string) =>
   invoke<BlameLine[]>("git_blame", { repo, rev: rev ?? null, path });
 export const fetchAll = (repo: string) => invoke<void>("git_fetch", { repo });

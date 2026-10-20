@@ -954,6 +954,50 @@ pub async fn git_show_file(repo: String, hash: String, path: String) -> Result<S
     .await
 }
 
+/// 读取仓库内某个文本文件的工作区内容。只服务于「给 AI 喂仓库约定文档」（CONTRIBUTING 等）：
+/// 路径必须落在仓库内、有大小上限、二进制直接当不存在。
+///
+/// 返回 `Option`：文件不存在是**正常情况**（多数仓库没有 CONTRIBUTING.md），
+/// 不该让调用方把它当错误处理；真正的读取失败（权限、编码）才返回 Err。
+#[tauri::command]
+pub async fn git_read_repo_file(
+    repo: String,
+    path: String,
+    max_bytes: Option<usize>,
+) -> Result<Option<String>, String> {
+    offload(move || {
+        check_repo_path(&path)?;
+        let limit = max_bytes.unwrap_or(16_384).clamp(256, 65_536);
+        let full = std::path::Path::new(&repo).join(&path);
+        let meta = match std::fs::metadata(&full) {
+            Ok(m) => m,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("读取 {path} 失败：{e}")),
+        };
+        if !meta.is_file() {
+            return Ok(None);
+        }
+        let bytes = std::fs::read(&full).map_err(|e| format!("读取 {path} 失败：{e}"))?;
+        Ok(text_prefix(&bytes, limit))
+    })
+    .await
+}
+
+/// 取字节前 `limit` 个字节当作文本：二进制（含 NUL）返回 None，
+/// 截断点落在多字节字符中间时最多回退 3 字节找 UTF-8 边界（否则末尾多一个 U+FFFD），
+/// 文件本身不是 UTF-8 时退回 lossy。
+fn text_prefix(bytes: &[u8], limit: usize) -> Option<String> {
+    if bytes.contains(&0) {
+        return None;
+    }
+    let mut end = bytes.len().min(limit);
+    let floor = end.saturating_sub(3);
+    while end > floor && std::str::from_utf8(&bytes[..end]).is_err() {
+        end -= 1;
+    }
+    Some(String::from_utf8_lossy(&bytes[..end]).into_owned())
+}
+
 /// 逐行归属（blame）。rev 为空 = blame 工作区内容；带 rev（如 `<hash>^`）= blame 指定版本。
 /// 解析 --porcelain 输出：sha 只在首次出现的块里带 author/author-time 元信息，需按 sha 缓存
 #[derive(Serialize)]
@@ -1647,6 +1691,28 @@ mod tests {
     }
 
     // ---------- 纯函数 ----------
+
+    #[test]
+    fn text_prefix_truncates_on_char_boundary() {
+        // 「约定」= 6 字节，limit=4 正好切在第二个字中间
+        let s = "约定文档";
+        assert_eq!(text_prefix(s.as_bytes(), 4).unwrap(), "约");
+        assert_eq!(text_prefix(s.as_bytes(), 6).unwrap(), "约定");
+        // 未截断时原样返回
+        assert_eq!(text_prefix(s.as_bytes(), 100).unwrap(), s);
+        // ASCII 与空输入
+        assert_eq!(text_prefix(b"abc", 2).unwrap(), "ab");
+        assert_eq!(text_prefix(b"", 10).unwrap(), "");
+    }
+
+    #[test]
+    fn text_prefix_rejects_binary_and_lossy_falls_back() {
+        // 含 NUL → 视为二进制
+        assert!(text_prefix(b"a\0b", 10).is_none());
+        // 非 UTF-8（GBK 的「约」= 0xD4 0xBC）不 panic，走 lossy
+        let out = text_prefix(&[0xD4, 0xBC, b'a'], 10).unwrap();
+        assert!(out.ends_with('a'));
+    }
 
     #[test]
     fn check_repo_path_rejects_escapes() {

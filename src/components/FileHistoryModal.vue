@@ -1,12 +1,21 @@
 <script setup lang="ts">
 // 文件变更历史双栏弹窗：左侧该文件的提交列表，右侧选中提交中此文件的 diff
 import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
-import { X, Search, ChevronUp, ChevronDown, Maximize2, Minimize2 } from "@lucide/vue";
+import { X, Bot, Search, ChevronUp, ChevronDown, Maximize2, Minimize2 } from "@lucide/vue";
 import * as api from "../gitApi";
 import type { LogEntry } from "../gitApi";
 import { patchLines } from "../lib/patch";
 import { searchSections, type Segment } from "../lib/diffSearch";
 import { humanizeMsg } from "../lib/errors";
+import {
+  AI_PROMPTS,
+  aiComplete,
+  aiCacheRead,
+  aiCacheWrite,
+  clipForAI,
+  isAbortError,
+} from "../ai";
+import { settings } from "../settings";
 import { Button, Input, Spinner, Tooltip } from "@/components/ui";
 
 const props = defineProps<{ repo: string; path: string }>();
@@ -114,6 +123,91 @@ async function select(hash: string) {
     diffLoading.value = false;
   }
 }
+
+// ---- AI 解读演进：这个文件为什么长成现在这样 ----
+const evoId = computed(() => `${props.repo}::${props.path}`);
+const evoOpen = ref(false);
+const evoBusy = ref(false);
+const evoErr = ref("");
+const evoText = ref("");
+onMounted(() => {
+  const saved = aiCacheRead("evolve", evoId.value);
+  if (saved !== undefined) {
+    evoText.value = saved;
+    evoOpen.value = true;
+  }
+});
+
+/**
+ * 挑有代表性的几次改动：首尾 + 均匀取样，最多 5 次。
+ * 全量 diff 塞不进上下文，而只看最近几条又讲不清「为什么长成这样」——
+ * 这份文件最早那次改动（创建）往往才是理解现状的钥匙。
+ */
+function pickEvoCommits(list: LogEntry[], n = 5): LogEntry[] {
+  if (list.length <= n) return [...list];
+  const idx = new Set<number>([0, list.length - 1]);
+  if (n > 2) idx.add(1);
+  const rest = n - idx.size;
+  for (let k = 1; k <= rest; k++) {
+    idx.add(Math.round(((list.length - 1) * k) / (rest + 1)));
+  }
+  return [...idx].sort((a, b) => a - b).map((i) => list[i]);
+}
+
+async function aiEvolution() {
+  if (evoBusy.value || !commits.value.length) return;
+  evoOpen.value = true;
+  if (settings.aiEnabled !== "on") {
+    evoErr.value = "AI 功能已关闭：设置 → AI 页可开启";
+    return;
+  }
+  evoBusy.value = true;
+  evoErr.value = "";
+  evoText.value = "";
+  const repo = props.repo;
+  const path = props.path;
+  try {
+    const timeline = commits.value
+      .slice(0, 40)
+      .map((c) => `${c.hash.slice(0, 7)} ${c.date} ${c.author} ${c.subject}`)
+      .join("\n");
+    // 取 diff 时按时间正序（旧→新），模型的「演进」叙述才不会倒着讲
+    const picks = [...pickEvoCommits(commits.value)].reverse();
+    const parts: string[] = [];
+    for (const c of picks) {
+      try {
+        const d = await api.showFile(repo, c.hash, path);
+        if (d.trim()) {
+          parts.push(`--- ${c.hash.slice(0, 7)}（${c.date} ${c.subject}）---\n${clipForAI(d, 1800)}`);
+        }
+      } catch {
+        // 单个提交取不到 diff 不影响整体（例如改名前的路径差异）
+      }
+    }
+    const user = `【文件】${path}
+
+【提交时间线（新→旧，最多 40 条；该文件共 ${commits.value.length} 个提交）】
+${timeline || "（无提交历史）"}
+
+【若干次关键改动的 diff（旧→新）】
+${parts.join("\n\n") || "（取不到 diff）"}`;
+    const text = await aiComplete(AI_PROMPTS.fileEvolution.system, clipForAI(user));
+    if (props.repo !== repo || props.path !== path) return;
+    evoText.value = text;
+    aiCacheWrite("evolve", evoId.value, text);
+  } catch (e) {
+    if (isAbortError(e)) return;
+    evoErr.value = humanizeMsg(e);
+  } finally {
+    evoBusy.value = false;
+  }
+}
+
+function closeEvo() {
+  evoOpen.value = false;
+  evoText.value = "";
+  evoErr.value = "";
+}
 </script>
 
 <template>
@@ -134,6 +228,19 @@ async function select(hash: string) {
         <span id="dlg-file-history-title" class="truncate font-medium">{{ path }}</span>
         <span class="shrink-0 text-xs text-muted-foreground">文件变更历史 · {{ commits.length }} 个提交</span>
         <span class="flex-1" />
+        <Tooltip text="AI 解读这个文件的演进">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="h-6 w-6"
+            aria-label="AI 解读演进历史"
+            :disabled="!commits.length"
+            @click="aiEvolution"
+          >
+            <Bot v-if="!evoBusy" class="size-3.5" :class="evoText ? 'text-primary' : ''" />
+            <Spinner v-else :size="14" aria-label="解读中" />
+          </Button>
+        </Tooltip>
         <Tooltip text="搜索（Ctrl+F）">
           <Button
             ref="searchBtn"
@@ -187,6 +294,24 @@ async function select(hash: string) {
         <Button variant="quiet" size="icon" class="h-6 w-6" aria-label="关闭搜索" @click="closeSearch">
           <X class="size-3.5" />
         </Button>
+      </div>
+
+      <!-- AI 演进解读：与 diff 主区并列的一条可收起面板 -->
+      <div
+        v-if="evoOpen"
+        class="max-h-[45%] shrink-0 overflow-auto border-b border-border bg-muted/25 px-4 py-2.5"
+      >
+        <div class="mb-1 flex items-center gap-2">
+          <Bot class="size-3.5 shrink-0 text-primary" />
+          <span class="text-xs font-medium">AI 演进解读</span>
+          <span class="flex-1" />
+          <Button variant="quiet" size="icon" class="h-6 w-6" aria-label="收起解读" @click="closeEvo">
+            <X class="size-3.5" />
+          </Button>
+        </div>
+        <Spinner v-if="evoBusy" label="解读中…" />
+        <div v-else-if="evoErr" class="text-xs text-destructive">{{ evoErr }}</div>
+        <div v-else-if="evoText" class="select-text whitespace-pre-wrap text-xs leading-relaxed">{{ evoText }}</div>
       </div>
 
       <div class="flex min-h-0 flex-1">

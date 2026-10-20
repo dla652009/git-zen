@@ -28,6 +28,7 @@ import type { DiffTarget } from "./DiffViewer.vue";
 import { AI_PROMPTS, aiComplete, clipForAI } from "../ai";
 import { settings } from "../settings";
 import { humanizeMsg } from "../lib/errors";
+import { readCommitConvention } from "../lib/repoDocs";
 import { isUnmerged } from "../lib/conflict";
 import { buildFileRows, displayPath, tailName, type FileRow } from "../lib/fileTree";
 import {
@@ -435,8 +436,15 @@ async function genCommitMsg() {
       .slice(0, 10)
       .map((c) => c.subject)
       .join("\n");
-    const user = `【仓库近期提交风格】\n${recentLog || "（无历史提交）"}\n\n【暂存区 diff】\n${clipForAI(d)}`;
-    const text = await aiComplete(AI_PROMPTS.commitMessage.system(settings.aiCommitLang), user);
+    // 仓库自己写明的规范比「从历史里猜」权威：有 CONTRIBUTING 就一起给模型
+    const convention = await readCommitConvention(repo);
+    const user = `${
+      convention ? `【仓库贡献规范】\n${convention}\n\n` : ""
+    }【仓库近期提交风格】\n${recentLog || "（无历史提交）"}\n\n【暂存区 diff】\n${clipForAI(d)}`;
+    const text = await aiComplete(
+      AI_PROMPTS.commitMessage.system(settings.aiCommitLang, convention),
+      user,
+    );
     if (props.repo !== repo) return; // 生成期间切走了：结果属于旧仓库，写进去会串草稿
     applyGenerated(text);
   } catch (e) {
