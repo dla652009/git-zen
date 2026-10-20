@@ -1870,7 +1870,8 @@ onUnmounted(() => {
         v-if="refreshing"
         class="absolute inset-0 z-20 grid place-items-center bg-background/50 text-sm backdrop-blur-[2px]"
       >
-        <Spinner label="刷新中…" />
+        <!-- 只留 loading 图标：文字在这里除了再说明一遍「在刷新」没有别的作用 -->
+        <Spinner :size="20" aria-label="刷新中" />
       </div>
     </Transition>
     <!-- 窗口镶边（header / 选项卡栏 / footer）统一用卡片色，工作区回落画布色：
