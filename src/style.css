@@ -162,12 +162,11 @@
   --badge-danger-fg: #a9323b;
 
   /* 危险按钮专用色对（见 :root 注释）。
-     亮色主题走「浅粉底 + 深字」，和深色主题同一套语言：白字方案下配色亮度被
-     4.5:1 卡死（白字要求底色够深），想再浅就只能把字反过来。
-     bg 5.94 / hover 4.98（对 #12101c），都过 4.5 */
-  --btn-danger-bg: #ee6273;
-  --btn-danger-fg: #12101c;
-  --btn-danger-bg-hover: #dd5566;
+     亮色主题保持白字，所以底色亮度被 4.5:1 卡死：再浅的粉（#ee6273 那档）白字只有
+     3.17，过不了门禁。取「偏粉」而不是「更浅」—— #c7405f 白字 4.85 / hover 6.23。 */
+  --btn-danger-bg: #c7405f;
+  --btn-danger-fg: #ffffff;
+  --btn-danger-bg-hover: #ad3352;
 
   /* 关闭态轨道：原 --muted-foreground/40 合成出 #c4c4c8，白滑块只有 1.8:1，压暗到 5.2:1 */
   --switch-off-bg: #6c6c76;
