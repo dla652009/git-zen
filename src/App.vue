@@ -923,7 +923,7 @@ function askCloseOthers(path: string) {
   tabCtx.value = null;
   const n = repos.value.filter((r) => !r.group && r.path !== path).length;
   if (!n) {
-    toast("没有其他选项卡可关闭");
+    toast("没有其他选项卡可关闭", "info");
     return;
   }
   openConfirm({
@@ -1433,7 +1433,7 @@ function askMerge(b: Branch) {
         await refresh();
         const n = (status.value?.files ?? []).filter(isUnmerged).length;
         if (!n) throw e; // 没有冲突文件 = 真失败（分支名不存在、本地改动会被覆盖…），照旧报错
-        toast(`合并有 ${n} 个文件冲突，解决后暂存并提交即完成合并`);
+        toast(`合并有 ${n} 个文件冲突，解决后暂存并提交即完成合并`, "warn");
       }
     },
   });
