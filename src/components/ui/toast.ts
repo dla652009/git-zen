@@ -22,12 +22,64 @@ let seq = 0;
 // 拉太长会一直挡着顶部的历史区。
 const DURATION = 2600;
 
+// 每条提示自己的倒计时。鼠标停上去时整组暂停 —— 展开是为了读，
+// 读到一半被自己触发的超时收走，展开就成了摆设。
+interface TimerState {
+  startedAt: number;
+  remaining: number;
+  handle: ReturnType<typeof setTimeout> | null;
+}
+const timers = new Map<number, TimerState>();
+let paused = false;
+
+function armTimer(id: number, st: TimerState) {
+  st.startedAt = Date.now();
+  st.handle = setTimeout(() => dismiss(id), st.remaining);
+}
+
+function dismiss(id: number) {
+  const i = toasts.findIndex((t) => t.id === id);
+  if (i !== -1) toasts.splice(i, 1);
+  timers.delete(id);
+}
+
 export function toast(text: string, kind: ToastKind = "success") {
   const id = ++seq;
   toasts.push({ id, text, kind });
-  if (toasts.length > 4) toasts.shift();
-  setTimeout(() => {
-    const i = toasts.findIndex((t) => t.id === id);
-    if (i !== -1) toasts.splice(i, 1);
-  }, DURATION);
+  // 超出上限丢掉最旧的一条：它的计时器也要一起清，否则会在 id 早已消失后触发一次空查找
+  while (toasts.length > 4) {
+    const dropped = toasts.shift();
+    if (dropped) {
+      const st = timers.get(dropped.id);
+      if (st?.handle) clearTimeout(st.handle);
+      timers.delete(dropped.id);
+    }
+  }
+  const st: TimerState = { startedAt: 0, remaining: DURATION, handle: null };
+  timers.set(id, st);
+  // 展开状态下新来的那条同样不自动消失：用户正停在那里看
+  if (!paused) armTimer(id, st);
+}
+
+/** 暂停整组倒计时（鼠标移入展开时调用） */
+export function pauseToasts() {
+  if (paused) return;
+  paused = true;
+  const now = Date.now();
+  for (const st of timers.values()) {
+    if (st.handle !== null) {
+      clearTimeout(st.handle);
+      st.handle = null;
+      st.remaining = Math.max(0, st.remaining - (now - st.startedAt));
+    }
+  }
+}
+
+/** 恢复倒计时（鼠标移出时调用）：按各自的剩余时间继续，而不是重新计满 */
+export function resumeToasts() {
+  if (!paused) return;
+  paused = false;
+  for (const [id, st] of timers) {
+    if (st.handle === null) armTimer(id, st);
+  }
 }
