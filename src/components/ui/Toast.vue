@@ -11,7 +11,7 @@
 // 多条并存时叠成一摞而不是竖排平铺：竖排会把顶部的历史区挡掉一大片，
 // 而用户此刻只关心「刚刚那一下」。最新的一条在最前面，旧的压到后面并缩小淡出。
 // 鼠标停上去整摞展开成竖排（并暂停倒计时）—— 折叠只剩「有几条」，展开才读得到内容。
-import { computed, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { pauseToasts, resumeToasts, toasts, type ToastKind } from "./toast";
 import { CheckCircle2, Info, TriangleAlert } from "@lucide/vue";
 
@@ -44,6 +44,33 @@ const visible = computed(() => (expanded.value ? all.value : stack.value));
 // 只有多条时才需要交互；单条保持 pointer-events-none，不挡下面任何点击
 const interactive = computed(() => toasts.length > 1);
 
+// 展开后的纵向位置：只能量出来。卡片高度取决于文案几行，写死间距会让第二张咬进第一张。
+// 折叠态里后面几张也一直在渲染（只是被压住），所以尺寸随时可读，展开那一刻不必等布局。
+const heights = reactive<Record<number, number>>({});
+const els = new Map<number, HTMLElement>();
+const GAP = 6;
+
+function setCard(id: number, el: unknown) {
+  if (el instanceof HTMLElement) els.set(id, el);
+  else els.delete(id);
+}
+
+async function measure() {
+  await nextTick();
+  for (const [id, el] of els) heights[id] = el.offsetHeight;
+}
+
+// 文案变化、增删条目都会改变高度；窗口变窄会让文案折行，也得重量
+watch([() => toasts.length, expanded], measure, { immediate: true });
+onMounted(() => {
+  window.addEventListener("resize", measure);
+  void measure();
+});
+onUnmounted(() => {
+  window.removeEventListener("resize", measure);
+  resumeToasts();
+});
+
 function onEnter() {
   if (!interactive.value) return;
   expanded.value = true;
@@ -59,11 +86,18 @@ function onLeave() {
 /**
  * 用 CSS 变量而不是内联 transform/opacity：进入/离开动画也要写这两个属性，
  * 内联样式会把动画的起点值直接覆盖掉（层一多就能看出来只有最前面那条在动）。
- * 展开时全部归位 —— 位置差交给文档流的 gap，不再是视觉上的错位。
+ * 展开与折叠都只是改变这几个变量 —— 位置永远由 transform 表达，才谈得上「有动画」；
+ * 若靠 absolute ↔ relative 切换来排布，布局是瞬变的，没有任何属性可过渡，只能硬切。
  */
+function offsetOf(i: number) {
+  let ty = 0;
+  for (let k = 0; k < i; k++) ty += (heights[visible.value[k].id] ?? 0) + GAP;
+  return ty;
+}
+
 function layerStyle(i: number) {
   if (expanded.value) {
-    return { "--ty": "0px", "--sc": "1", "--op": "1", zIndex: 30 - i };
+    return { "--ty": `${offsetOf(i)}px`, "--sc": "1", "--op": "1", zIndex: 30 - i };
   }
   return {
     "--ty": `${i * 6}px`,
@@ -76,8 +110,7 @@ function layerStyle(i: number) {
 
 <template>
   <div
-    class="pointer-events-none fixed top-[84px] left-1/2 z-[60] flex w-fit max-w-[min(560px,80vw)] -translate-x-1/2 flex-col gap-1.5"
-    :class="expanded ? '' : 'toast-deck'"
+    class="pointer-events-none fixed top-[84px] left-1/2 z-[60] w-fit max-w-[min(560px,80vw)] -translate-x-1/2"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
@@ -85,12 +118,13 @@ function layerStyle(i: number) {
       <div
         v-for="(t, i) in visible"
         :key="t.id"
+        :ref="(el) => setCard(t.id, el)"
         role="status"
         aria-live="polite"
         :aria-hidden="!expanded && i > 0 ? 'true' : undefined"
         class="toast-item surface-menu flex items-start gap-2 rounded-md px-4 py-2.5 text-sm"
         :class="[
-          expanded || i === 0 ? 'relative' : 'absolute inset-x-0 top-0 origin-top',
+          i === 0 ? 'relative' : 'absolute inset-x-0 top-0 origin-top',
           interactive ? 'pointer-events-auto' : '',
         ]"
         :style="layerStyle(i)"
@@ -115,10 +149,15 @@ function layerStyle(i: number) {
 </template>
 
 <style scoped>
-/* 位移与缩放都由 --ty / --sc 驱动，进入与离开动画才有统一的起点 */
+/* 位移与缩放都由 --ty / --sc 驱动，进入与离开动画才有统一的起点。
+   基础态就带 transition：展开/折叠改的是这三个变量，靠 transform 过渡才有「收放」的感觉 */
 .toast-item {
   transform: translateY(var(--ty, 0)) scale(var(--sc, 1));
   opacity: var(--op, 1);
+  transition:
+    transform 0.18s ease,
+    opacity 0.18s ease;
+  will-change: transform, opacity;
 }
 .toast-enter-active,
 .toast-leave-active {
@@ -126,9 +165,8 @@ function layerStyle(i: number) {
     transform 0.18s ease,
     opacity 0.18s ease;
 }
-/* 折叠时离开的那条脱离文档流，否则它和新来的那条会在 0.18 秒里叠成两行、容器高度跳一下。
-   展开成竖排后要留在原位，否则它会盖到最上面那条身上 */
-.toast-deck .toast-leave-active {
+/* 离开的那条脱离文档流，否则它和新来的那条会在 0.18 秒里叠成两行、容器高度跳一下 */
+.toast-leave-active {
   position: absolute;
   left: 0;
   right: 0;
