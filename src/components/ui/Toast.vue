@@ -50,24 +50,48 @@ const heights = reactive<Record<number, number>>({});
 const els = new Map<number, HTMLElement>();
 const GAP = 6;
 
+// 宽度只在「这一批提示存活期间」增长，不随条数减少而收缩。
+//
+// 起因：容器原本 w-fit，宽度由最前面那张（文档流里唯一的元素）决定。前面那张一走，
+// 第二张从 absolute（被拉到容器宽度）变成 relative，就按自己的文案重新排版 ——
+// 宽度骤减、长句在窄框里一行只放得下一个字，看着像竖排。
+// 条数减少时强行保住旧宽度，就没有任何一张卡片会在这批提示消失前被重排。
+const box = ref<HTMLElement | null>(null);
+const width = ref<number | null>(null);
+
 function setCard(id: number, el: unknown) {
   if (el instanceof HTMLElement) els.set(id, el);
   else els.delete(id);
 }
 
-async function measure() {
+async function syncLayout() {
   await nextTick();
   for (const [id, el] of els) heights[id] = el.offsetHeight;
+
+  const el = box.value;
+  if (!el) return;
+  // 整批清空后复位，下一条重新按自己的文案收紧
+  if (!toasts.length) {
+    width.value = null;
+    return;
+  }
+  const prev = width.value;
+  el.style.width = ""; // 先量自然宽度，再取「旧值 / 自然值」中较大的
+  const natural = el.offsetWidth;
+  const next = prev === null ? natural : Math.max(prev, natural);
+  // 直接写回内联样式：下面 if 不成立时 width 不会变化，Vue 不会把刚才清掉的那一下补回来
+  el.style.width = `${next}px`;
+  if (width.value !== next) width.value = next;
 }
 
 // 文案变化、增删条目都会改变高度；窗口变窄会让文案折行，也得重量
-watch([() => toasts.length, expanded], measure, { immediate: true });
+watch([() => toasts.length, expanded], syncLayout, { immediate: true });
 onMounted(() => {
-  window.addEventListener("resize", measure);
-  void measure();
+  window.addEventListener("resize", syncLayout);
+  void syncLayout();
 });
 onUnmounted(() => {
-  window.removeEventListener("resize", measure);
+  window.removeEventListener("resize", syncLayout);
   resumeToasts();
 });
 
@@ -110,7 +134,9 @@ function layerStyle(i: number) {
 
 <template>
   <div
-    class="pointer-events-none fixed top-[84px] left-1/2 z-[60] w-fit max-w-[min(560px,80vw)] -translate-x-1/2"
+    ref="box"
+    class="pointer-events-none fixed top-[84px] left-1/2 z-[60] max-w-[min(560px,80vw)] -translate-x-1/2"
+    :style="width === null ? undefined : { width: `${width}px` }"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
