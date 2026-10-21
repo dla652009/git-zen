@@ -46,18 +46,21 @@ const interactive = computed(() => toasts.length > 1);
 
 // 展开后的纵向位置：只能量出来。卡片高度取决于文案几行，写死间距会让第二张咬进第一张。
 // 折叠态里后面几张也一直在渲染（只是被压住），所以尺寸随时可读，展开那一刻不必等布局。
+//
+// 宽度**不靠 JS 量**，由模板里那组「尺子」（.toast-ghost）决定。
+//
+// 踩过的坑：第一版用 w-fit —— 宽度由文档流里唯一那个元素（最前面一张）决定，
+// 前面那张一走，第二张从 absolute（被容器拉宽）变成 relative 按自己的文案重排，
+// 宽度骤减、长句一行只放得下一个字，看着像竖排。第二版改成 JS 逐次量 offsetWidth
+// 并取 max —— 又是循环依赖：量的时候容器的宽度本身就受上一轮结果约束，只能量出
+// 「已经被挤窄的宽度」，于是越量越窄，最后一条短文案也被迫折行。
+//
+// 现在改用纯 CSS：容器 width:max-content，高度 0 的尺子把每条文案按「单行」撑出来，
+// 容器取其中最宽的那条，卡片统一填满它。所有宽度都 ≥ 各自文案的单行宽度，
+// 什么时候消失都不会把剩下的卡片挤窄。
 const heights = reactive<Record<number, number>>({});
 const els = new Map<number, HTMLElement>();
 const GAP = 6;
-
-// 宽度只在「这一批提示存活期间」增长，不随条数减少而收缩。
-//
-// 起因：容器原本 w-fit，宽度由最前面那张（文档流里唯一的元素）决定。前面那张一走，
-// 第二张从 absolute（被拉到容器宽度）变成 relative，就按自己的文案重新排版 ——
-// 宽度骤减、长句在窄框里一行只放得下一个字，看着像竖排。
-// 条数减少时强行保住旧宽度，就没有任何一张卡片会在这批提示消失前被重排。
-const box = ref<HTMLElement | null>(null);
-const width = ref<number | null>(null);
 
 function setCard(id: number, el: unknown) {
   if (el instanceof HTMLElement) els.set(id, el);
@@ -67,21 +70,6 @@ function setCard(id: number, el: unknown) {
 async function syncLayout() {
   await nextTick();
   for (const [id, el] of els) heights[id] = el.offsetHeight;
-
-  const el = box.value;
-  if (!el) return;
-  // 整批清空后复位，下一条重新按自己的文案收紧
-  if (!toasts.length) {
-    width.value = null;
-    return;
-  }
-  const prev = width.value;
-  el.style.width = ""; // 先量自然宽度，再取「旧值 / 自然值」中较大的
-  const natural = el.offsetWidth;
-  const next = prev === null ? natural : Math.max(prev, natural);
-  // 直接写回内联样式：下面 if 不成立时 width 不会变化，Vue 不会把刚才清掉的那一下补回来
-  el.style.width = `${next}px`;
-  if (width.value !== next) width.value = next;
 }
 
 // 文案变化、增删条目都会改变高度；窗口变窄会让文案折行，也得重量
@@ -134,12 +122,25 @@ function layerStyle(i: number) {
 
 <template>
   <div
-    ref="box"
-    class="pointer-events-none fixed top-[84px] left-1/2 z-[60] max-w-[min(560px,80vw)] -translate-x-1/2"
-    :style="width === null ? undefined : { width: `${width}px` }"
+    class="pointer-events-none fixed top-[84px] left-1/2 z-[60] w-max max-w-[min(560px,80vw)] -translate-x-1/2"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
+    <!-- 尺子：高度 0、不绘制，只负责把每条文案按「单行」撑出来给容器定宽。
+         卡片是绝对定位的，不参与容器宽度计算，所以必须有这么一个在文档流里的元素。 -->
+    <div class="toast-ghost flex flex-col" aria-hidden="true">
+      <div
+        v-for="t in all"
+        :key="`ruler-${t.id}`"
+        class="flex items-start gap-2 px-4 py-2.5 text-sm"
+      >
+        <span class="size-4 shrink-0" />
+        <span class="whitespace-nowrap">{{ t.text }}</span>
+        <!-- 角标占位：折叠时前卡右侧还要放 +N，不预留会让文案少掉 20px -->
+        <span class="shrink-0 px-1.5 text-2xs">{{ overflow ? "+9" : "" }}</span>
+      </div>
+    </div>
+
     <TransitionGroup name="toast">
       <div
         v-for="(t, i) in visible"
@@ -175,6 +176,13 @@ function layerStyle(i: number) {
 </template>
 
 <style scoped>
+/* 尺子不占高度也不渲染，但仍在文档流里参与容器定宽 */
+.toast-ghost {
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+}
+
 /* 位移与缩放都由 --ty / --sc 驱动，进入与离开动画才有统一的起点。
    基础态就带 transition：展开/折叠改的是这三个变量，靠 transform 过渡才有「收放」的感觉 */
 .toast-item {
