@@ -61,7 +61,6 @@ const heights = reactive<Record<number, number>>({});
 const els = new Map<number, HTMLElement>();
 const GAP = 6;
 
-const ghost = ref<HTMLElement | null>(null);
 const width = ref<number | null>(null);
 
 function setCard(id: number, el: unknown) {
@@ -78,9 +77,23 @@ async function syncLayout() {
     width.value = null;
     return;
   }
-  const need = ghost.value?.scrollWidth ?? 0;
-  if (!need) return;
-  const next = Math.max(width.value ?? 0, need);
+  // 量「这条文案单行需要多宽」：把卡片临时设成 width:max-content 再读盒子宽度。
+  // 这一步不能量容器的 scrollWidth / 自己的 scrollWidth —— 前者量的是「当前」宽度，
+  // 后者在 height:0 + overflow:hidden 的隐藏尺子上读过一次被裁后的宽度，
+  // 越量越窄，最后把文案挤成一列竖排。改成量「把宽度交给内容时盒子有多宽」，
+  // 结果与容器当前被钉成多少无关，量的是它自己，没有循环依赖。
+  let need = 0;
+  for (const el of els.values()) {
+    const prev = el.style.width;
+    el.style.width = "max-content";
+    need = Math.max(need, Math.round(el.getBoundingClientRect().width));
+    el.style.width = prev;
+  }
+  // 兜底：中文的 min-content 就是单个字，宽度一旦塌到几十像素就变成一列竖排。
+  // 量到多小都不让它跌破这个下限，宁可宽一点也不能不可读。
+  const MIN_W = 160;
+  const cap = Math.min(560, Math.round(window.innerWidth * 0.8));
+  const next = Math.min(Math.max(width.value ?? 0, need, MIN_W), cap);
   if (next !== width.value) width.value = next;
 }
 
@@ -139,21 +152,6 @@ function layerStyle(i: number) {
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
-    <!-- 尺子：高度 0、不绘制，只负责把每条文案按「单行」撑出来给容器定宽。
-         卡片是绝对定位的，不参与容器宽度计算，所以必须有这么一个在文档流里的元素。 -->
-    <div ref="ghost" class="toast-ghost flex flex-col" aria-hidden="true">
-      <div
-        v-for="t in all"
-        :key="`ruler-${t.id}`"
-        class="flex items-start gap-2 px-4 py-2.5 text-sm"
-      >
-        <span class="size-4 shrink-0" />
-        <span class="whitespace-nowrap">{{ t.text }}</span>
-        <!-- 角标占位：折叠时前卡右侧还要放 +N，不预留会让文案少掉 20px -->
-        <span class="shrink-0 px-1.5 text-2xs">{{ overflow ? "+9" : "" }}</span>
-      </div>
-    </div>
-
     <TransitionGroup name="toast">
       <div
         v-for="(t, i) in visible"
@@ -189,13 +187,6 @@ function layerStyle(i: number) {
 </template>
 
 <style scoped>
-/* 尺子不占高度也不渲染，但仍在文档流里参与容器定宽 */
-.toast-ghost {
-  height: 0;
-  overflow: hidden;
-  visibility: hidden;
-}
-
 /* 位移与缩放都由 --ty / --sc 驱动，进入与离开动画才有统一的起点。
    基础态就带 transition：展开/折叠改的是这三个变量，靠 transform 过渡才有「收放」的感觉 */
 .toast-item {
