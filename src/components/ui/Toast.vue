@@ -61,6 +61,10 @@ const heights = reactive<Record<number, number>>({});
 const els = new Map<number, HTMLElement>();
 const GAP = 6;
 
+const boxEl = ref<HTMLElement | null>(null);
+// 只在「冻结」时用：作为容器的 min-width，防止后一条消失时整摞收窄导致文字重排。
+// 容器的实际宽度由 CSS 的 width:max-content 决定 —— 宽度这种事交给浏览器算，
+// JS 只负责「别比之前更窄」，这样即使这里量偏小也不会把文字挤折行。
 const width = ref<number | null>(null);
 
 function setCard(id: number, el: unknown) {
@@ -77,23 +81,11 @@ async function syncLayout() {
     width.value = null;
     return;
   }
-  // 量「这条文案单行需要多宽」：把卡片临时设成 width:max-content 再读盒子宽度。
-  // 这一步不能量容器的 scrollWidth / 自己的 scrollWidth —— 前者量的是「当前」宽度，
-  // 后者在 height:0 + overflow:hidden 的隐藏尺子上读过一次被裁后的宽度，
-  // 越量越窄，最后把文案挤成一列竖排。改成量「把宽度交给内容时盒子有多宽」，
-  // 结果与容器当前被钉成多少无关，量的是它自己，没有循环依赖。
-  let need = 0;
-  for (const el of els.values()) {
-    const prev = el.style.width;
-    el.style.width = "max-content";
-    need = Math.max(need, Math.round(el.getBoundingClientRect().width));
-    el.style.width = prev;
-  }
-  // 兜底：中文的 min-content 就是单个字，宽度一旦塌到几十像素就变成一列竖排。
-  // 量到多小都不让它跌破这个下限，宁可宽一点也不能不可读。
-  const MIN_W = 160;
+  // 量当前实际占多宽：容器是 width:max-content，读到的就是浏览器算出的
+  // 「图标 + 文案 + 角标」单行宽度，没有自己算数的误差。
+  const need = Math.ceil(boxEl.value?.getBoundingClientRect().width ?? 0);
   const cap = Math.min(560, Math.round(window.innerWidth * 0.8));
-  const next = Math.min(Math.max(width.value ?? 0, need, MIN_W), cap);
+  const next = Math.min(Math.max(width.value ?? 0, need), cap);
   if (next !== width.value) width.value = next;
 }
 
@@ -147,8 +139,9 @@ function layerStyle(i: number) {
 
 <template>
   <div
-    class="pointer-events-none fixed top-[84px] left-1/2 z-[60] max-w-[min(560px,80vw)] -translate-x-1/2"
-    :style="width === null ? { width: 'max-content' } : { width: `${width}px` }"
+    ref="boxEl"
+    class="pointer-events-none fixed top-[84px] left-1/2 z-[60] w-max max-w-[min(560px,80vw)] -translate-x-1/2"
+    :style="width === null ? undefined : { minWidth: `${width}px` }"
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
