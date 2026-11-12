@@ -900,6 +900,22 @@ node_modules 挡着（clean 读的是当时还活着的工作区规则），**�
 「本次新增的忽略规则会随重置丢弃，它保护的目录建议先提交再重置」。回归：
 `reset_clean_notes_widened_tracked_gitignore`。
 
+### 重置到干净状态：.gitignore 改动判定漏掉「只暂存」的形态
+
+**现象**：新增 `.gitignore`（内容 `node_modules/`）后 `git add` 但没提交，点重置：第 1 次保住 `node_modules`、`leftover=1`、**没有任何提示**；用户照提示再点第 2 次，`node_modules` 被静默删除。子模块里已跟踪 `.gitignore` 被改宽也是同样表现（父仓库只看到一条 ` M sub`）。
+
+**根因**：判定只认 ` M`/`M `/`MM` 三种状态码，漏掉 `A `/`AM` —— 而 `reset --hard` 同样会把只暂存的那份从工作区删掉；子模块循环里根本没有做这个检测。
+
+**修复**：抽 `gitignore_touched(status)`，按「状态码非 `??`/`!!` 且路径 basename 为 `.gitignore`」全量判定，并在每个子模块里单独检测。回归：`reset_clean_notes_staged_only_gitignore`。
+
+### 重置到干净状态：仓库内全局忽略文件名带通配字符时保护失效
+
+**现象**：`core.excludesFile=my[1]ignore`（文件内容 `*.log`）时，第 1 次重置把这个规则文件本身删掉（`leftover=1`、无 note），第 2 次 `x.log` 被静默删除。
+
+**根因**：保护规则拼成 `/my[1]ignore`，`clean` 的 `-e` 按 gitignore 语义把 `[1]` 当字符类，匹配不到字面文件名。
+
+**修复**：新增 `escape_glob()` 对 `* ? [ ] \` 转义；「文件是否在仓库内」改用 `canonicalize` 两侧归一（Windows 大小写/8.3 短名/等价写法）。回归：`reset_clean_escapes_glob_in_kept_excludes_name`。
+
 ### 重置到干净状态：深层 `!放行` 被浅层规则压掉，永不收敛
 
 **现象**：根 `.gitignore = *.log`、`.devcontainer/.gitignore = !keep.log`，工作区

@@ -1114,6 +1114,8 @@ merge / cherry-pick / revert 会被 reset 顺带清掉，但统一走 `detect_op
   不显式拼仓库根就必然 NotFound，用户规则被当成「没有规则」。而且那个配置文件本身也要 `-e`
   保住：`clean` 先删掉它，下一轮一条全局规则都不剩。它留在 status 里是我们主动留的，不能算
   `leftover`，否则每次点都报「仍有 1 项」并把原因错归给嵌套仓库/子模块。
+- **`.gitignore` 的「有没有被改过」要按「非 ??/!! 状态」判，不能只认 ` M`/`M `/`MM`**：只 `git add` 还没提交（`A `）的 `.gitignore` 一样会被 `reset --hard` 从工作区删掉，规则随之消失。子模块里的也要单独检测（父仓库只看到一条 ` M sub`）。
+- **`-e` 的模式会被当 gitignore 通配符**：`/my[1]ignore` 匹配不到字面文件名，要转义 `* ? [ ] \`。
 - **已跟踪的 `.gitignore` 被本地改「宽」时，重置会把它改回去**：这一轮目录保得住（工作区规则
   还在），但用户照 leftover 提示再点一次就会真删掉它保护的目录 —— 所以 `ignore_touched` 要在
   **reset 之前**用 reset 前的 status 判断（reset 之后 `.gitignore` 已还原，看什么都干净）。
