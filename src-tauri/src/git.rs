@@ -1559,6 +1559,8 @@ pub struct ResetCleanReport {
     removed: u32,
     /// 顺手放弃掉的多步操作（merge / cherry-pick / revert / rebase），没有就是 None
     aborted: Option<String>,
+    /// 因「未提交的 .gitignore 是忽略规则的来源」而被主动保留的数量
+    kept_ignores: u32,
     /// 重置后仍然存在的条目数：嵌套仓库（`clean` 不带 `-ff` 不动它）、被删掉 `.gitignore`
     /// 后由「忽略」变「未跟踪」的目录、超长路径等。>0 时说明「已重置但不完全干净」，
     /// 不能对用户报「都是干净的」。
@@ -1622,7 +1624,13 @@ pub async fn git_reset_clean(repo: String) -> Result<ResetCleanReport, String> {
         // 第一轮它还能替 node_modules 挡一下（工作区规则当时还在），但文件被删掉后规则就没了，
         // 用户看到 leftover 提示再点第二次时，node_modules / dist 会连根删掉。
         //（真实事故路径，见 docs/BUGS.md）
-        let (head_ignores, truncated) = head_ignore_patterns(&root);
+        let (mut head_ignores, truncated) = head_ignore_patterns(&root);
+        // 用户把 core.excludesFile 指向仓库内的相对文件时，那个文件本身也得保住：
+        // `clean` 先删掉它，下一轮就一条全局规则都不剩了。
+        let kept_excludes = configured_excludes_in_repo(&root);
+        if let Some(rel) = kept_excludes.as_deref() {
+            head_ignores.push(format!("/{rel}"));
+        }
         let mut notes: Vec<String> = Vec::new();
         if truncated {
             notes.push("忽略规则太多，超出上限的部分没有参与保护".to_string());
@@ -1689,7 +1697,7 @@ pub async fn git_reset_clean(repo: String) -> Result<ResetCleanReport, String> {
                     "子模块 {sub} 的忽略规则超过上限，超出部分没有参与保护"
                 ));
             }
-            let sub_excludes = write_excludes(&sub_dir, &sub_ignores)?;
+            let sub_excludes = write_excludes(&sub_dir, &sub_ignores).map_err(|err| {                format!("父仓库已清理完成，但子模块 {sub} 未能清理：{err}")            })?;
             let mut sub_args: Vec<String> = Vec::new();
             if let Some(tmp) = &sub_excludes {
                 let path = tmp
@@ -1754,11 +1762,42 @@ pub async fn git_reset_clean(repo: String) -> Result<ResetCleanReport, String> {
         // status 里。它不算「没清干净的残留」（是我们主动留的），否则每次点击都报「仍有 1 项」，
         // 还把原因错归给嵌套仓库/子模块。
         let kept_ignores = count_kept_ignores(&after);
-        let leftover = (after.lines().count() as u32).saturating_sub(kept_ignores);
+        // 已跟踪的 .gitignore 本地被改「宽」时，它保护的目录这一轮保得住（工作区规则还在），
+        // 但 `reset --hard` 会把规则还原掉：用户照 leftover 提示再点一次，那些目录就会被
+        // 真删掉 —— 而确认框承诺「被忽略的文件保持不动」。必须提前说清楚。
+        // 必须看 reset 之前的 status：reset --hard 会把 .gitignore 还原成 HEAD 的样子，
+        // 之后再看就永远干净，提示永远出不来。
+        let ignore_touched = before.lines().any(|l| {
+            let path = l.get(3..).unwrap_or("").trim().trim_matches('"');
+            (l.starts_with(" M") || l.starts_with("M ") || l.starts_with("MM"))
+                && (path == ".gitignore" || path.ends_with("/.gitignore"))
+        });
+        // 被我们主动保下来的仓库内全局忽略文件也不算残留（它出现在 status 里只是因为没删）。
+        let kept_excludes_left = match kept_excludes.as_deref() {
+            Some(rel) => after
+                .lines()
+                .filter(|l| l.get(3..).unwrap_or("").trim().trim_matches('"') == rel)
+                .count() as u32,
+            None => 0,
+        };
+        let leftover = (after.lines().count() as u32)
+            .saturating_sub(kept_ignores)
+            .saturating_sub(kept_excludes_left);
         if kept_ignores > 0 {
             notes.push(format!(
                 "保留了 {kept_ignores} 个未提交的 .gitignore（忽略规则的来源，不能删）"
             ));
+        }
+        if let Some(rel) = kept_excludes.as_deref().filter(|_| kept_excludes_left > 0) {
+            notes.push(format!(
+                "仓库内的全局忽略文件 {rel} 已保留（它是忽略规则的来源，不能删）"
+            ));
+        }
+        if ignore_touched {
+            notes.push(
+                ".gitignore 有未提交改动：本次新增的忽略规则会随重置丢弃，它保护的目录建议先提交再重置"
+                    .to_string(),
+            );
         }
 
         if let Some(e) = clean_err {
@@ -1768,6 +1807,7 @@ pub async fn git_reset_clean(repo: String) -> Result<ResetCleanReport, String> {
             discarded,
             removed,
             aborted,
+            kept_ignores,
             leftover,
             note: if notes.is_empty() {
                 None
@@ -1832,7 +1872,23 @@ fn read_global_excludes(repo: &str) -> Result<Option<String>, String> {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
     let path = match configured {
-        Some(p) => std::path::PathBuf::from(p),
+        Some(p) => {
+            let pb = std::path::PathBuf::from(&p);
+            if pb.is_absolute() {
+                pb
+            } else if let Some(full) = relative_to_root(repo, &p) {
+                full
+            } else {
+                // git 把相对的 core.excludesFile 解析成「相对 git 进程 cwd」，而我们是
+                // `-C <仓库根>`；`std::fs::read_to_string` 用的却是**应用进程**的 cwd
+                //（GUI 下是 exe 所在目录），直接读必然 NotFound —— 用户规则被当成
+                //「没有规则」，被他忽略的文件会被静默删掉。
+                let top = run(repo, &["rev-parse", "--show-toplevel"])
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|_| repo.trim().to_string());
+                std::path::Path::new(&top).join(pb)
+            }
+        }
         None => match default_global_ignore() {
             Some(p) => p,
             None => return Ok(None),
@@ -1846,6 +1902,36 @@ fn read_global_excludes(repo: &str) -> Result<Option<String>, String> {
             "读不到全局忽略规则 {}（{err}），为避免误删被忽略的文件，本次未执行"
         , path.display())),
     }
+}
+
+/// 把相对的 `core.excludesFile` 落到仓库根上（git 的基准是它自己的 cwd，即仓库根）。
+fn relative_to_root(repo: &str, rel: &str) -> Option<std::path::PathBuf> {
+    let top = run(repo, &["rev-parse", "--show-toplevel"]).ok()?;
+    let top = top.trim().to_string();
+    if top.is_empty() {
+        return None;
+    }
+    Some(std::path::Path::new(&top).join(rel))
+}
+
+/// 配置的全局忽略文件落在仓库里时，返回其在仓库内的相对路径（posix 分隔）。
+fn configured_excludes_in_repo(root: &str) -> Option<String> {
+    let configured = run(root, &["config", "--path", "--get", "core.excludesFile"]).ok()?;
+    let configured = configured.trim();
+    if configured.is_empty() {
+        return None;
+    }
+    let path = std::path::PathBuf::from(configured);
+    let full = if path.is_absolute() {
+        path
+    } else {
+        std::path::Path::new(root).join(path)
+    };
+    let rel = full.strip_prefix(root).ok()?.to_string_lossy().replace('\\', "/");
+    if rel.is_empty() || rel.starts_with("..") {
+        return None;
+    }
+    Some(rel)
 }
 
 fn default_global_ignore() -> Option<std::path::PathBuf> {
@@ -3168,6 +3254,48 @@ mod tests {
         assert!(repo.0.join("dist").join("d.js").exists(), "仓库规则要生效");
         assert!(!repo.0.join("junk.txt").exists(), "真未跟踪的仍要删");
         assert_eq!(r.leftover, 0, "一次点干净: {r:?}");
+    }
+
+    /// `core.excludesFile` 写成相对路径时，git 相对**仓库根**解析，而 Rust 的
+    /// `read_to_string` 相对**应用进程 cwd**：不换算就会静默丢掉用户的全局规则。
+    #[test]
+    fn reset_clean_honors_relative_global_excludes_file() {
+        let repo = TempRepo::new("resetrelglobal");
+        commit_files(&repo, &[(".gitignore", "dist/\n"), ("a.txt", "base")], "base");
+        std::fs::write(repo.0.join("myignore"), "*.log\n").unwrap();
+        run(repo.path(), &["config", "core.excludesFile", "myignore"]).unwrap();
+        std::fs::write(repo.0.join("x.log"), "x").unwrap();
+        std::fs::write(repo.0.join("junk.txt"), "j").unwrap();
+
+        let r = reset_clean(&repo).expect("应当能重置");
+        assert!(
+            repo.0.join("x.log").exists(),
+            "相对路径的全局忽略规则必须仍然生效"
+        );
+        assert!(!repo.0.join("junk.txt").exists(), "真未跟踪的仍要删");
+        assert_eq!(r.leftover, 0, "一次点干净: {r:?}");
+    }
+
+    /// 已跟踪的 `.gitignore` 本地被改「宽」时，重置会把新规则还原掉；必须提前提示，
+    /// 否则用户照 leftover 提示再点一次就把它保护的目录删了，与确认框承诺相反。
+    #[test]
+    fn reset_clean_notes_widened_tracked_gitignore() {
+        let repo = TempRepo::new("resetwiden");
+        commit_files(&repo, &[(".gitignore", "dist/\n"), ("a.txt", "base")], "base");
+        std::fs::write(repo.0.join(".gitignore"), "dist/\nnode_modules/\n").unwrap();
+        std::fs::create_dir_all(repo.0.join("node_modules").join("pkg")).unwrap();
+        std::fs::write(repo.0.join("node_modules").join("pkg").join("i.js"), "i").unwrap();
+
+        let r = reset_clean(&repo).expect("应当能重置");
+        let note = r.note.clone().unwrap_or_default();
+        assert!(
+            note.contains(".gitignore 有未提交改动"),
+            "必须提示忽略规则会随重置丢弃: {note}"
+        );
+        assert!(
+            repo.0.join("node_modules").join("pkg").join("i.js").exists(),
+            "这一轮不能删掉它保护的目录"
+        );
     }
 
     /// 深层 `.gitignore` 的 `!放行` 要能压过浅层的忽略规则：`ls-tree -r` 是字典序，

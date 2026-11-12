@@ -242,6 +242,8 @@ export interface ResetCleanReport {
   removed: number;
   /** 顺手放弃掉的多步操作，没有就是 null */
   aborted: string | null;
+  // 因「未提交的 .gitignore 是忽略规则的来源」而被主动保留的数量
+  kept_ignores: number;
   /** 重置后仍然存在的条目数（嵌套仓库、超长路径、锁文件等），>0 说明没完全清干净 */
   leftover: number;
   note: string | null;

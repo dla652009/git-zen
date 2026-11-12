@@ -1109,6 +1109,14 @@ merge / cherry-pick / revert 会被 reset 顺带清掉，但统一走 `detect_op
   `.gitignore` 还原成只锚定第一层的 `/out/`，于是那个文件成了永远清不掉的未跟踪项，用户再点
   多少次都一样，toast 只能归咎于「嵌套仓库、子模块等」。判据是**原始字符串有没有以 `/` 开头** ——
   这个信息在 `trim_start_matches('/')` 里会丢，必须先取。
+- **相对的 `core.excludesFile` 有两个基准**：git 按它自己的 cwd（= 仓库根，因为 `run()` 用
+  `current_dir`）解析，Rust 的 `read_to_string` 按**应用进程 cwd**（GUI 下是 exe 目录）解析 ——
+  不显式拼仓库根就必然 NotFound，用户规则被当成「没有规则」。而且那个配置文件本身也要 `-e`
+  保住：`clean` 先删掉它，下一轮一条全局规则都不剩。它留在 status 里是我们主动留的，不能算
+  `leftover`，否则每次点都报「仍有 1 项」并把原因错归给嵌套仓库/子模块。
+- **已跟踪的 `.gitignore` 被本地改「宽」时，重置会把它改回去**：这一轮目录保得住（工作区规则
+  还在），但用户照 leftover 提示再点一次就会真删掉它保护的目录 —— 所以 `ignore_touched` 要在
+  **reset 之前**用 reset 前的 status 判断（reset 之后 `.gitignore` 已还原，看什么都干净）。
 - **未初始化（deinit）的子模块要整段跳过**：`-C sub` 在空目录里不会失败，`rev-parse HEAD`
   会向上落到**父仓库**上，于是每次都报「子模块指针漂移」且 note 指错；`clean` 也会跑在父仓库
   上下文里。判据是 `sub/.git` 是否存在（子模块的 `.git` 可能是文件）。

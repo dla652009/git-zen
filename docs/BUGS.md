@@ -872,6 +872,34 @@ node_modules 挡着（clean 读的是当时还活着的工作区规则），**�
 读全局规则用目标仓库的 cwd（`run(repo, …)`），不再落到进程 cwd 所在仓库的 local 配置上。
 回归：`reset_clean_honors_global_excludes_file`。
 
+### 重置到干净状态：相对路径的 `core.excludesFile` 被当成「没有规则」
+
+**现象**：`git config core.excludesFile myignore`（仓库内的相对文件，内容 `*.log`）时，
+`x.log` 在 git 眼里是被忽略的，点「重置」后它被删，报告 `removed` 里连它都不计。
+
+**根因**：git 按自己的 cwd（仓库根）解析相对路径，Rust 的 `read_to_string("myignore")` 按
+**应用进程 cwd**（打包后是 exe 目录）解析 → `NotFound` → 走「没有规则」分支；而临时 excludes
+文件是 `-c core.excludesFile=<tmp>` 整体覆盖，用户配置就此消失。
+
+**修复**：相对路径先拼 `rev-parse --show-toplevel`；仓库内的全局忽略文件本身也 `-e` 保住
+（否则 `clean` 删掉它，下一轮规则全没），并不计入 `leftover`。回归：
+`reset_clean_honors_relative_global_excludes_file`。
+
+### 重置到干净状态：已跟踪 `.gitignore` 改「宽」后连点两次会删掉它保护的目录
+
+**现象**：HEAD 的 `.gitignore` 只有 `dist/`，工作区改成 `dist/+node_modules/+cache/`（已跟踪
+文件被修改）。第 1 次重置后两个目录保住、但 `leftover=2`；用户照提示点第 2 次，
+`clean` 打出 `Removing node_modules/`、`Removing cache/` —— 与确认框「被忽略的文件保持不动」
+的承诺相反。
+
+**根因**：`-e .gitignore` 只保住**文件**，保不住**内容**：第 1 次点击的 `reset --hard` 已把
+新增规则还原，第 2 次点击时这些目录在 git 眼里不再是「被忽略」，而 `leftover` 文案还把它
+归因到嵌套仓库/子模块。
+
+**修复**：在 reset **之前**检查已跟踪 `.gitignore` 是否有未提交改动，有则在 `note` 里明说
+「本次新增的忽略规则会随重置丢弃，它保护的目录建议先提交再重置」。回归：
+`reset_clean_notes_widened_tracked_gitignore`。
+
 ### 重置到干净状态：深层 `!放行` 被浅层规则压掉，永不收敛
 
 **现象**：根 `.gitignore = *.log`、`.devcontainer/.gitignore = !keep.log`，工作区
