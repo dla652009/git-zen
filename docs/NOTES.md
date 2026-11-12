@@ -1090,6 +1090,15 @@ merge / cherry-pick / revert 会被 reset 顺带清掉，但统一走 `detect_op
 - 每条规则要占两个 argv，400 条长规则能超过 Windows 的 32767 上限（`os error 206`，
   clean **根本没 spawn**）—— 现象是「什么都没删，却报可能被占用」。文件没有这个限制。
 - 用户全局配的 `core.excludesFile` 优先级最低，要原样垫在文件最前面，否则被我们遮蔽后会多删文件。
+  拿这个路径有三个坑，缺一个就会**静默多删**：①必须 `git config --path --get`（`--path` 才会
+  把 `~/gi` 和相对路径展开，直接 `--get` 读到字面 `~`，Windows 上 `read_to_string` 必失败）；
+  ②没配的时候要回退到 git 的默认值 `$XDG_CONFIG_HOME/git/ignore`（空则
+  `~/.config/git/ignore`）—— `-c core.excludesFile` 是**整体覆盖**，不回退就等于把默认全局规则
+  整份关掉；③读不出来（非 NotFound）要**报错中止**，不能当成「没有规则」。
+- **多个 `.gitignore` 拼进同一个文件时，顺序必须按目录深度升序**（越深越靠后）。同一个 excludes
+  文件里「后匹配者胜」，而 `ls-tree -r` 是**字典序**：`.devcontainer/.gitignore` 排在根
+  `.gitignore` **之前**，于是根上的 `*.log` 会压过深层 `!keep.log` 的放行 —— 那个文件永远
+  清不掉、不收敛。`sub/` 这种字母序恰好靠后的目录反而没事，所以只在「点开头的目录」上暴露。
 
 规则的近似要记住三条边界（都是实测出来的）：
 - **子目录 `.gitignore` 里不含斜杠的规则是「任意深度」语义**，直接拼目录前缀会把它变成锚定：
@@ -1100,6 +1109,9 @@ merge / cherry-pick / revert 会被 reset 顺带清掉，但统一走 `detect_op
   `.gitignore` 还原成只锚定第一层的 `/out/`，于是那个文件成了永远清不掉的未跟踪项，用户再点
   多少次都一样，toast 只能归咎于「嵌套仓库、子模块等」。判据是**原始字符串有没有以 `/` 开头** ——
   这个信息在 `trim_start_matches('/')` 里会丢，必须先取。
+- **未初始化（deinit）的子模块要整段跳过**：`-C sub` 在空目录里不会失败，`rev-parse HEAD`
+  会向上落到**父仓库**上，于是每次都报「子模块指针漂移」且 note 指错；`clean` 也会跑在父仓库
+  上下文里。判据是 `sub/.git` 是否存在（子模块的 `.git` 可能是文件）。
 - **子模块要单独走一遍，而且规则也得单独推**：顶层 `clean -e` 不进 submodule，子模块自己的
   `.gitignore` 被删时它的 `node_modules`/`target` 会被删、顶层 `leftover` 还是 0。
   现在按 `submodule status --recursive` 枚举路径，逐个子模块用**它自己的** HEAD 规则

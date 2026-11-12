@@ -855,3 +855,32 @@ node_modules 挡着（clean 读的是当时还活着的工作区规则），**�
   把真残留从 `leftover` 里吞掉了，还配一条自相矛盾的 note。修法：只认 basename 恰为 `.gitignore`。
 - **子模块内未跟踪文件被删却不计入 `removed`**：父仓库 status 看不到子模块内部，现在子模块
   `clean` 前后各数一次 `??` 行，差值累加进 `removed`。
+
+### 重置到干净状态：全局忽略规则被整份遮蔽（改成 `core.excludesFile` 引发）
+
+**现象**：`~/.config/git/ignore` 里写着 `*.log`，点「重置」后 `x.log` 被删，报告却是
+`discarded=0, removed=1, leftover=0, note=None` —— 文件没了，一句话都没有。用
+`git config --global core.excludesFile '~/gi'` 的形式配置时同样丢规则。
+
+**根因**：为了让 `!` 取反生效、也为了不撑爆命令行，规则改成写临时文件挂
+`-c core.excludesFile=<tmp>`，而这是**整体覆盖**该配置项：没配时不再读默认的
+`~/.config/git/ignore`；配成 `~/gi` 时 `git config --get` 返回字面 `~`，
+`read_to_string` 失败又被 `if let Ok` 静默跳过。三处都表现为「规则消失 → 多删文件」。
+
+**修复**：`read_global_excludes()` —— `--path` 展开路径；没配回退 `$XDG_CONFIG_HOME/git/ignore`
+或 `~/.config/git/ignore`；除 NotFound 外读失败直接 `Err`（宁可这次不清理也不多删）。
+读全局规则用目标仓库的 cwd（`run(repo, …)`），不再落到进程 cwd 所在仓库的 local 配置上。
+回归：`reset_clean_honors_global_excludes_file`。
+
+### 重置到干净状态：深层 `!放行` 被浅层规则压掉，永不收敛
+
+**现象**：根 `.gitignore = *.log`、`.devcontainer/.gitignore = !keep.log`，工作区
+`.gitignore` 已删 → 连点多少次都剩 `?? .devcontainer/keep.log`，`leftover` 恒为 1。
+
+**根因**：规则按 `git ls-tree -r` 的**字典序**拼进 excludes 文件，而同一文件里「后匹配者胜」。
+`.devcontainer/` 首字母 `d` < `g`，排在根 `.gitignore` 之前，于是 `!keep.log` 的放行被
+后面的 `*.log` 压掉；`reset --hard` 又把 `.gitignore` 还原成同样的规则，永不收敛。
+`sub/` 这类字典序靠后的目录反而正确，所以只在「点开头的目录」上暴露。
+
+**修复**：收集 `(深度, 规则)` 后按深度升序稳定排序再拼，越深的 `.gitignore` 越靠后（git 的语义）。
+回归：`reset_clean_deep_negation_overrides_shallow_rule`。
