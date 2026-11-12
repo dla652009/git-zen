@@ -47,16 +47,8 @@ const interactive = computed(() => toasts.length > 1);
 // 展开后的纵向位置：只能量出来。卡片高度取决于文案几行，写死间距会让第二张咬进第一张。
 // 折叠态里后面几张也一直在渲染（只是被压住），所以尺寸随时可读，展开那一刻不必等布局。
 //
-// 宽度交给模板里那组「尺子」（.toast-ghost）：它是文档流里唯一参与定宽的东西，
-// 卡片都是绝对定位、不参与计算。踩过的两次坑：
-// ① 直接 w-fit —— 宽度由最前面那张决定，那张一走，第二张就从「被容器拉宽」变成
-//    「按自己文案排版」，宽度骤减、长句一行一个字，看着像竖排；
-// ② 改成 JS 量容器 offsetWidth 取 max —— 循环依赖：量的时候容器宽度本身就受上一轮
-//    结果约束，只能量出「已经被挤窄的宽度」，越量越窄。
-//
-// 所以两个动作分开做：**定宽**取尺子的 scrollWidth（nowrap 内容的固有宽度，不受容器
-// 当前宽度影响，没有循环依赖）；**冻结**在整批提示存活期间只增不减 —— 一条消失时
-// 容器宽度一点都不变，剩下的卡片不会被重新排版，只是渐渐淡出。
+// 隐藏的尺子按每条文案的单行固有宽度撑开容器，避免后层卡片切到前面时被挤窄。
+// 再冻结整批提示的最大宽度，避免较长的提示消失后其余卡片重新排版。
 const heights = reactive<Record<number, number>>({});
 const els = new Map<number, HTMLElement>();
 const GAP = 6;
@@ -74,7 +66,6 @@ function setCard(id: number, el: unknown) {
 
 async function syncLayout() {
   await nextTick();
-  for (const [id, el] of els) heights[id] = el.offsetHeight;
 
   // 整批清空后复位，下一条重新按自己的文案收紧
   if (!toasts.length) {
@@ -86,11 +77,15 @@ async function syncLayout() {
   const need = Math.ceil(boxEl.value?.getBoundingClientRect().width ?? 0);
   const cap = Math.min(560, Math.round(window.innerWidth * 0.8));
   const next = Math.min(Math.max(width.value ?? 0, need), cap);
-  if (next !== width.value) width.value = next;
+  if (next !== width.value) {
+    width.value = next;
+    await nextTick();
+  }
+  for (const [id, el] of els) heights[id] = el.offsetHeight;
 }
 
 // 文案变化、增删条目都会改变高度；窗口变窄会让文案折行，也得重量
-watch([() => toasts.length, expanded], syncLayout, { immediate: true });
+watch([() => toasts.map((t) => t.id).join(","), expanded], syncLayout, { immediate: true });
 onMounted(() => {
   window.addEventListener("resize", syncLayout);
   void syncLayout();
@@ -145,6 +140,16 @@ function layerStyle(i: number) {
     @mouseenter="onEnter"
     @mouseleave="onLeave"
   >
+    <div
+      v-for="t in all"
+      :key="`measure-${t.id}`"
+      aria-hidden="true"
+      class="invisible flex h-0 w-max items-start gap-2 overflow-hidden whitespace-nowrap px-4 text-sm"
+    >
+      <span class="size-4 shrink-0" />
+      <span>{{ t.text }}</span>
+      <span v-if="overflow" class="shrink-0 px-1.5 text-2xs tabular-nums">+{{ overflow }}</span>
+    </div>
     <TransitionGroup name="toast">
       <div
         v-for="(t, i) in visible"
@@ -166,7 +171,7 @@ function layerStyle(i: number) {
           :class="ICON_CLASS[t.kind]"
           aria-hidden="true"
         />
-        <span class="select-text break-words">{{ t.text }}</span>
+        <span class="min-w-0 select-text break-words">{{ t.text }}</span>
         <span
           v-if="!expanded && i === 0 && overflow"
           class="mt-0.5 shrink-0 rounded-full bg-muted px-1.5 text-2xs text-muted-foreground tabular-nums"
@@ -190,21 +195,16 @@ function layerStyle(i: number) {
     opacity 0.18s ease;
   will-change: transform, opacity;
 }
-.toast-enter-active,
-.toast-leave-active {
+.toast-enter-active {
   transition:
     transform 0.18s ease,
     opacity 0.18s ease;
 }
-/* 离开的那条脱离文档流，否则它和新来的那条会在 0.18 秒里叠成两行、容器高度跳一下 */
+/* 退出时立即隐藏，避免容器收窄后文字在退场期间被挤压 */
 .toast-leave-active {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 0;
+  display: none;
 }
-.toast-enter-from,
-.toast-leave-to {
+.toast-enter-from {
   opacity: 0;
   transform: translateY(calc(var(--ty, 0px) - 8px)) scale(var(--sc, 1));
 }
