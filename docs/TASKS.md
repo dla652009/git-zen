@@ -1207,6 +1207,37 @@
       风险低一个量级
 - [x] **19.5 全部仓库总览**：`fetchAll` 这个名字有误导性，它其实是「fetch 一个仓库的全部 remote」。
       多仓库只能逐个 tab 点，补一屏总览（落后/领先/脏工作区）+ 全部拉取
+- [x] **19.6 重置到干净状态**：「丢弃暂存」「丢弃某个文件的更改」都是按文件来的，缺整体那一下 ——
+      想把工作区清成刚 clone 的样子只能一个一个点。补 `git_reset_clean`：
+      `reset --hard HEAD` + `clean -fd`，并且先放弃进行中的合并/拣选/撤销/变基（用户拍板：自动放弃）
+      - 刻意**不带 `-x`**：`.gitignore` 忽略的（node_modules / target / dist）不动 —— 删了要重装重编，
+        那不叫「代码脏」。用户也明确选了这个范围，而不是「零残留」
+      - 不预先 stash（用户明确要「直接销毁」），所以确认框必须写清「不可找回」
+      - 空仓库没有 HEAD：先 `rev-parse --verify -q HEAD` 探一下，再 `read-tree --empty` 清空索引
+        （否则已暂存的文件既回不到 HEAD、也不会被 clean 收走，却报告「丢弃了 N 个改动」）
+      - **rebase 的中间态不会因为 `reset --hard` 消失**，必须显式 abort；`detect_op` 还要认
+        `rebase-apply/`（`rebase --apply` 与 `git am` 共用，靠 `rebase-apply/applying` 区分该用
+        `am --abort` 还是 `rebase --abort`，后者对 am 会直接拒绝）
+      - abort 被 git 拒绝（冲突 add 后又改文件 → `MM`）不致命：先 reset 再**重试一次** abort，
+        最后复查 `detect_op`，还在才报错 —— 中间态没退出却报成功，比报错更危险
+      - 计数带 `-uall`（否则 `status.showUntrackedFiles=no` 时会谎报「本来就是干净的」）
+      - **clean 先于 reset**：`reset --hard` 会先把已跟踪的 `.gitignore` 还原成 HEAD 版本，
+        顺序反了就删掉用户本地刚加规则保护的目录；HEAD 版本规则并进 `clean -e` 兜住这条
+      - 子模块逐个子模块单独推规则（顶层 `-e` 不进 submodule，否则子模块自己的 `.gitignore`
+        被删时会连带删掉它的 node_modules）；子目录规则不含斜杠时补 `**/` 才是 gitignore 的
+        「任意深度」语义，否则深层目录会被误删；**以 `/` 开头的是锚定规则，不能补 `**/`**
+        （否则深层同名目录被过度保护，reset 还原规则后永远清不掉）；子模块路径含空格时
+        必须整段切，按空白分词只会拿到第一段
+      - clean 失败（文件被占用）不中止整轮：已跟踪改动照丢，原因走 `note` 字段如实上报
+      - **`clean` 固定带 `-e .gitignore`**：未提交的 `.gitignore` 本身是未跟踪文件，删掉它等于
+        删掉保护规则 —— 第一轮残留提示会让用户点第二次，第二次就把 node_modules 删了
+        （真实事故路径，见 `docs/BUGS.md`）
+      - 规则超上限被截断、子模块指针漂移两种情形也写进 `note`，别只给笼统的「嵌套仓库、子模块」
+      - 前端守卫：确认期间禁 `Ctrl+Tab`/`Ctrl+1..9`/`Ctrl+B`/`Ctrl+P` **以及 OS 拖放**，
+        `ok` 里复核仓库路径与分支名
+      - 嵌套仓库刻意不删（`-ff` 会把用户自己的 clone 一起删），改为成功后复查 `status`
+        并把残留数报成 `leftover`
+      - `run()` 用在飞计数清零才复位忙碌态（记「谁最后发起」会提前解锁）
 
 - 实现记录（19.2 / 19.3 / 19.5）：`ReflogModal.vue` 列表 + 「回到这里」（走确认框，硬重置）；
   `ChangesPanel` 新增可选 `op` prop 与 `opContinue` emit，冲突条按 merge / cherry-pick /
@@ -1267,3 +1298,20 @@
   失败标红停住并保留弹窗（merge 冲突正好停在目标分支处理），成功自动关 + toast
 - 管理弹窗：工作流增删重命名；步骤增删 / 上下移 / 参数行内编辑（引用三态、信息来源、前缀）
 - 工具栏 Workflow 图标下拉一键执行；Esc 分层链纳入三个工作流浮层
+
+## M20 重置到干净状态（工作区一键回到刚 clone）
+
+一键丢弃当前分支所有改动：已跟踪文件回到 HEAD、未跟踪文件与目录删掉、进行中的
+merge / cherry-pick / revert / rebase / am 先放弃。**刻意不带 `clean -x`** ——
+被 `.gitignore` 忽略的（node_modules / target / dist）不动，删了要重装重编。
+
+- [x] 后端 `git_reset_clean`（`ResetCleanReport { discarded, removed, aborted, leftover }`）
+      —— 仓库根归一化、空仓库先 `read-tree --empty`、abort 失败降级重试、子模块一并清、
+      成功后复查 `status` 数 `leftover`；`lib.rs` 注册 + `src/gitApi.ts` 镜像
+- [x] 入口：变更面板标题栏的重置图标 → 确认框写清「丢几个改动 / 删几个未跟踪 / 中途操作会被放弃 /
+      忽略文件与子模块的处理」，完成后 toast 汇报实际数字与残留
+- [x] 测试（`cargo test --lib`，共 18 条 `reset_clean_*` + `head_ignore_patterns` 纯函数用例）：保留 ignore、空仓库（有/无暂存）、
+      嵌套仓库残留（且不计入 `removed`）、子模块（含子模块内本地新增忽略规则）、
+      merge / rebase / am / cherry-pick / revert 中间态、abort 被拒、一次点击收敛、
+      未提交 `.gitignore` 规则仍生效、`.gitignore` 被删掉时 HEAD 规则仍保护 node_modules、
+      从子目录打开也能清根、子目录深层 ignored 目录、子模块自己的 `.gitignore` 被删

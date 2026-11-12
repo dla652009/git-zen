@@ -233,9 +233,27 @@ export const reflog = (repo: string) =>
 export const resetTo = (repo: string, hash: string, mode?: "hard" | "soft") =>
   invoke<void>("git_reset_to", { repo, hash, mode: mode ?? null });
 
+// 重置到干净状态：丢弃全部已跟踪改动（工作区 + 暂存）、删掉未跟踪文件，
+// 顺带放弃进行中的合并/拣选/撤销/变基。被 .gitignore 忽略的文件不动。
+export interface ResetCleanReport {
+  /** 被丢弃的已跟踪改动条目数（重命名算一条） */
+  discarded: number;
+  /** 被删掉的未跟踪条目数（一个文件算一条） */
+  removed: number;
+  /** 顺手放弃掉的多步操作，没有就是 null */
+  aborted: string | null;
+  /** 重置后仍然存在的条目数（嵌套仓库、超长路径、锁文件等），>0 说明没完全清干净 */
+  leftover: number;
+  note: string | null;
+}
+export const resetClean = (repo: string) =>
+  invoke<ResetCleanReport>("git_reset_clean", { repo });
+
 // 进行中的多步操作：operation 为空串表示没有；conflicts 是仍未解决的冲突文件
 export interface OpState {
   operation: string;
+  /** 给人看的名字：am 与 rebase 底层同为 rebase-apply，不能混着说 */
+  display: string;
   conflicts: string[];
 }
 export const opState = (repo: string) =>

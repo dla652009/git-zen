@@ -59,6 +59,7 @@ pub fn run() {
             git::git_init,
             git::git_reflog,
             git::git_reset_to,
+            git::git_reset_clean,
             git::git_op_state,
             git::git_op_continue,
             git::git_squash_recent

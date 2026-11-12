@@ -1550,6 +1550,475 @@ pub async fn git_reset_to(repo: String, hash: String, mode: Option<String>) -> R
     .await
 }
 
+#[derive(Serialize)]
+#[derive(Debug)]
+pub struct ResetCleanReport {
+    /// 被丢弃的已跟踪改动条目数（工作区 + 暂存区，重命名算一条）
+    discarded: u32,
+    /// 被删掉的未跟踪条目数（-uall，一个文件算一条）
+    removed: u32,
+    /// 顺手放弃掉的多步操作（merge / cherry-pick / revert / rebase），没有就是 None
+    aborted: Option<String>,
+    /// 重置后仍然存在的条目数：嵌套仓库（`clean` 不带 `-ff` 不动它）、被删掉 `.gitignore`
+    /// 后由「忽略」变「未跟踪」的目录、超长路径等。>0 时说明「已重置但不完全干净」，
+    /// 不能对用户报「都是干净的」。
+    leftover: u32,
+    /// 非致命提示（例如 clean 因文件被占用没能整轮跑完）。有值就说明「重置了但不完美」，
+    /// 上层直接展示原文即可。
+    note: Option<String>,
+}
+
+/// 把工作区恢复到「刚 clone 下来」的干净状态：放弃进行中的合并/拣选/撤销/变基，
+/// 已跟踪文件全部回到 HEAD，再删掉未跟踪文件与目录。
+///
+/// **刻意不带 `-x`**：`.gitignore` 忽略的（node_modules / target / dist）不动 ——
+/// 删了要重装重编，那不叫「代码脏」。
+/// 空仓库没有 HEAD，`reset --hard` 会报 ambiguous argument，所以先探一下，改清空索引。
+#[tauri::command]
+pub async fn git_reset_clean(repo: String) -> Result<ResetCleanReport, String> {
+    offload(move || {
+        // 一律在仓库根上执行：仓库可能以子目录身份打开（用户选中了 `repo/sub`），
+        // 而 `clean` 的生效范围跟着 cwd 走 —— 在 sub/ 里跑只会清 sub/，
+        // 根上的未跟踪文件永远清不掉，看起来就是「怎么点都不干净」。
+        let root = run(&repo, &["rev-parse", "--show-toplevel"])
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| repo.clone());
+
+        // 空仓库没有 HEAD：`reset --hard` 会报 ambiguous argument。
+        // 清空索引后这些文件变成未跟踪，交给后面的 clean 收走 —— 否则它们留在索引里、
+        // 文件也还在，报告却说「丢弃了 N 个改动」，是骗人的。
+        let has_head = run(&root, &["rev-parse", "--verify", "-q", "HEAD"]).is_ok();
+        if !has_head {
+            run(&root, &["read-tree", "--empty"])?;
+        }
+
+        // 先数一遍：重置之后就数不出来了。用 status 自己数，不解析 `clean -n` 的英文文案
+        // （git 本地化一改，`Would remove` 就匹配不上，计数会静默变 0）。
+        // `-uall` 不能省：`status.showUntrackedFiles=no` 时默认输出为空，会出现
+        // 「文件被删光了、提示却说工作区本来就是干净的」。
+        let before = run(&root, &["status", "--porcelain=v1", "-uall"])?;
+        let (discarded, untracked_before) = count_pending(&root, &before);
+
+        // 退出进行中的多步操作。**abort 被 git 拒绝不算致命**：索引与工作区不一致时
+        // （冲突已 add 之后又改动该文件）abort 会拒绝执行，而紧随其后的 reset --hard
+        // 照样能把 MERGE_HEAD 清掉 —— 所以失败先记下，reset 之后再重试一次。
+        let mut aborted: Option<String> = None;
+        let mut abort_err = String::new();
+        if let Some(op) = detect_op(&root)? {
+            aborted = Some(display_op(&root, &op));
+            if let Err(e) = run(&root, &abort_args(&root, &op)?) {
+                abort_err = e;
+            }
+        }
+
+        // clean 必须排在 reset **之前**：`reset --hard` 会把 `.gitignore` 还原成 HEAD 版本，
+        // 用户本地新加的忽略规则会在那一刻失效，随后 clean 就把它本来在保护的目录删掉 ——
+        // 而确认框承诺的正是「被 .gitignore 忽略的文件保持不动」。
+        // clean 只认**工作区**的 .gitignore。用户若刚把 .gitignore 删掉、或删掉其中
+        // `node_modules/` 那一行，这些目录在 clean 眼里就是「未跟踪」，会连 node_modules /
+        // dist / target 一起删 —— 而确认框承诺的正是「被忽略的文件不动」。所以把 HEAD 版本的
+        // 规则也并进 `-e`：两套规则同时生效，宁可多留（留给 leftover 报出来）也不能多删。
+        // **clean 必须保住 .gitignore 本身**：未提交的 `.gitignore` 在 clean 眼里也是未跟踪文件。
+        // 第一轮它还能替 node_modules 挡一下（工作区规则当时还在），但文件被删掉后规则就没了，
+        // 用户看到 leftover 提示再点第二次时，node_modules / dist 会连根删掉。
+        //（真实事故路径，见 docs/BUGS.md）
+        let (head_ignores, truncated) = head_ignore_patterns(&root);
+        let mut notes: Vec<String> = Vec::new();
+        if truncated {
+            notes.push("忽略规则太多，超出上限的部分没有参与保护".to_string());
+        }
+        let excludes = write_excludes(&head_ignores);
+        let mut clean_args: Vec<String> = Vec::new();
+        if let Some(tmp) = &excludes {
+            let path = tmp
+                .0
+                .as_ref()
+                .map(|p| p.to_string_lossy().replace('\\', "/"))
+                .unwrap_or_default();
+            clean_args.push("-c".to_string());
+            clean_args.push(format!("core.excludesFile={path}"));
+        }
+        clean_args.extend(["clean", "-fd", "-e", ".gitignore"].map(str::to_string));
+        let clean_refs: Vec<&str> = clean_args.iter().map(String::as_str).collect();
+        // clean 可能因为文件被占用（Windows 开了就别想删）整体失败。它失败就整个中止的话，
+        // 用户点一次什么都没变；而降级继续 reset 后，残留会在最后被 leftover 如实数出来。
+        let clean_err = run(&root, &clean_refs).err();
+
+        // 「删掉了几个」= 清理前后未跟踪条目之差。直接数清理前的状态会把嵌套仓库这类
+        // clean 跳过的条目也算成「已删除」，和 leftover 重复报同一件事。
+        let removed = untracked_before.saturating_sub(
+            run(&root, &["status", "--porcelain=v1", "-uall"])?
+                .lines()
+                .filter(|l| l.starts_with("??"))
+                .count() as u32,
+        );
+
+        if has_head {
+            run(&root, &["-c", "alias.reset=reset", "reset", "--hard", "HEAD"])?;
+        }
+
+        // 重试：此时索引已经等于 HEAD，之前被「not uptodate」拒掉的 abort 通常就能跑了。
+        // 少了这一步，`git am` + `MM` 这种组合会「改动已销毁、报错、状态还卡着」，得点第二次。
+        if detect_op(&root)?.is_some() {
+            if let Some(op) = detect_op(&root)? {
+                aborted = Some(display_op(&root, &op));
+                if let Err(e) = run(&root, &abort_args(&root, &op)?) {
+                    if abort_err.is_empty() {
+                        abort_err = e;
+                    }
+                }
+            }
+        }
+
+        let mut sub_removed = 0u32;
+        // 子模块：顶层 `reset --hard` 与 `clean` 都不进 submodule，不清的话顶层永远显示 ` M sub`。
+        // 子模块内部要单独走一遍，而且**同样先 clean 再 reset**、同样要带上它自己 HEAD 版本的
+        // 忽略规则 —— 否则子模块的 .gitignore 被删/改窄时，它的 node_modules、target 会被删掉，
+        // 而顶层 leftover 还是 0，前端一句都不提。
+        for sub in submodule_paths(&root) {
+            let sub_dir = format!("{}/{}", root.trim_end_matches('/'), sub);
+            let (sub_ignores, sub_truncated) = head_ignore_patterns(&sub_dir);
+            if sub_truncated {
+                notes.push(format!(
+                    "子模块 {sub} 的忽略规则超过上限，超出部分没有参与保护"
+                ));
+            }
+            let sub_excludes = write_excludes(&sub_ignores);
+            let mut sub_args: Vec<String> = Vec::new();
+            if let Some(tmp) = &sub_excludes {
+                let path = tmp
+                    .0
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().replace('\\', "/"))
+                    .unwrap_or_default();
+                sub_args.push("-c".to_string());
+                sub_args.push(format!("core.excludesFile={path}"));
+            }
+            sub_args.extend(["clean", "-fdq", "-e", ".gitignore"].map(str::to_string));
+            let sub_refs: Vec<&str> = sub_args.iter().map(String::as_str).collect();
+            // 子模块内部的未跟踪文件不在父仓库的 status 里，不单独数就会「删了但不计入 removed」
+            let count_sub_untracked = |dir: &str| -> u32 {
+                run(dir, &["status", "--porcelain", "-uall"])
+                    .map(|o| o.lines().filter(|l| l.starts_with("?? ")).count() as u32)
+                    .unwrap_or(0)
+            };
+            let sub_untracked_before = count_sub_untracked(&sub_dir);
+            // 尽力而为：一个子模块失败不该拦住别的，最后由 leftover 如实报告
+            let _ = run(&sub_dir, &sub_refs);
+            let _ = run(&sub_dir, &["reset", "--hard", "-q", "HEAD"]);
+            sub_removed += sub_untracked_before.saturating_sub(count_sub_untracked(&sub_dir));
+            // 子模块停在别的提交时，清干净工作区也还是显示 ` M sub`：指针要对齐 gitlink 才行，
+            // 而 `submodule update --force` 会销毁子模块里的本地提交，不能替用户决定。
+            // 这里只负责把「不一致」说清楚，别让 toast 笼统归咎于「嵌套仓库、子模块等」。
+            if let Some((cur, want)) = submodule_drift(&root, &sub) {
+                notes.push(format!(
+                    "子模块 {sub} 停在 {}，与父仓库记录的 {} 不一致，需手动对齐",
+                    &cur[..cur.len().min(7)],
+                    &want[..want.len().min(7)],
+                ));
+            }
+        }
+
+        // 复查：中间态没能退出去就别假装成功（`reset --hard` 清不掉 rebase-apply 这类目录）
+        if let Some(op) = detect_op(&root)? {
+            let hint = if abort_err.is_empty() {
+                String::new()
+            } else {
+                format!("：{abort_err}")
+            };
+            let shown = display_op(&root, &op);
+            return Err(format!(
+                "无法退出 {shown} 状态{hint}。已跟踪的改动已被重置，请手动处理后再试"
+            ));
+        }
+
+        // 现状复查：`clean -fd` 删不掉嵌套仓库（要 `-ff`，但那会把用户自己的 clone 也删了），
+        // 也不保证删得掉长路径/被锁的文件。数出来如实报告，不要谎报「干净」。
+        let removed = removed + sub_removed;
+        let after = run(&root, &["status", "--porcelain=v1", "-uall"])?;
+        // `-e .gitignore` 保留下来的那个未提交 `.gitignore` 本身也是未跟踪文件，会一直出现在
+        // status 里。它不算「没清干净的残留」（是我们主动留的），否则每次点击都报「仍有 1 项」，
+        // 还把原因错归给嵌套仓库/子模块。
+        // 只认文件名恰好是 `.gitignore` 的条目：`-e .gitignore` 也是按 basename 匹配的。
+        // 用 `ends_with(".gitignore")` 会把被占用而没删掉的 `locked.gitignore` 也算成
+        // 「我们主动保留的」，真残留就被吞了。
+        let kept_ignores = after
+            .lines()
+            .filter(|l| {
+                l.strip_prefix("?? ")
+                    .map(|path| {
+                        let path = path.trim().trim_matches('"');
+                        path == ".gitignore" || path.ends_with("/.gitignore")
+                    })
+                    .unwrap_or(false)
+            })
+            .count() as u32;
+        let leftover = (after.lines().count() as u32).saturating_sub(kept_ignores);
+        if kept_ignores > 0 {
+            notes.push(format!(
+                "保留了 {kept_ignores} 个未提交的 .gitignore（忽略规则的来源，不能删）"
+            ));
+        }
+
+        if let Some(e) = clean_err {
+            notes.push(format!("有文件清不掉（可能被占用）：{e}"));
+        }
+        Ok(ResetCleanReport {
+            discarded,
+            removed,
+            aborted,
+            leftover,
+            note: if notes.is_empty() {
+                None
+            } else {
+                Some(notes.join("；"))
+            },
+        })
+    })
+    .await
+}
+
+/// 临时 excludes 文件：`clean` 期间挂在 `core.excludesFile` 上，用完就删。
+struct TempExcludes(Option<std::path::PathBuf>);
+
+impl Drop for TempExcludes {
+    fn drop(&mut self) {
+        if let Some(path) = &self.0 {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// 把规则写成临时 excludes 文件，返回的守卫一 drop 就删。
+///
+/// 为什么不再用 `clean -e <rule>`：`-e` 的优先级高于 `.gitignore` 里的 `!取反`，而且每条规则
+/// 占两个 argv，400 条长规则能直接超过 Windows 的 32767 上限（`os error 206`，clean 根本没跑）。
+/// 写进 excludes 文件后两件事一起解决，且 remains 是 git 自己的匹配器在处理。
+fn write_excludes(rules: &[String]) -> Option<TempExcludes> {
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let mut lines: Vec<String> = Vec::new();
+    // 用户全局配的 excludesFile 优先级最低，原样垫在前面，避免被我们遮蔽后多删文件
+    if let Ok(configured) = run(".", &["config", "--get", "core.excludesFile"]) {
+        let path = configured.trim();
+        if !path.is_empty() {
+            if let Ok(body) = std::fs::read_to_string(path) {
+                lines.extend(body.lines().map(|l| l.to_string()));
+            }
+        }
+    }
+    lines.extend(rules.iter().cloned());
+    if lines.is_empty() {
+        return None;
+    }
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut path = std::env::temp_dir();
+    path.push(format!("git-zen-ignore-{}-{n}.tmp", std::process::id()));
+    let mut body = lines.join("
+");
+    body.push('\n');
+    std::fs::write(&path, body).ok()?;
+    Some(TempExcludes(Some(path)))
+}
+
+/// 取 HEAD 里所有 `.gitignore` 的规则，转成 `clean` 可用的模式（仓库根相对）。
+/// 只会让 clean 少删，不会多删：多留的东西最终由 `leftover` 如实报出来。
+/// 子目录里的 `.gitignore` 规则是相对它自己那个目录的，这里补上目录前缀做近似。
+/// 列出全部子模块路径（含嵌套），相对仓库根。
+fn submodule_paths(repo: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let Ok(list) = run(repo, &["submodule", "status", "--recursive"]) else {
+        return out;
+    };
+    for line in list.lines() {
+        // 每行形如 ` <sha> <path> (<describe>)`，行首可能带 `-`（未初始化）/`+`/`U`。
+        // 路径可能含空格（`my lib`），所以只能在 sha 后面整体切，不能按空白分词。
+        let rest = line.trim_start_matches([' ', '-', '+', 'U']);
+        let Some((_sha, tail)) = rest.split_once(' ') else {
+            continue;
+        };
+        let path = match tail.rfind(" (") {
+            Some(k) if tail.ends_with(')') => &tail[..k],
+            _ => tail,
+        };
+        if !path.trim().is_empty() {
+            out.push(path.trim().to_string());
+        }
+    }
+    out
+}
+
+fn head_ignore_patterns(repo: &str) -> (Vec<String>, bool) {
+    // 规则数量上限只是健全性兜底（写的是临时 excludes 文件，不再受命令行长度限制）。
+    // 超出的规则不参与保护，截断了要如实告诉用户。
+    const MAX: usize = 400;
+    let mut out: Vec<String> = Vec::new();
+    let mut truncated = false;
+    let Ok(list) = run(repo, &["ls-tree", "-r", "--name-only", "-z", "HEAD"]) else {
+        return (out, false);
+    };
+    for path in list.split('\u{0}') {
+        if path.is_empty() {
+            continue;
+        }
+        let file = path.rsplit('/').next().unwrap_or(path);
+        if file != ".gitignore" {
+            continue;
+        }
+        let dir = path.strip_suffix(file).unwrap_or("");
+        let Ok(content) = run(repo, &["show", &format!("HEAD:{path}")]) else {
+            continue;
+        };
+        for line in content.lines() {
+            let raw = line.trim();
+            if raw.is_empty() || raw.starts_with('#') {
+                continue;
+            }
+            // `!keep.log` 是「显式放行」，必须一起带过去：只把 `*.log` 原样交给 clean 的话，
+            // 被 `!` 放行的文件会被当成忽略文件保下来，而 `reset --hard` 又把 .gitignore 还原成
+            // 带 `!` 的样子 —— 那个文件于是永远清不掉、leftover 恒为 1，用户点多少次都一样。
+            let (negated, pat) = match raw.strip_prefix('!') {
+                Some(rest) => (true, rest.trim()),
+                None => (false, raw),
+            };
+            if pat.is_empty() {
+                continue;
+            }
+            let joined = if dir.is_empty() {
+                pat.to_string()
+            } else {
+                let anchored = pat.starts_with('/');
+                let body = pat.trim_start_matches('/');
+                // gitignore 里不含斜杠、也不以 `/` 开头的模式是「任意深度」语义；直接拼目录前缀
+                // 会把它变成锚定模式，子目录更深处的同名目录就不受保护了
+                //（monorepo 里 frontend/.gitignore 只写一条 node_modules/ 很常见）。
+                // 反过来 `/out/` 本来就锚定在子目录根，扩成 `sub/**/out/` 会过度保护：
+                // 深层同名目录被跳过、reset 后又还原回只锚定第一层的规则 —— 永远清不干净。
+                if !anchored && !body.trim_end_matches('/').contains('/') {
+                    format!("{dir}**/{body}")
+                } else {
+                    format!("{dir}{body}")
+                }
+            };
+            let joined = if negated {
+                format!("!{joined}")
+            } else {
+                joined
+            };
+            if !out.contains(&joined) {
+                if out.len() >= MAX {
+                    // 装满之后还有新规则 = 确实被截断了；刚好 400 条不算
+                    truncated = true;
+                } else {
+                    out.push(joined);
+                }
+            }
+        }
+    }
+    (out, truncated)
+}
+
+/// 子模块当前 HEAD 与父仓库记录的 gitlink 是否一致；不一致时返回 (当前, 记录的)。
+fn submodule_drift(root: &str, sub: &str) -> Option<(String, String)> {
+    let cur = run(root, &["-C", sub, "rev-parse", "HEAD"]).ok()?;
+    let tree = run(root, &["ls-tree", "HEAD", "--", sub]).ok()?;
+    // 形如 `160000 commit <sha>\tsub`
+    let want = tree
+        .split_whitespace()
+        .nth(2)
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if want.is_empty() || want == cur.trim() {
+        return None;
+    }
+    Some((cur.trim().to_string(), want))
+}
+
+/// `git am` 底层复用的也是 rebase 的中间态，但对用户得说清楚是哪一种。
+fn display_op(repo: &str, op: &str) -> String {
+    if op == "rebase" {
+        if let Ok(git_dir) = run(repo, &["rev-parse", "--absolute-git-dir"]) {
+            if std::path::Path::new(git_dir.trim())
+                .join("rebase-apply")
+                .join("applying")
+                .exists()
+            {
+                return "am".to_string();
+            }
+        }
+    }
+    op.to_string()
+}
+
+/// 数「会被丢弃的已跟踪改动」与「未跟踪条目」数量。
+/// `-uall` 下列表一个文件一行，所以都是文件数（与确认框的口径一致）。
+fn count_pending(repo: &str, porcelain: &str) -> (u32, u32) {
+    let mut discarded = 0u32;
+    let mut untracked = 0u32;
+    for line in porcelain.lines() {
+        if line.starts_with("??") {
+            untracked += 1;
+        } else if !line.starts_with("!!") {
+            let path = line.get(3..).unwrap_or("").trim().trim_matches('"');
+            // 子模块里只有未跟踪内容时，父仓库看到的是 ` M sub`，但子模块并没有「已跟踪的改动」
+            // 会被丢弃（清掉的只是未跟踪文件）—— 计进 discarded 会让 toast 虚报。
+            if is_submodule_clean_but_untracked(repo, path) {
+                continue;
+            }
+            discarded += 1;
+        }
+    }
+    (discarded, untracked)
+}
+
+/// 该路径是不是「工作区里没有已跟踪改动、只有未跟踪内容」的子模块。
+fn is_submodule_clean_but_untracked(repo: &str, path: &str) -> bool {
+    if path.is_empty() {
+        return false;
+    }
+    let dir = format!("{}/{}", repo.trim_end_matches('/'), path);
+    // 子模块的 .git 可能是文件（gitdir 指针），exists 对两种形态都成立
+    if !std::path::Path::new(&dir).join(".git").exists() {
+        return false;
+    }
+    // 父仓库里这条 gitlink 若已被暂存（`M  sub`），那是真改动、reset 会销毁它 —— 不能当
+    // 「子模块只是工作区脏」。`--quiet` 有差异时返回非零，正是这里要的判据。
+    if run(repo, &["diff", "--cached", "--quiet", "--", path]).is_err() {
+        return false;
+    }
+    match run(&dir, &["status", "--porcelain", "-uno"]) {
+        Ok(out) => out.trim().is_empty(),
+        Err(_) => false,
+    }
+}
+
+/// 退出某个多步操作该跑的命令。
+fn abort_args(repo: &str, op: &str) -> Result<Vec<&'static str>, String> {
+    Ok(match op {
+        "merge" => vec!["merge", "--abort"],
+        "cherry-pick" => vec!["cherry-pick", "--abort"],
+        "revert" => vec!["revert", "--abort"],
+        "rebase" => rebase_abort_args(repo)?,
+        other => return Err(format!("当前是 {other} 状态，请在终端里处理")),
+    })
+}
+
+/// 退出变基 / 拣选补丁该用哪条命令。
+///
+/// `rebase-apply` 这个目录被两套机制共用：`git rebase --apply` 与 `git am`。
+/// 前者能 `rebase --abort`，后者只能 `am --abort` —— 实测对 am 跑 `rebase --abort`
+/// 会报 `It looks like 'git am' is in progress. Cannot rebase.`。
+/// 两者靠 `rebase-apply/applying` 区分（am 写它，rebase 不写）。
+fn rebase_abort_args(repo: &str) -> Result<Vec<&'static str>, String> {
+    let git_dir = run(repo, &["rev-parse", "--absolute-git-dir"])?;
+    let dir = std::path::Path::new(git_dir.trim());
+    Ok(if dir.join("rebase-apply").join("applying").exists() {
+        vec!["am", "--abort"]
+    } else {
+        vec!["rebase", "--abort"]
+    })
+}
+
 /// 检测进行中的多步操作。
 ///
 /// 用 `rev-parse --absolute-git-dir` 再拼文件名，而不是直接拼 `repo/.git/MERGE_HEAD`：
@@ -1563,6 +2032,8 @@ fn detect_op(repo: &str) -> Result<Option<String>, String> {
         ("cherry-pick", "CHERRY_PICK_HEAD"),
         ("revert", "REVERT_HEAD"),
         ("rebase", "rebase-merge"),
+        // `rebase --apply` 与 `git am` 都用 rebase-apply，不探它就会漏掉这两种中间态
+        ("rebase", "rebase-apply"),
     ] {
         if dir.join(probe).exists() {
             return Ok(Some(name.to_string()));
@@ -1575,6 +2046,8 @@ fn detect_op(repo: &str) -> Result<Option<String>, String> {
 pub struct OpState {
     /// "" = 没有进行中的操作；否则 merge / cherry-pick / revert / rebase
     operation: String,
+    /// 给人看的名字：`git am` 与 rebase --apply 底层同为 rebase-apply，界面上不能混着说
+    display: String,
     /// 仍未解决的冲突文件（`--diff-filter=U`）
     conflicts: Vec<String>,
 }
@@ -1588,15 +2061,18 @@ pub async fn git_op_state(repo: String) -> Result<OpState, String> {
         if operation.is_empty() {
             return Ok(OpState {
                 operation,
+                display: String::new(),
                 conflicts: vec![],
             });
         }
+        let display = display_op(&repo, &operation);
         let conflicts = run(&repo, &["diff", "--name-only", "--diff-filter=U"])?
             .lines()
             .map(String::from)
             .collect();
         Ok(OpState {
             operation,
+            display,
             conflicts,
         })
     })
@@ -2335,5 +2811,892 @@ mod tests {
             "被守卫拦下时 HEAD 必须原封不动"
         );
     }
+
+    // ---------- 重置到干净状态 ----------
+
+    fn reset_clean(repo: &TempRepo) -> Result<ResetCleanReport, String> {
+        tauri::async_runtime::block_on(git_reset_clean(repo.path().to_string()))
+    }
+
+    /// 已跟踪改动（含暂存）全部丢弃、未跟踪的删掉，但 `.gitignore` 忽略的不动。
+    /// 最后一条是这个功能最容易被做错的地方：带 `-x` 会把 node_modules / target 一起删，
+    /// 那不是「代码脏」，是让人重装重编。
+    #[test]
+    fn reset_clean_discards_changes_and_untracked_but_keeps_ignored() {
+        let repo = TempRepo::new("resetclean");
+        commit_files(
+            &repo,
+            &[("kept.txt", "base"), (".gitignore", "node_modules/\n")],
+            "base",
+        );
+        write_file(&repo, "kept.txt", "dirty");
+        write_file(&repo, "staged.txt", "s");
+        run(repo.path(), &["add", "staged.txt"]).unwrap();
+        write_file(&repo, "loose.txt", "l");
+        write_file(&repo, "sub/inner.txt", "i");
+        write_file(&repo, "node_modules/pkg/i.js", "keep");
+
+        let r = reset_clean(&repo).expect("重置应当成功");
+        assert_eq!(r.discarded, 2, "kept.txt（工作区）+ staged.txt（暂存）");
+        assert_eq!(r.removed, 2, "loose.txt + sub/ 目录各算一条");
+        assert!(r.aborted.is_none(), "没有进行中的操作");
+
+        assert_eq!(
+            read_file(&repo, "kept.txt").as_deref(),
+            Some("base"),
+            "已跟踪改动应还原"
+        );
+        for gone in ["staged.txt", "loose.txt", "sub/inner.txt"] {
+            assert!(!repo.0.join(gone).exists(), "{gone} 应被删除");
+        }
+        assert!(
+            repo.0.join("node_modules/pkg/i.js").exists(),
+            "被忽略的文件不该被删"
+        );
+        assert_eq!(porcelain(&repo).trim(), "", "重置后工作区应当干净");
+        assert_eq!(r.leftover, 0, "干净就不该报告残留");
+    }
+
+    /// 嵌套的 git 仓库 `clean -fd` 删不掉（要 `-ff`，但那会把用户自己的 clone 一起删）。
+    /// 这种「删不掉但也不报错」的情况必须如实报告，不能谎报「干净」。
+    #[test]
+    fn reset_clean_reports_leftover_for_nested_repo() {
+        let repo = TempRepo::new("resetnested");
+        commit_files(&repo, &[("kept.txt", "base")], "base");
+        // 嵌套仓库用裸 run/写文件，不能建 TempRepo（它的 Drop 会删目录）
+        let nested = repo.0.join("vendored");
+        std::fs::create_dir_all(&nested).unwrap();
+        let nested_path = nested.to_str().unwrap();
+        run(nested_path, &["init", "-q"]).unwrap();
+        run(nested_path, &["config", "user.email", "t@t"]).unwrap();
+        run(nested_path, &["config", "user.name", "t"]).unwrap();
+        std::fs::write(nested.join("inner.txt"), "i").unwrap();
+        run(nested_path, &["add", "-A"]).unwrap();
+        run(nested_path, &["commit", "-q", "-m", "nested"]).unwrap();
+        write_file(&repo, "kept.txt", "dirty");
+
+        let r = reset_clean(&repo).expect("有嵌套仓库时也应当成功");
+        assert_eq!(r.discarded, 1);
+        assert_eq!(r.removed, 0, "clean 删不掉嵌套仓库，就不该把它算成「已删除」");
+        assert!(r.leftover > 0, "嵌套仓库应当被报成残留，而不是假装清干净了");
+        assert!(
+            repo.0.join("vendored/inner.txt").exists(),
+            "刻意不删嵌套仓库（那可能是用户自己的 clone）"
+        );
+        assert_eq!(read_file(&repo, "kept.txt").as_deref(), Some("base"));
+    }
+
+    /// 子模块：`reset --hard` 与 `clean` 都不进 submodule，不清的话顶层永远显示 ` M sub`，
+    /// 再点多少次都清不掉。
+    #[test]
+    fn reset_clean_resets_submodule_worktree() {
+        let lib = TempRepo::new("resetsublib");
+        commit_files(&lib, &[("lib.txt", "base")], "base");
+        let repo = TempRepo::new("resetsub");
+        commit_files(&repo, &[("kept.txt", "base")], "base");
+        run(
+            repo.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                lib.path(),
+                "sub",
+            ],
+        )
+        .unwrap();
+        run(repo.path(), &["commit", "-q", "-m", "add sub"]).unwrap();
+
+        // 弄脏子模块：改已跟踪文件 + 加未跟踪文件
+        let sub = repo.0.join("sub");
+        std::fs::write(sub.join("lib.txt"), "dirty-sub").unwrap();
+        std::fs::write(sub.join("new.txt"), "n").unwrap();
+        assert!(porcelain(&repo).contains("sub"), "顶层应当看到子模块变脏");
+
+        let r = reset_clean(&repo).expect("有子模块也应当能重置");
+        assert_eq!(r.leftover, 0, "子模块内部也要清干净");
+        assert_eq!(
+            std::fs::read_to_string(sub.join("lib.txt")).unwrap().trim(),
+            "base",
+            "子模块已跟踪文件应还原"
+        );
+        assert!(!sub.join("new.txt").exists(), "子模块内未跟踪文件应删除");
+        assert_eq!(porcelain(&repo).trim(), "", "顶层不再显示脏");
+    }
+
+    /// 用户把 `.gitignore` 删掉（或删掉里面 `node_modules/` 那一行）时，这些目录在 clean 眼里
+    /// 就是「未跟踪」—— 但确认框承诺「被 .gitignore 忽略的文件不动」。HEAD 版本的规则必须继续生效。
+    #[test]
+    fn reset_clean_keeps_libs_when_gitignore_rule_was_removed() {
+        let repo = TempRepo::new("resetign2");
+        commit_files(
+            &repo,
+            &[(".gitignore", "node_modules/\ndist/\n"), ("a.txt", "base")],
+            "base",
+        );
+        std::fs::create_dir_all(repo.0.join("node_modules").join("x")).unwrap();
+        std::fs::write(repo.0.join("node_modules").join("x").join("i.js"), "1").unwrap();
+        std::fs::create_dir_all(repo.0.join("dist")).unwrap();
+        std::fs::write(repo.0.join("dist").join("o.js"), "2").unwrap();
+        // 把 .gitignore 从工作区删掉：此时两套规则只剩 HEAD 里那一份
+        std::fs::remove_file(repo.0.join(".gitignore")).unwrap();
+        write_file(&repo, "junk.txt", "j");
+
+        let r = reset_clean(&repo).expect("应当能重置");
+        assert!(
+            repo.0.join("node_modules").join("x").join("i.js").exists(),
+            "node_modules 不能被删（承诺忽略文件不动）"
+        );
+        assert!(repo.0.join("dist").join("o.js").exists(), "dist 不能被删");
+        assert!(!repo.0.join("junk.txt").exists(), "真正未跟踪的仍要删");
+        assert_eq!(r.removed, 1, "只应报告删掉 junk.txt");
+        assert_eq!(r.leftover, 0, ".gitignore 已还原，规则重新对齐");
+    }
+
+    /// 子模块里也可能有本地新增的忽略规则：子模块内的 clean 必须同样排在 reset 之前，
+    /// 否则 reset 先把子模块的 .gitignore 还原、clean 随即删掉它本来在保护的目录。
+    #[test]
+    fn reset_clean_keeps_submodule_dirs_ignored_locally() {
+        let lib = TempRepo::new("resetsubign-lib");
+        commit_files(&lib, &[("lib.txt", "base")], "base");
+        let repo = TempRepo::new("resetsubign");
+        commit_files(&repo, &[("kept.txt", "base")], "base");
+        run(
+            repo.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                lib.path(),
+                "sub",
+            ],
+        )
+        .unwrap();
+        run(repo.path(), &["commit", "-q", "-m", "add sub"]).unwrap();
+
+        let sub = repo.0.join("sub");
+        // 子模块里本地新增忽略规则（未提交），再放一个受它保护的文件
+        std::fs::write(sub.join(".gitignore"), "cache/\n").unwrap();
+        std::fs::create_dir_all(sub.join("cache")).unwrap();
+        std::fs::write(sub.join("cache").join("keep.bin"), "k").unwrap();
+
+        let r = reset_clean(&repo).expect("有子模块也应当能重置");
+        assert!(
+            sub.join("cache").join("keep.bin").exists(),
+            "子模块里被本地规则保护的目录不能被删"
+        );
+        // 子模块里那个被保留的未提交 .gitignore 让它依旧是脏的，父仓库显示 ` M sub` —— 如实报告
+        assert_eq!(r.leftover, 1, "残留要如实报告");
+    }
+
+    /// cherry-pick 停在冲突里也要一次退出（`abort_args` 的这条映射此前没有回归保护）。
+    #[test]
+    fn reset_clean_aborts_pending_cherry_pick() {
+        let repo = TempRepo::new("resetcripick");
+        commit_files(&repo, &[("c.txt", "base")], "base");
+        let base = branch_name(&repo);
+        run(repo.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        commit_files(&repo, &[("c.txt", "side")], "side");
+        let side_hash = run(repo.path(), &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        run(repo.path(), &["checkout", "-q", &base]).unwrap();
+        commit_files(&repo, &[("c.txt", "main")], "main");
+        let _ = run(repo.path(), &["cherry-pick", &side_hash]);
+        assert!(porcelain(&repo).contains("UU c.txt"), "应当处于拣选冲突态");
+
+        let r = reset_clean(&repo).expect("拣选冲突也应当能重置");
+        assert_eq!(r.aborted.as_deref(), Some("cherry-pick"));
+        assert_eq!(read_file(&repo, "c.txt").as_deref(), Some("main"), "回到本分支 HEAD");
+        assert_eq!(porcelain(&repo).trim(), "");
+        let st = tauri::async_runtime::block_on(git_op_state(repo.path().to_string())).unwrap();
+        assert_eq!(st.operation, "", "拣选的中间态应被清除");
+    }
+
+    /// revert 停在冲突里同样要一次退出。
+    #[test]
+    fn reset_clean_aborts_pending_revert() {
+        let repo = TempRepo::new("resetrevert");
+        commit_files(&repo, &[("a.txt", "1")], "one");
+        let first = run(repo.path(), &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        commit_files(&repo, &[("a.txt", "2")], "two");
+        // 再改一次，让 first 那次的内容被覆盖 —— 只有这样 revert 才会冲突
+        commit_files(&repo, &[("a.txt", "3")], "three");
+        let _ = run(repo.path(), &["revert", "--no-edit", &first]);
+        assert_eq!(
+            tauri::async_runtime::block_on(git_op_state(repo.path().to_string()))
+                .unwrap()
+                .operation,
+            "revert",
+            "应当停在撤销冲突态"
+        );
+
+        let r = reset_clean(&repo).expect("撤销冲突也应当能重置");
+        assert_eq!(r.aborted.as_deref(), Some("revert"));
+        assert_eq!(read_file(&repo, "a.txt").as_deref(), Some("3"), "回到 HEAD 版本");
+        assert_eq!(porcelain(&repo).trim(), "");
+        let st = tauri::async_runtime::block_on(git_op_state(repo.path().to_string())).unwrap();
+        assert_eq!(st.operation, "");
+    }
+
+    /// 未提交的 `.gitignore` 新规则必须继续生效：clean 若排在 reset 之后，
+    /// `reset --hard` 会先把 `.gitignore` 还原成 HEAD 版本、新规则当场失效，
+    /// 随后 clean 就删掉它本来在保护的目录 —— 而确认框承诺的正是「忽略的不动」。
+    #[test]
+    fn reset_clean_keeps_dirs_ignored_by_uncommitted_gitignore() {
+        let repo = TempRepo::new("resetign");
+        commit_files(&repo, &[(".gitignore", "*.log\n"), ("a.txt", "base")], "base");
+        std::fs::create_dir_all(repo.0.join("cache")).unwrap();
+        std::fs::write(repo.0.join("cache").join("keep.bin"), "k").unwrap();
+        // 本地新加规则（未提交），再放一个真正未跟踪的文件
+        write_file(&repo, ".gitignore", "*.log\ncache/\n");
+        write_file(&repo, "junk.txt", "j");
+
+        let r = reset_clean(&repo).expect("应当能重置");
+        assert!(
+            repo.0.join("cache").join("keep.bin").exists(),
+            "本地忽略规则保护的目录不能被删"
+        );
+        assert!(!repo.0.join("junk.txt").exists(), "真正未跟踪的文件要删");
+        assert_eq!(r.removed, 1, "只应报告删掉 junk.txt");
+        assert_eq!(
+            read_file(&repo, ".gitignore").as_deref().map(str::trim),
+            Some("*.log"),
+            "已跟踪的 .gitignore 回到 HEAD 版本"
+        );
+        // 规则还原后 cache/ 变成未跟踪：如实报告，不谎报干净
+        assert_eq!(r.leftover, 1, "残留要如实报告");
+    }
+
+    /// 仓库以子目录身份打开时，clean 的 cwd 会决定它只清子目录 —— 根上的未跟踪文件
+    /// 永远清不掉，用户看到的是「怎么点都不干净」。必须一律回到仓库根执行。
+    #[test]
+    fn reset_clean_from_subdir_cleans_repo_root() {
+        let repo = TempRepo::new("resetsubdir");
+        commit_files(&repo, &[("dir/a.txt", "base")], "base");
+        std::fs::create_dir_all(repo.0.join("dir")).unwrap();
+        std::fs::write(repo.0.join("dir").join("inner.txt"), "i").unwrap();
+        std::fs::write(repo.0.join("root-junk.txt"), "r").unwrap();
+
+        let sub = repo.0.join("dir").to_string_lossy().to_string();
+        let r = tauri::async_runtime::block_on(git_reset_clean(sub)).expect("子目录也应当能重置");
+        assert_eq!(r.removed, 2, "子目录与仓库根的未跟踪文件都要删掉");
+        assert!(!repo.0.join("root-junk.txt").exists(), "根上的文件也必须删");
+        assert!(!repo.0.join("dir").join("inner.txt").exists());
+        assert_eq!(r.leftover, 0);
+    }
+
+    /// `git am` + `MM`（冲突已 add 后又改文件）：第一次 abort 会被拒绝，
+    /// 但 reset 之后索引已等于 HEAD，重试就能退出 —— 用户不该需要点第二次。
+    #[test]
+    fn reset_clean_retries_abort_after_reset() {
+        let repo = TempRepo::new("resetammm");
+        commit_files(&repo, &[("c.txt", "base")], "base");
+        let base = branch_name(&repo);
+        run(repo.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        commit_files(&repo, &[("c.txt", "side")], "side");
+        let patches = repo.0.join("patches");
+        std::fs::create_dir_all(&patches).unwrap();
+        run(
+            repo.path(),
+            &["format-patch", "-1", "-o", patches.to_str().unwrap()],
+        )
+        .unwrap();
+        run(repo.path(), &["checkout", "-q", &base]).unwrap();
+        commit_files(&repo, &[("c.txt", "main")], "main");
+        let patch = std::fs::read_dir(&patches)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let _ = run(repo.path(), &["am", patch.to_str().unwrap()]);
+        write_file(&repo, "c.txt", "resolved");
+        run(repo.path(), &["add", "c.txt"]).unwrap();
+        write_file(&repo, "c.txt", "resolved-again");
+        assert!(porcelain(&repo).contains("MM c.txt"));
+
+        let r = reset_clean(&repo).expect("am 的 MM 状态也应一次重置成功");
+        assert_eq!(
+            r.aborted.as_deref(),
+            Some("am"),
+            "am 不该被报成 rebase"
+        );
+        assert_eq!(porcelain(&repo).trim(), "");
+        let st = tauri::async_runtime::block_on(git_op_state(repo.path().to_string())).unwrap();
+        assert_eq!(st.operation, "", "am 中间态应被清除，不该要求点第二次");
+    }
+
+    /// 空仓库（没有 HEAD）也要能用：跳过 reset，只做清理，不能报 ambiguous argument。
+    #[test]
+    fn reset_clean_works_in_repo_without_head() {
+        let repo = TempRepo::new("resetempty");
+        write_file(&repo, "a.txt", "A1");
+        let r = reset_clean(&repo).expect("空仓库也应当能重置");
+        assert_eq!(r.discarded, 0);
+        assert_eq!(r.removed, 1);
+        assert!(!repo.0.join("a.txt").exists(), "未跟踪文件应被清掉");
+    }
+
+    /// 空仓库里**已经暂存**的文件：`reset --hard` 会被跳过，索引得单独清空，
+    /// 否则文件留在索引里、磁盘上也还在，报告却说「丢弃了 1 个改动」—— 什么都没做还报功。
+    #[test]
+    fn reset_clean_clears_staged_files_in_repo_without_head() {
+        let repo = TempRepo::new("resetempty2");
+        write_file(&repo, "a.txt", "A1");
+        run(repo.path(), &["add", "a.txt"]).unwrap();
+        assert!(porcelain(&repo).contains("a.txt"));
+
+        let r = reset_clean(&repo).expect("空仓库也应当能重置");
+        assert_eq!(r.discarded, 0, "空仓库里没有「已跟踪的改动」可言");
+        assert_eq!(r.removed, 1, "清空索引后它变成未跟踪条目");
+        assert!(!repo.0.join("a.txt").exists(), "文件应被清掉");
+        assert_eq!(porcelain(&repo).trim(), "");
+    }
+
+    /// abort 被 git 拒绝（冲突已 add 之后又改动该文件 → status MM）不能让整个重置失败：
+    /// 紧随其后的 `reset --hard` 照样能清掉 MERGE_HEAD，降级后应当照常成功。
+    #[test]
+    fn reset_clean_survives_refused_abort() {
+        let repo = TempRepo::new("resetrefused");
+        commit_files(&repo, &[("c.txt", "base")], "base");
+        let base = branch_name(&repo);
+        run(repo.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        commit_files(&repo, &[("c.txt", "side")], "side");
+        run(repo.path(), &["checkout", "-q", &base]).unwrap();
+        commit_files(&repo, &[("c.txt", "main")], "main");
+        let _ = run(repo.path(), &["merge", "--no-edit", "side"]);
+        // 解决冲突并暂存，再改这笔 —— 此时 merge --abort 会拒绝执行
+        write_file(&repo, "c.txt", "resolved");
+        run(repo.path(), &["add", "c.txt"]).unwrap();
+        write_file(&repo, "c.txt", "resolved-again");
+        assert!(porcelain(&repo).contains("MM c.txt"), "应当是 MM 状态");
+        assert!(
+            run(repo.path(), &["merge", "--abort"]).is_err(),
+            "这个状态下 merge --abort 本身就应当被拒绝（否则这条测试没意义）"
+        );
+
+        let r = reset_clean(&repo).expect("abort 被拒绝时也应当能重置");
+        assert_eq!(r.aborted.as_deref(), Some("merge"), "仍应报告放弃了合并");
+        assert_eq!(porcelain(&repo).trim(), "", "工作区应当干净");
+        let git_dir = run(repo.path(), &["rev-parse", "--absolute-git-dir"]).unwrap();
+        assert!(
+            !std::path::Path::new(git_dir.trim()).join("MERGE_HEAD").exists(),
+            "MERGE_HEAD 应当被 reset --hard 清掉"
+        );
+    }
+
+    /// `git am` 停在冲突里：它与 `rebase --apply` 共用 `rebase-apply` 目录，但只能 `am --abort`
+    /// （对 am 跑 `rebase --abort` 会报 `It looks like 'git am' is in progress`）。
+    #[test]
+    fn reset_clean_aborts_pending_am() {
+        let repo = TempRepo::new("resetam");
+        commit_files(&repo, &[("c.txt", "base")], "base");
+        let base = branch_name(&repo);
+        run(repo.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        commit_files(&repo, &[("c.txt", "side")], "side");
+        let patches = repo.0.join("patches");
+        std::fs::create_dir_all(&patches).unwrap();
+        run(
+            repo.path(),
+            &["format-patch", "-1", "-o", patches.to_str().unwrap()],
+        )
+        .unwrap();
+        run(repo.path(), &["checkout", "-q", &base]).unwrap();
+        commit_files(&repo, &[("c.txt", "main")], "main");
+        let patch = std::fs::read_dir(&patches)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let _ = run(repo.path(), &["am", patch.to_str().unwrap()]);
+
+        let git_dir = run(repo.path(), &["rev-parse", "--absolute-git-dir"]).unwrap();
+        assert!(
+            std::path::Path::new(git_dir.trim())
+                .join("rebase-apply")
+                .join("applying")
+                .exists(),
+            "应当停在 am 中间态"
+        );
+        assert_eq!(
+            tauri::async_runtime::block_on(git_op_state(repo.path().to_string()))
+                .unwrap()
+                .operation,
+            "rebase",
+            "am 中间态也要能被识别出来（否则界面显示成「没有进行中的操作」）"
+        );
+
+        let r = reset_clean(&repo).expect("am 中间态也应当能重置");
+        assert_eq!(
+            r.aborted.as_deref(),
+            Some("am"),
+            "对用户要说清是 am 而不是变基"
+        );
+        assert_eq!(porcelain(&repo).trim(), "");
+        let st = tauri::async_runtime::block_on(git_op_state(repo.path().to_string())).unwrap();
+        assert_eq!(st.operation, "", "am 中间态应被清除");
+    }
+
+    /// 正在冲突的合并会被先放弃再重置 —— 用户点的是「回到最干净」，不该被拦在半路。
+    #[test]
+    fn reset_clean_aborts_pending_merge() {
+        let repo = TempRepo::new("resetmerge");
+        commit_files(&repo, &[("c.txt", "base")], "base");
+        let base = branch_name(&repo);
+        run(repo.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        commit_files(&repo, &[("c.txt", "side")], "side");
+        run(repo.path(), &["checkout", "-q", &base]).unwrap();
+        commit_files(&repo, &[("c.txt", "main")], "main");
+        let _ = tauri::async_runtime::block_on(git_merge(
+            repo.path().to_string(),
+            "side".to_string(),
+        ));
+        assert!(porcelain(&repo).contains("UU c.txt"), "应当处于冲突态");
+
+        let r = reset_clean(&repo).expect("冲突态也应当能重置");
+        assert_eq!(r.aborted.as_deref(), Some("merge"), "应报告放弃了合并");
+        assert_eq!(read_file(&repo, "c.txt").as_deref(), Some("main"), "回到 HEAD 版本");
+        assert_eq!(porcelain(&repo).trim(), "", "冲突状态应被清除");
+        let st = tauri::async_runtime::block_on(git_op_state(repo.path().to_string())).unwrap();
+        assert_eq!(st.operation, "", "不应再有进行中的操作");
+    }
+
+    /// 变基的中间态不会因为 reset --hard 消失，必须显式 --abort。
+    #[test]
+    fn reset_clean_aborts_pending_rebase() {
+        let repo = TempRepo::new("resetrebase");
+        commit_files(&repo, &[("c.txt", "base")], "base");
+        let base = branch_name(&repo);
+        run(repo.path(), &["checkout", "-q", "-b", "side"]).unwrap();
+        commit_files(&repo, &[("c.txt", "side")], "side");
+        run(repo.path(), &["checkout", "-q", &base]).unwrap();
+        commit_files(&repo, &[("c.txt", "main")], "main");
+        // 制造一次必然冲突的变基：core.editor=true 防止挂起等编辑器
+        let _ = run(
+            repo.path(),
+            &["-c", "core.editor=true", "rebase", "side"],
+        );
+        let git_dir = run(repo.path(), &["rev-parse", "--absolute-git-dir"]).unwrap();
+        assert!(
+            std::path::Path::new(git_dir.trim()).join("rebase-merge").exists()
+                || std::path::Path::new(git_dir.trim()).join("rebase-apply").exists(),
+            "应当停在变基中间态"
+        );
+
+        let r = reset_clean(&repo).expect("变基态也应当能重置");
+        assert_eq!(r.aborted.as_deref(), Some("rebase"), "应报告放弃了变基");
+        let st = tauri::async_runtime::block_on(git_op_state(repo.path().to_string())).unwrap();
+        assert_eq!(st.operation, "", "变基中间态应被清除");
+        assert_eq!(porcelain(&repo).trim(), "");
+    }
+    /// 子目录 `.gitignore` 里不含斜杠的规则是「任意深度」语义：拼上目录前缀后必须补 `**/`，
+    /// 否则 `sub/out/` 只护住第一层，`sub/deep/out/` 会被当成未跟踪删掉。
+    #[test]
+    fn head_ignore_patterns_normalizes_depth_and_skips_noise() {
+        let repo = TempRepo::new("ignpat");
+        commit_files(
+            &repo,
+            &[
+                (
+                    ".gitignore",
+                    "# 注释\n\nnode_modules/\n/dist\n**/target\n*.log\n!keep.log\n",
+                ),
+                ("sub/.gitignore", "out/\nanchored/dir/\n/root-only/\n*.tmp\n"),
+            ],
+            "base",
+        );
+        let (pats, _) = head_ignore_patterns(repo.path());
+        for want in ["node_modules/", "/dist", "**/target", "*.log"] {
+            assert!(pats.iter().any(|p| p == want), "缺失根规则 {want}: {pats:?}");
+        }
+        // 不含斜杠 → 任意深度；含斜杠或以 `/` 开头 → 保持锚定
+        for want in [
+            "sub/**/out/",
+            "sub/**/*.tmp",
+            "sub/anchored/dir/",
+            "sub/root-only/",
+        ] {
+            assert!(pats.iter().any(|p| p == want), "缺失子目录规则 {want}: {pats:?}");
+        }
+        assert!(
+            !pats.iter().any(|p| p.contains("root-only") && p.contains("**")),
+            "锚定规则不该被扩成任意深度: {pats:?}"
+        );
+        // 取反必须保留（否则被 `!` 放行的文件永远清不掉），注释与空行要剔除
+        assert!(
+            pats.iter().any(|p| p == "!keep.log"),
+            "取反规则要保留: {pats:?}"
+        );
+        assert!(
+            !pats.iter().any(|p| p.starts_with('#') || p.trim().is_empty()),
+            "注释与空行不该进规则表: {pats:?}"
+        );
+    }
+
+    /// `!` 取反放行的文件必须真被清掉：只带 `*.log` 不带 `!keep.log` 时，`keep.log` 会被
+    /// 当忽略文件保下来，而 `reset --hard` 又把 .gitignore 还原成带 `!` 的样子 ——
+    /// 于是它永远留在工作区、leftover 恒为 1，连点多少次都不收敛。
+    #[test]
+    fn reset_clean_converges_when_gitignore_has_negation() {
+        let repo = TempRepo::new("resetneg");
+        commit_files(
+            &repo,
+            &[(".gitignore", "*.log\n!keep.log\n"), ("a.txt", "base")],
+            "base",
+        );
+        // 工作区的 .gitignore 没了，保护只能来自 HEAD 规则
+        std::fs::remove_file(repo.0.join(".gitignore")).unwrap();
+        std::fs::write(repo.0.join("keep.log"), "k").unwrap();
+        std::fs::write(repo.0.join("other.log"), "o").unwrap();
+
+        let r = reset_clean(&repo).expect("应当能重置");
+        assert!(
+            !repo.0.join("keep.log").exists(),
+            "被 ! 放行的文件不是忽略文件，必须清掉"
+        );
+        assert!(
+            repo.0.join("other.log").exists(),
+            "*.log 来自 HEAD 规则，仍要保护（宁可少删，多留的由 leftover 报）"
+        );
+        assert_eq!(r.leftover, 0, "一次点干净: {r:?}");
+    }
+
+    /// 父仓库「暂存的 gitlink 改动」（`M  sub`）是真改动，不能被当成「子模块只是工作区脏」跳过。
+    #[test]
+    fn reset_clean_counts_staged_gitlink_change() {
+        let lib = TempRepo::new("resetgl-lib");
+        commit_files(&lib, &[("a.txt", "one")], "one");
+        std::fs::write(lib.0.join("b.txt"), "two").unwrap();
+        run(lib.path(), &["add", "-A"]).unwrap();
+        run(lib.path(), &["commit", "-q", "-m", "two"]).unwrap();
+
+        let repo = TempRepo::new("resetgl");
+        commit_files(&repo, &[("kept.txt", "base")], "base");
+        run(
+            repo.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                lib.path(),
+                "sub",
+            ],
+        )
+        .unwrap();
+        run(repo.path(), &["commit", "-q", "-m", "add sub"]).unwrap();
+        // 子模块 HEAD 退回上一个提交 → 父仓库 status 出现 gitlink 差异，再 add 暂存它
+        run(&format!("{}/sub", repo.path()), &["checkout", "-q", "HEAD~1"]).unwrap();
+        run(repo.path(), &["add", "sub"]).unwrap();
+        assert!(
+            run(repo.path(), &["status", "--porcelain"])
+                .unwrap()
+                .contains("M  sub"),
+            "前置条件：gitlink 改动已暂存"
+        );
+
+        let r = reset_clean(&repo).expect("应当能重置");
+        assert_eq!(r.discarded, 1, "暂存的 gitlink 改动应当计入 discarded: {r:?}");
+    }
+
+    /// 400 条长规则不能把命令行撑爆（Windows 上限 32767）：clean 必须真的跑起来。
+    #[test]
+    fn reset_clean_survives_many_long_ignore_rules() {
+        let repo = TempRepo::new("resetlong");
+        let mut rules = String::new();
+        for i in 0..400 {
+            rules.push_str(&format!("dir{:03}/{}/\n", i, "x".repeat(70)));
+        }
+        commit_files(&repo, &[(".gitignore", &rules), ("a.txt", "base")], "base");
+        std::fs::write(repo.0.join("junk.txt"), "j").unwrap();
+
+        let r = reset_clean(&repo).expect("长规则不该让 clean 起不来");
+        assert!(!repo.0.join("junk.txt").exists(), "clean 必须真的执行");
+        assert_eq!(r.leftover, 0, "一次点干净: {r:?}");
+    }
+
+    /// 子模块内部的未跟踪文件被删掉时要计入 removed（父仓库 status 看不到它们）。
+    #[test]
+    fn reset_clean_counts_untracked_files_inside_submodule() {
+        let lib = TempRepo::new("resetsubcnt-lib");
+        commit_files(&lib, &[("lib.txt", "base")], "base");
+        let repo = TempRepo::new("resetsubcnt");
+        commit_files(&repo, &[("kept.txt", "base")], "base");
+        run(
+            repo.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                lib.path(),
+                "sub",
+            ],
+        )
+        .unwrap();
+        run(repo.path(), &["commit", "-q", "-m", "add sub"]).unwrap();
+        std::fs::write(repo.0.join("sub").join("untracked.txt"), "u").unwrap();
+
+        let r = reset_clean(&repo).expect("应当能重置");
+        assert!(
+            !repo.0.join("sub").join("untracked.txt").exists(),
+            "子模块里的未跟踪文件要被清掉"
+        );
+        assert_eq!(r.removed, 1, "子模块里删掉的文件也要计入 removed: {r:?}");
+    }
+
+    /// 子目录 `.gitignore` 被删后，深层目录仍要按 HEAD 里的规则保住。
+    #[test]
+    fn reset_clean_keeps_deep_dirs_covered_by_subdir_gitignore() {
+        let repo = TempRepo::new("resetdeep");
+        commit_files(
+            &repo,
+            &[("sub/.gitignore", "out/\n"), ("sub/a.txt", "base")],
+            "base",
+        );
+        // 删掉子目录规则，再在两层深处建成「应当被忽略」的目录
+        std::fs::remove_file(repo.0.join("sub").join(".gitignore")).unwrap();
+        let deep = repo.0.join("sub").join("deep").join("out");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("f.js"), "keep").unwrap();
+        write_file(&repo, "sub/junk.txt", "j");
+
+        let r = reset_clean(&repo).expect("应当能重置");
+        assert!(deep.join("f.js").exists(), "深层 ignored 目录不应被删");
+        assert!(!repo.0.join("sub").join("junk.txt").exists(), "未跟踪文件应删除");
+        assert_eq!(r.leftover, 0);
+    }
+
+    /// 子模块自己的 `.gitignore` 被删时，它的 node_modules 也要保住
+    /// （顶层 `-e` 只管顶层，子模块必须单独推一遍规则）。
+    #[test]
+    fn reset_clean_keeps_submodule_ignored_dirs() {
+        let lib = TempRepo::new("resetsublib2");
+        commit_files(&lib, &[(".gitignore", "node_modules/\n"), ("lib.txt", "base")], "base");
+        let repo = TempRepo::new("resetsub2");
+        commit_files(&repo, &[("kept.txt", "base")], "base");
+        run(
+            repo.path(),
+            &["-c", "protocol.file.allow=always", "submodule", "add", lib.path(), "sub"],
+        )
+        .unwrap();
+        run(repo.path(), &["commit", "-q", "-m", "add sub"]).unwrap();
+
+        let sub = repo.0.join("sub");
+        std::fs::remove_file(sub.join(".gitignore")).unwrap();
+        let nm = sub.join("node_modules").join("x");
+        std::fs::create_dir_all(&nm).unwrap();
+        std::fs::write(nm.join("i.js"), "keep").unwrap();
+        std::fs::write(sub.join("junk.txt"), "j").unwrap();
+
+        let r = reset_clean(&repo).expect("有子模块也应当能重置");
+        assert!(nm.join("i.js").exists(), "子模块内的 ignored 目录不应被删");
+        assert!(!sub.join("junk.txt").exists(), "子模块内未跟踪文件应删除");
+        assert_eq!(r.leftover, 0, "子模块应能自己清干净");
+        assert_eq!(porcelain(&repo).trim(), "", "顶层不再显示脏");
+    }
+
+    /// 子模块路径里有空格时也要清得掉（`submodule status` 的行必须整段切，不能按空白分词）。
+    #[test]
+    fn reset_clean_handles_submodule_path_with_space() {
+        let lib = TempRepo::new("resetspacelib");
+        commit_files(&lib, &[("lib.txt", "base")], "base");
+        let repo = TempRepo::new("resetspace");
+        commit_files(&repo, &[("kept.txt", "base")], "base");
+        run(
+            repo.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                lib.path(),
+                "my lib",
+            ],
+        )
+        .unwrap();
+        run(repo.path(), &["commit", "-q", "-m", "add sub"]).unwrap();
+
+        let sub = repo.0.join("my lib");
+        std::fs::write(sub.join("junk.txt"), "j").unwrap();
+
+        let r = reset_clean(&repo).expect("含空格的子模块路径也应当能重置");
+        assert!(!sub.join("junk.txt").exists(), "含空格的子模块内未跟踪文件应删除");
+        assert_eq!(r.leftover, 0, "含空格的子模块应能自己清干净");
+    }
+
+    /// 子目录里以 `/` 开头的规则只锚定该目录根：深层同名目录不属于它，
+    /// 该删的删掉、不能因为「过度保护」留下永远清不掉的残留。
+    #[test]
+    fn reset_clean_anchored_rule_stays_anchored() {
+        let repo = TempRepo::new("resetanchor");
+        commit_files(
+            &repo,
+            &[("sub/.gitignore", "/root-only/\n"), ("sub/a.txt", "base")],
+            "base",
+        );
+        // 删掉工作区规则，只剩 HEAD 里那条锚定的 `/root-only/`
+        std::fs::remove_file(repo.0.join("sub").join(".gitignore")).unwrap();
+        let kept = repo.0.join("sub").join("root-only");
+        std::fs::create_dir_all(&kept).unwrap();
+        std::fs::write(kept.join("keep.js"), "keep").unwrap();
+        let deep = repo.0.join("sub").join("deep").join("root-only");
+        std::fs::create_dir_all(&deep).unwrap();
+        std::fs::write(deep.join("drop.js"), "drop").unwrap();
+
+        let r = reset_clean(&repo).expect("应当能重置");
+        assert!(kept.join("keep.js").exists(), "一级的 ignored 目录应保住");
+        assert!(!deep.join("drop.js").exists(), "深层同名目录不该被过度保护");
+        assert_eq!(r.leftover, 0, "锚定规则不应留下残留");
+
+        // 连点第二次必须仍然干净（残留若存在，这里会一直涨）
+        let again = reset_clean(&repo).expect("第二次也应成功");
+        assert_eq!(again.leftover, 0, "重复重置必须收敛");
+        assert_eq!(porcelain(&repo).trim(), "", "重复重置后仍是干净工作区");
+    }
+
+    /// **未提交**的 `.gitignore` 不能被 clean 当未跟踪文件删掉：第一轮它还在替 node_modules
+    /// 挡着，删掉之后第二轮就只剩 HEAD 规则（为空）—— 用户看到 leftover 提示再点一次，
+    /// node_modules / dist 会被连根删掉。这是真实事故路径，必须钉死。
+    #[test]
+    fn reset_clean_keeps_uncommitted_gitignore_and_its_ignored_dirs() {
+        let repo = TempRepo::new("resetungit");
+        commit_files(&repo, &[("a.txt", "base")], "base");
+        // .gitignore 只存在于工作区，从未提交
+        std::fs::write(repo.0.join(".gitignore"), "node_modules/\ndist/\n").unwrap();
+        for d in ["node_modules/x", "dist"] {
+            let dir = repo.0.join(d);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("1.js"), "1").unwrap();
+        }
+        std::fs::write(repo.0.join("junk.txt"), "j").unwrap();
+
+        let first = reset_clean(&repo).expect("第一次应当能重置");
+        assert!(
+            repo.0.join(".gitignore").exists(),
+            "未提交的 .gitignore 不该被当成未跟踪文件删掉"
+        );
+        assert!(repo.0.join("node_modules/x/1.js").exists(), "第一次不能删 ignored 目录");
+
+        let second = reset_clean(&repo).expect("第二次应当能重置");
+        assert!(
+            repo.0.join("node_modules/x/1.js").exists(),
+            "连点第二次仍然不能删 ignored 目录（旧实现在这里删掉）"
+        );
+        assert!(repo.0.join("dist/1.js").exists(), "dist 同样要保住");
+        assert!(!repo.0.join("junk.txt").exists(), "真正未跟踪的文件仍要删");
+        let _ = (first, second);
+    }
+
+    /// 子模块停在别的提交（指针漂移）时清不掉，但必须在 `note` 里说清楚，
+    /// 不能只让 toast 笼统归咎于「嵌套仓库、子模块等」。
+    #[test]
+    fn reset_clean_notes_submodule_drift() {
+        let lib = TempRepo::new("resetdriftlib");
+        commit_files(&lib, &[("lib.txt", "v1")], "v1");
+        std::fs::write(lib.0.join("lib.txt"), "v2").unwrap();
+        run(lib.path(), &["add", "-A"]).unwrap();
+        run(lib.path(), &["commit", "-q", "-m", "v2"]).unwrap();
+        let repo = TempRepo::new("resetdrift");
+        commit_files(&repo, &[("kept.txt", "base")], "base");
+        run(
+            repo.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                lib.path(),
+                "sub",
+            ],
+        )
+        .unwrap();
+        run(repo.path(), &["commit", "-q", "-m", "add sub"]).unwrap();
+        // 把子模块停到上一个提交：HEAD 与 gitlink 不一致
+        run(&format!("{}/sub", repo.path()), &["checkout", "-q", "HEAD~1"]).unwrap();
+
+        let cur = run(&format!("{}/sub", repo.path()), &["rev-parse", "HEAD"]).unwrap();
+        let cur = cur.trim()[..7].to_string();
+        let r = reset_clean(&repo).expect("指针漂移不该报错");
+        assert_eq!(r.leftover, 1, "指针不一致必然留下残留");
+        let note = r.note.unwrap_or_default();
+        assert!(note.contains("子模块"), "note 应说明是子模块问题: {note}");
+        assert!(note.contains("不一致"), "note 应说明与父仓库记录不一致: {note}");
+        assert!(note.contains(&cur), "note 要给出子模块当前提交 {cur}: {note}");
+    }
+
+    /// 规则数超过上限被截断时必须给 note —— 截断意味着有一部分 ignored 目录失去保护。
+    #[test]
+    fn reset_clean_notes_truncated_ignore_rules() {
+        let repo = TempRepo::new("resetcapped");
+        // 前 400 条只是填充，第 401 条才是保护 node_modules 的那条 —— 被截掉的正是它
+        let mut rules = String::new();
+        for i in 0..400 {
+            rules.push_str(&format!("junk{i}/\n"));
+        }
+        rules.push_str("fill-a/\nfill-b/\nfill-c/\nfill-d/\nnode_modules/\n");
+        commit_files(&repo, &[(".gitignore", &rules), ("a.txt", "base")], "base");
+        std::fs::create_dir_all(repo.0.join("node_modules")).unwrap();
+        std::fs::write(repo.0.join("node_modules").join("x.js"), "x").unwrap();
+        // 工作区的 .gitignore 删掉，保护只能来自 HEAD 规则
+        std::fs::remove_file(repo.0.join(".gitignore")).unwrap();
+
+        let r = reset_clean(&repo).expect("应当能重置");
+        let note = r.note.unwrap_or_default();
+        assert!(note.contains("上限"), "截断要说明: {note}");
+        assert!(
+            !repo.0.join("node_modules").exists(),
+            "被截断的规则没有参与保护，node_modules 会被删——这正是要如实提示的原因"
+        );
+    }
+
+    /// 刚好 400 条不算截断：不能谎报「规则太多」。
+    #[test]
+    fn reset_clean_no_truncation_note_at_exactly_max_rules() {
+        let repo = TempRepo::new("resetexact");
+        let mut rules = String::new();
+        for i in 0..400 {
+            rules.push_str(&format!("junk{i}/\n"));
+        }
+        commit_files(&repo, &[(".gitignore", &rules), ("a.txt", "base")], "base");
+        let r = reset_clean(&repo).expect("应当能重置");
+        let note = r.note.unwrap_or_default();
+        assert!(!note.contains("上限"), "刚好 400 条不该报截断: {note}");
+    }
+
+    /// 子模块里的规则被截断时，顶层一句都不提 —— 用户不知道子模块的 node_modules 已被删。
+    #[test]
+    fn reset_clean_notes_truncated_rules_inside_submodule() {
+        let mut rules = String::new();
+        for i in 0..400 {
+            rules.push_str(&format!("junk{i}/\n"));
+        }
+        rules.push_str("fill-a/\nfill-b/\nfill-c/\nfill-d/\nnode_modules/\n");
+        let lib = TempRepo::new("resetsubcap-lib");
+        commit_files(&lib, &[(".gitignore", &rules), ("lib.txt", "base")], "base");
+        let repo = TempRepo::new("resetsubcap");
+        commit_files(&repo, &[("kept.txt", "base")], "base");
+        run(
+            repo.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                lib.path(),
+                "sub",
+            ],
+        )
+        .unwrap();
+        run(repo.path(), &["commit", "-q", "-m", "add sub"]).unwrap();
+
+        let r = reset_clean(&repo).expect("有子模块也应当能重置");
+        let note = r.note.unwrap_or_default();
+        assert!(note.contains("子模块"), "子模块里的截断要单独说明: {note}");
+        assert!(note.contains("上限"), "子模块里的截断要说明上限: {note}");
+    }
+
 }
 

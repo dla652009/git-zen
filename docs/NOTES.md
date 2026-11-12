@@ -1008,3 +1008,127 @@ AI 设置原先在 `save()` 里调 `/models` 验通，验不过就**不关弹窗
 
 **教训：尺寸不能既由内容决定、又反过来限制内容。** 量宽要用「不受当前布局约束」的那份宽度
 （固有宽度 / scrollWidth），并且想清楚它该随生命周期怎么变。
+
+**最终做法**：容器 `width:max-content` 交给浏览器定宽，JS 读尺子的固有宽度只写 `min-width`
+（下限 160px、上限 `min(560px, 80vw)`），高度等宽度落定后再量。JS 不参与定宽，
+只做「别比之前更窄」的兜底 —— 定宽和限宽两件事必须分给两个角色，否则就是上面那个循环依赖。
+
+### `git clean` 默认不要带 `-x`
+
+「重置到干净状态」= `reset --hard HEAD` + `clean -fd`。`-x` 会把 `.gitignore` 忽略的
+（node_modules / target / dist）一起删掉 —— 那些是构建产物，不是「代码脏」，删了要重装重编。
+另外 **rebase 的中间态不吃 `reset --hard`**：`rebase-merge/` 目录还在，必须显式 abort；
+merge / cherry-pick / revert 会被 reset 顺带清掉，但统一走 `detect_op` 分派更好读。
+
+四个坑，都是实测踩出来的：
+
+- **`detect_op` 只探 `rebase-merge` 会漏掉一半变基**：`git rebase --apply` 与 `git am` 用的是
+  `rebase-apply/`。漏了它，`reset --hard` 之后中间态还在、函数却报成功。
+- **`rebase-apply` 不能一律用 `rebase --abort`**：对 `git am` 跑会报
+  `It looks like 'git am' is in progress. Cannot rebase.`。两者靠 `rebase-apply/applying`
+  区分（am 写它，rebase 不写），分别用 `am --abort` / `rebase --abort`。
+- **abort 被拒绝不该让整个重置失败**：冲突 add 之后又改了该文件（status `MM`）时
+  `merge --abort` 会拒绝执行（`Entry 'c.txt' not uptodate`），但紧随其后的 `reset --hard`
+  照样清掉 `MERGE_HEAD`。所以 abort 失败先记下、继续走 reset，最后**复查** `detect_op`，
+  还在才报错 —— 报「成功」比报错更危险，报错但不是真失败也同样糟。
+- **空仓库（没有 HEAD）跳过 reset 会留下索引**：已暂存的文件既没回到 HEAD（没有 HEAD）、
+  `clean -fd` 也不动索引，结果文件还在却报「丢弃了 N 个改动」。先 `read-tree --empty`
+  把索引清空，它们就变成未跟踪、被 clean 收走。
+
+计数别解析 `clean -n` 的英文文案（`Would remove`）—— git 本地化一改就静默变 0，
+直接数 `status --porcelain` 的 `??` 行。
+
+还有四个「报告成功但其实没清干净」的坑：
+
+- **`status` 计数必须带 `-uall`**：`status.showUntrackedFiles=no` 时默认输出为空，
+  会出现「文件被删光了、提示却说工作区本来就是干净的」。`-uall` 也让计数变成文件数，
+  与确认框（前端按文件算）口径一致。
+- **`clean -fd` 不删嵌套仓库、也不保证删得掉超长路径/被锁文件**：它 exit 0 却把目录留着。
+  要 `-ff` 才删嵌套仓库，但那会把用户自己的 clone 一起删 —— 所以刻意不用 `-ff`，
+  改成**成功后复查 `status`，把残留数如实报出来**（`leftover`），不谎报「干净」。
+- **submodule 要单独清**：`reset --hard` 与 `clean` 都不进子模块，不清的话顶层永远显示
+  ` M sub`，再点多少次都清不掉。一次 `git submodule foreach --recursive --quiet
+  'git reset --hard -q HEAD && git clean -fdq'` 解决；没有子模块时它静默 exit 0。
+- **abort 失败要重试，不是直接放弃**：`am --abort` 在 `MM` 下同样会被拒（`failed to clean index`），
+  但只要先 `reset --hard`，索引就等于 HEAD、abort 立刻能跑。所以顺序是
+  abort → reset → 仍有中间态就再 abort 一次 → 复查。少了这一步，用户会看到「改动已销毁 +
+  报错 + 状态还卡着」，还得点第二次。
+
+### 重置到干净状态：三个「顺序」决定正确性
+
+- **clean 必须在 reset 之前**：`git reset --hard` 会把已跟踪的 `.gitignore` 还原成 HEAD 版本，
+  用户本地新加的忽略规则（比如刚加了 `cache/`）在那一刻失效，紧接着的 `clean -fd`
+  就把它本来在保护的目录删了 —— 而确认框承诺的正是「被 .gitignore 忽略的不动」。
+  顺序改成 abort → **clean** → reset → 重试 abort → 子模块 → 复查，规则在 clean 时还有效。
+  代价是规则还原后那些目录变成未跟踪，由 `leftover` 如实报出来（不谎报干净）。
+- **一律在仓库根执行**：仓库可以以子目录身份打开（用户选了 `repo/dir`），而 `clean` 的生效范围
+  跟着 cwd 走 —— 在 `dir/` 里跑只清 `dir/`，根上的未跟踪文件永远清不掉，表现是「怎么点都不干净」。
+  开头先 `rev-parse --show-toplevel` 归一化，后续所有命令都在 root 上跑。
+- **`removed` 用「clean 前后未跟踪之差」算**，不要直接数清理前的状态：嵌套仓库这类 clean 会跳过的
+  条目会被重复计入 `removed` 与 `leftover`，报「删了 1 个」而它其实还在。
+  差值必须在 **reset 之前**取，reset 之后会产生新的未跟踪条目（见上一条），差值就失真了。
+
+`git am` 停在冲突时，`git_op_state` 报的是 `rebase`（两者共用 `rebase-apply`），但用户看到
+「正在变基」会一头雾水。`display_op()` 用 `rebase-apply/applying` 这个只有 am 才写的标记
+把显示名改成 `am`，前端再映射成「补丁应用（git am）」。
+
+已知不修的一处：子模块 HEAD 与 gitlink 不一致时清不掉（清的是子模块自己的 HEAD 上的文件），
+要 `submodule update --force` 才对齐，但那会销毁子模块内的本地提交 —— 宁可留在 `leftover` 里报出来，
+同时在 `note` 里点名「子模块 X 停在 a，与父仓库记录的 b 不一致」，别让用户只看到「嵌套仓库、子模块等」。
+
+**但「clean 先于 reset」只解决了一半**：clean 只认**工作区**的 `.gitignore`。用户若把
+`.gitignore` 删掉、或删掉里面 `node_modules/` 那一行，这些目录在 clean 眼里就是未跟踪，
+会被连根删掉 —— 而确认框承诺的正是「被忽略的文件不动」。所以还要把 **HEAD 版本的规则**
+一起交给 clean（`head_ignore_patterns()`：`ls-tree` 找出所有 `.gitignore` → `show` 出内容 →
+去掉注释/空行、保留 `!` 取反，子目录的规则补上目录前缀）。两套规则同时生效，多留下来的由 `leftover` 报出来。
+
+**规则不能再走 `clean -e`，要写成临时 excludes 文件挂 `core.excludesFile`**（`write_excludes()`）：
+- `-e` 的优先级高于 `.gitignore` 里的 `!取反`。只把 `*.log` 交给 `-e`、把 `!keep.log` 扔掉，
+  被放行的 `keep.log` 会被当忽略文件保下来，而 `reset --hard` 又把 `.gitignore` 还原成带 `!` 的样子
+  —— 那个文件**永远清不掉**、`leftover` 恒为 1，用户点多少次都一样。写进同一个 excludes 文件后，
+  顺序就是规则顺序，取反由 git 自己解释。
+- 每条规则要占两个 argv，400 条长规则能超过 Windows 的 32767 上限（`os error 206`，
+  clean **根本没 spawn**）—— 现象是「什么都没删，却报可能被占用」。文件没有这个限制。
+- 用户全局配的 `core.excludesFile` 优先级最低，要原样垫在文件最前面，否则被我们遮蔽后会多删文件。
+
+规则的近似要记住三条边界（都是实测出来的）：
+- **子目录 `.gitignore` 里不含斜杠的规则是「任意深度」语义**，直接拼目录前缀会把它变成锚定：
+  `sub/.gitignore: out/` 拼成 `sub/out/` 只护住第一层，`sub/deep/out/f` 照删。补 `**/`
+  （`sub/**/out/`）才对；含斜杠的规则本来就该锚定，不能再加 `**/`（`sub/anchored/dir/` 是对的）。
+- **以 `/` 开头的规则本来就锚定在子目录根，绝不能补 `**/`**：`sub/.gitignore: /out/` 扩成
+  `sub/**/out/` 是**过度保护** —— `sub/deep/out/g.js` 被跳过不删，紧接着 `reset --hard` 又把
+  `.gitignore` 还原成只锚定第一层的 `/out/`，于是那个文件成了永远清不掉的未跟踪项，用户再点
+  多少次都一样，toast 只能归咎于「嵌套仓库、子模块等」。判据是**原始字符串有没有以 `/` 开头** ——
+  这个信息在 `trim_start_matches('/')` 里会丢，必须先取。
+- **子模块要单独走一遍，而且规则也得单独推**：顶层 `clean -e` 不进 submodule，子模块自己的
+  `.gitignore` 被删时它的 `node_modules`/`target` 会被删、顶层 `leftover` 还是 0。
+  现在按 `submodule status --recursive` 枚举路径，逐个子模块用**它自己的** HEAD 规则
+  `clean` 再 `reset --hard`（顺序同样是 clean 在前），失败不影响其它子模块。
+- **`.gitignore` 本身必须永远带 `-e .gitignore` 保住**：未提交的 `.gitignore` 也是「未跟踪文件」，
+  clean 会把它连同里面的规则一起删掉。第一轮它还在替 node_modules 挡着，删完之后第二轮
+  就只剩 HEAD 规则（空的），于是用户照着「仍有残留」的提示再点一次，目录连根消失。
+  `.gitignore` 是唯一的元数据，删除它等于删除保护规则 —— 这件事不能交给人眼。
+- **规则数有上限**（400 条）：超出部分不参与保护、也不会出现在 `leftover` 里（截断时给 `note`）。
+  `.gitignore` 极多的大 monorepo 才可能撞上，撞上时删掉的是「本来被忽略的未跟踪目录」。
+  子模块里的规则**同样**会截断，所以截断标记要跟每个子模块的规则一起取 —— 只看顶层的话，
+  子模块的 node_modules 被删了顶层一句都不提。判「是否真截断」用「装满之后还有新规则」，
+  刚好 400 条不能算（否则每点一次都提示规则太多）。
+- **保留下来的未提交 `.gitignore` 不计入 `leftover`**：它是我们主动留下的（保护规则的来源），
+  会一直出现在 `status` 里。把它算成残留，用户每次点完都看到「仍有 1 项没清掉」，还会被
+  归因到「嵌套仓库、子模块」上去 —— 于是在一个其实已经干净了的仓库里反复点。
+  实现是重置后把 `??` 开头且以 `.gitignore` 结尾的行扣掉，并在 note 里说明保留了几个。
+- **子模块只因未跟踪内容变脏时不算 `discarded`**：父仓库看到的是 ` M sub`，但子模块里没有
+  「已跟踪的改动」可丢，清掉的只是未跟踪文件。用「路径下有 `.git/.git` 文件 且
+  `status --porcelain -uno` 为空」判定并跳过计数。
+- `!` 取反规则必须保留并**排在它覆盖的规则之后**（同一文件内顺序即优先级）；
+  跨目录时按「浅层在前」拼（`ls-tree` 输出顺序天然满足），深层 `.gitignore` 才能覆盖浅层。
+
+前台侧还有两条同源的坑（都源于「确认框是模态的，但键盘不是」）：
+- `askResetClean` 必须**捕获** `repo.value` 再进闭包。`activate()` 不清 `confirmState`，
+  而 `Ctrl+Tab` / `Ctrl+1..9` 原本没有守卫 —— 框里写着 A 的数字，点下去销毁的可能是 B。
+- `Ctrl+B` / `Ctrl+P` 也得拦：分支切换器是 `z-50`、确认框是 `z-40`，不拦就能盖在框上切分支，
+  而 `git reset --hard` 作用在切过去的分支上（脏改动会跟着 checkout 走）。兜底是在 `ok` 里
+  再核一次分支名。
+- 重置按钮要 `:disabled="busy"`、`confirmOk` 要拦忙态、`run()` 的 `finally` 数**在飞的数量**
+  （`inflight`）清零才复位忙碌态 —— 记「谁最后发起」是错的：后发起的先完成会提前解锁，
+  双跑照样撞上 `fatal: Cannot lstat` 并停在「未跟踪删了、已跟踪没 reset」的半成品。

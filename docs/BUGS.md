@@ -809,4 +809,49 @@ opener 同步补一份；`aiFetch` 的 catch 改为把原始 message 附在文�
 **注意**：capabilities 是编译期内嵌进二进制的，改完必须重新构建才生效（`pnpm tauri dev`
 或重新打包）。
 
+### 重置到干净状态：未提交的 .gitignore 被删，连点两次就会删掉 node_modules
 
+**现象**：仓库里 `.gitignore` 从未提交（或刚新建还没 add），里面写着 `node_modules/`。
+点一次「重置」→ 提示「仍有 2 项没清掉」；再点一次 → `node_modules`、`dist` 整目录消失。
+用户是**照着提示去点第二次**的，所以这条路径几乎必然被走到。
+
+**根因**：保护规则来自 `head_ignore_patterns()`，它只认 **HEAD 里**的 `.gitignore`。工作区里
+未提交的 `.gitignore` 在 `clean -fd` 眼里就是「未跟踪文件」，第一轮被删掉时它还在替
+node_modules 挡着（clean 读的是当时还活着的工作区规则），**保护器本身被清理掉了**；第二轮
+只剩 HEAD 规则（不存在）→ 没有任何规则拦着，node_modules 被当未跟踪目录删除。
+
+**为什么测试没覆盖**：白盒用例只写了「已跟踪的 `.gitignore` 被改窄」，没写「`.gitignore`
+本身未跟踪」这一组合——而恰恰是后者会连保护规则一起销毁。
+
+**修复**：
+- `clean` 参数固定带 `-e .gitignore`（顶层与子模块各一处）：`.gitignore` 是唯一的「元数据」，
+  删了它等于把保护规则一起删掉，无论它有没有提交都不能动。
+- 连带加固：规则数超过 400 条被截断时（**顶层与子模块分别判断**）、子模块 HEAD 与父仓库
+  gitlink 不一致时，都写进 `note` 字段如实上报，不再让用户只看到笼统的「嵌套仓库、子模块等」；
+  被保留下来的未提交 `.gitignore` 不再算进 `leftover`（否则每次点完都报「仍有 1 项」）。
+- 回归测试：`reset_clean_keeps_uncommitted_gitignore_and_its_ignored_dirs`（连点两次断言
+  node_modules 仍在）、`reset_clean_notes_submodule_drift`、`reset_clean_notes_truncated_ignore_rules`。
+
+### 重置到干净状态：`.gitignore` 里的 `!取反` 让文件永远清不掉
+
+**现象**：`.gitignore` 写 `*.log` + `!keep.log`，工作区的 `.gitignore` 又不在（被删或未提交）。
+点「重置」后 `keep.log` 一直在，`leftover` 恒为 1、note 为空；再点多少次都一样。
+
+**根因**：HEAD 规则被转成 `clean -e <rule>`，而 `!` 规则被整条丢弃。`-e` 的优先级高于
+`.gitignore` 里的取反，于是 `*.log` 把本该放行的 `keep.log` 也保护住了；`reset --hard` 又把
+`.gitignore` 还原成带 `!` 的版本，那个文件从此永远清不掉（不收敛）。
+
+**修复**：规则不再走 `-e`，改写成临时 excludes 文件挂 `-c core.excludesFile=<tmp>`，`!` 原样保留，
+顺序即优先级；顺带解决「400 条长规则撑爆 Windows 命令行（`os error 206`）」与「全局
+`core.excludesFile` 被遮蔽」两个坑。回归：`reset_clean_converges_when_gitignore_has_negation`、
+`reset_clean_survives_many_long_ignore_rules`。
+
+### 重置到干净状态：计数与残留口径的两个偏差（第六轮验证）
+
+- **暂存的 gitlink 改动被漏计**：父仓库 `M  sub`（子模块指针已 `add`）是会被 reset 销毁的真改动，
+  却因为「子模块工作区干净」被跳过 → `discarded=0`。修法：`is_submodule_clean_but_untracked` 再查
+  `git diff --cached --quiet -- <path>`，暂存区与 HEAD 不一致就不跳过。
+- **被占用而没删掉的 `x.gitignore` 被当成「主动保留」**：`ends_with(".gitignore")` 太宽，
+  把真残留从 `leftover` 里吞掉了，还配一条自相矛盾的 note。修法：只认 basename 恰为 `.gitignore`。
+- **子模块内未跟踪文件被删却不计入 `removed`**：父仓库 status 看不到子模块内部，现在子模块
+  `clean` 前后各数一次 `??` 行，差值累加进 `removed`。

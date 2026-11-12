@@ -195,7 +195,12 @@ function openRemote() {
 
 const runningAction = ref("");
 
+let inflight = 0;
 async function run(fn: () => Promise<unknown>, name = "") {
+  // 两路并发（双重确认、重试按钮）时，忙态只由最后收尾的那一次复位。
+  // 注意不能记「谁最后开始」——后开始的先完成时，先开始的那一路还在跑，
+  // 界面就会提前解锁（正是这条要防的双跑）。所以数的是在飞的数量。
+  inflight += 1;
   busy.value = true;
   runningAction.value = name;
   try {
@@ -214,8 +219,11 @@ async function run(fn: () => Promise<unknown>, name = "") {
     retryFn.value = fn;
     retryName.value = name;
   } finally {
-    busy.value = false;
-    runningAction.value = "";
+    inflight -= 1;
+    if (inflight === 0) {
+      busy.value = false;
+      runningAction.value = "";
+    }
   }
 }
 
@@ -1193,13 +1201,16 @@ function toggleFold(side: "l" | "r") {
 // 拖拽仓库文件夹进窗口 = 打开（非仓库目录给出明确提示）
 const dragOver = ref(false);
 async function openDropped(path: string) {
+  // 确认框开着时拖文件夹进来同样能换仓库 —— 遮罩挡不住 OS 级拖放，
+  // 换了仓库再点确认，重置的就成了另一个仓库。
+  if (confirmState.value) return;
   try {
     if (!(await api.checkRepo(path))) {
       showError(`「${path.split(/[\\/]/).pop() || path}」不是 Git 仓库`);
       return;
     }
     addRepo(path);
-    switchRepo(path);
+    await switchRepo(path);
   } catch (e) {
     showError(String(e));
   }
@@ -1389,6 +1400,10 @@ const confirmOpen = computed({
 function confirmOk() {
   const s = confirmState.value;
   if (!s) return;
+  if (busy.value) {
+    toast("正在执行其他操作，请稍候");
+    return;
+  }
   const ok = s.ok;
   confirmState.value = null;
   run(() => ok(confirmChecked.value), s.action);
@@ -1646,6 +1661,74 @@ function askDiscardStaged(p: {
   });
 }
 
+// 重置到干净状态：工作区 + 暂存全部回到 HEAD，未跟踪文件与目录删掉，进行中的多步操作先放弃。
+// 这是产品里破坏面最大的一个出口（一键回到刚 clone），确认框必须把范围、仓库和后果都写死；
+// git 侧刻意不带 -x：被 .gitignore 忽略的不动，删了要重装重编。
+const RESET_OP_LABEL: Record<string, string> = {
+  merge: "合并",
+  rebase: "变基",
+  "cherry-pick": "拣选",
+  revert: "撤销",
+  am: "补丁应用（git am）",
+};
+
+function askResetClean() {
+  // 捕获仓库路径：确认框是模态的，但 Ctrl+Tab 在它开着时仍能切仓库，
+  // 现读 repo.value 会让「丢弃并清理」作用到用户切换后看到的另一个仓库上。
+  const path = repo.value;
+  if (!path) return;
+  const name = path.split(/[\\/]/).pop() || path;
+  const files = status.value?.files ?? [];
+  const untracked = files.filter((f) => f.x === "?" && f.y === "?").length;
+  const tracked = files.length - untracked;
+  const branch = status.value?.branch || "当前分支";
+  const branchNow = status.value?.branch || "";
+  // 空仓库没有 HEAD，此时所有文件都会不见，口径要跟后端 read-tree --empty 对齐
+  const noCommits = !commits.value.length;
+  const opKey = op.value?.display || op.value?.operation || "";
+  const opLabel = RESET_OP_LABEL[opKey] ?? "";
+  openConfirm({
+    title: "重置到干净状态",
+    okText: "丢弃并清理",
+    body:
+      (noCommits
+        ? `「${name}」还没有任何提交，${files.length} 个文件都会被删除。`
+        : `把「${name}」的 ${branch} 恢复到最近一次提交：` +
+          (tracked ? `${tracked} 个文件的改动会被丢弃` : "没有已跟踪的改动") +
+          (untracked ? `，${untracked} 个未跟踪文件/目录会被删除` : "") +
+          "。") +
+      (opLabel ? `进行中的${opLabel}会先被放弃。` : "") +
+      "被 .gitignore 忽略的文件（node_modules、target 等）保持不动，子模块工作区会一并清理" +
+      "（子模块停在别的提交时会保留并提示）。",
+    note: "未提交的内容不会留下任何记录，无法在界面里找回。",
+    ok: async () => {
+      // 兜底：切分支/切仓库的入口都拦住了，但状态可能被后台刷新改掉，动手前再核一次。
+      // 只核分支名不够 —— 同名分支的另一个仓库同样能通过。
+      if (repo.value !== path) {
+        toast("仓库已切换，已取消重置");
+        return;
+      }
+      if (branchNow && (status.value?.branch || "") !== branchNow) {
+        toast("分支已切换，已取消重置");
+        return;
+      }
+      const r = await api.resetClean(path);
+      const bits: string[] = [];
+      if (r.aborted) bits.push(`已放弃进行中的${RESET_OP_LABEL[r.aborted] ?? r.aborted}`);
+      if (r.discarded) bits.push(`丢弃 ${r.discarded} 个改动`);
+      if (r.removed) bits.push(`删除 ${r.removed} 个未跟踪文件`);
+      // 嵌套仓库 / 子模块 / 长路径 / 刚被删掉的 .gitignore 保护的目录，clean 都删不掉，
+      // 必须说出来：谎报「干净」比不报更糟。
+      if (r.leftover)
+        bits.push(
+          `仍有 ${r.leftover} 项没清掉（嵌套仓库、子模块、被删掉的 .gitignore 保护过的目录、被占用的文件）`,
+        );
+      if (r.note) bits.push(r.note);
+      toast(bits.length ? `已重置：${bits.join("，")}` : "工作区本来就是干净的");
+    },
+  });
+}
+
 // ---- amend / 撤销上次提交（都在改写历史，确认框负责安全提示）----
 // "已推送"判定：分支有上游且 ahead==0，即本地与远程一致，最近一次提交就在远程
 function pushedHead(): boolean {
@@ -1779,6 +1862,8 @@ function onGlobalKeydown(e: KeyboardEvent) {
   // 下面每条都先确认「确实有可做的事」再 preventDefault——否则就是纯按键吞噬
   // （过去在最前面 preventDefault，没有仓库时 Ctrl+P / Ctrl+1 也被吃掉，用户毫无反馈）。
   if (e.ctrlKey && e.key === "Tab") {
+    // 模态确认框开着时不许切仓库：框里写着 A 的数字，点下去却作用到 B
+    if (confirmState.value) return;
     // 在标签栏可见仓库间循环（文件夹不参与）
     const vis = barOrder.value.filter((x): x is BarRepo => x.kind === "repo");
     const n = vis.length;
@@ -1788,17 +1873,21 @@ function onGlobalKeydown(e: KeyboardEvent) {
     const d = e.shiftKey ? -1 : 1;
     activate(vis[(i + d + n) % n].path);
   } else if (e.ctrlKey && /^[1-9]$/.test(e.key)) {
+    if (confirmState.value) return;
     // 第 N 个可见仓库选项卡，分组内的仓库不占号
     const t = barOrder.value.filter((x): x is BarRepo => x.kind === "repo")[Number(e.key) - 1];
     if (!t) return;
     e.preventDefault();
     activate(t.path);
   } else if (e.ctrlKey && (e.key === "p" || e.key === "P")) {
+    // 模态确认框开着时不许切仓库/切分支：框里写的是 A 的文件数与分支名
+    if (confirmState.value) return;
     if (!showSwitcher.value && !repos.value.length) return; // 一个仓库都没有：切换器没内容，别吞按键
     e.preventDefault();
     if (showSwitcher.value) showSwitcher.value = false;
     else openSwitcher();
   } else if (e.ctrlKey && (e.key === "b" || e.key === "B")) {
+    if (confirmState.value) return;
     if (!showBranchSwitcher.value && !repo.value) return;
     e.preventDefault();
     if (showBranchSwitcher.value) showBranchSwitcher.value = false;
@@ -2300,6 +2389,7 @@ onUnmounted(() => {
           @stash-drop="askStashDrop"
           @abort-merge="askAbortMerge"
           @discard-staged="askDiscardStaged"
+          @reset-clean="askResetClean"
           @discard="(t: DiffTarget) =>
             openConfirm({
               title: t.untracked ? '删除未跟踪文件' : '丢弃更改',

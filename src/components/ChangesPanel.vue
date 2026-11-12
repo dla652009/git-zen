@@ -11,6 +11,7 @@ import {
   GitMerge,
   GitCommitHorizontal,
   RotateCcw,
+  Eraser,
   Sparkles,
   Archive,
   ArchiveRestore,
@@ -51,7 +52,7 @@ const props = defineProps<{
   /** App 每改动一次 stash 就自增：菜单开着时据此重取列表（index 是位置，过期列表会点错记录） */
   stashRev?: number;
   /** 进行中的多步操作（合并/拣选/撤销/变基）：冲突全解决后要给「完成」出口 */
-  op?: { operation: string; conflicts: string[] };
+  op?: { operation: string; display?: string; conflicts: string[] };
 }>();
 
 // 所有操作都抛回 App.run() 统一执行+刷新；diff 打开事件抛给 App
@@ -68,6 +69,7 @@ const emit = defineEmits<{
   opContinue: []; // 完成进行中的操作（App 侧调用 + 刷新）
   // 丢弃暂存区全部改动（App 侧确认：新增文件删不删要用户定）
   discardStaged: [p: { paths: string[]; count: number; newCount: number; conflictCount: number }];
+  resetClean: []; // 重置到干净状态（App 侧确认：破坏面最大，文案要写清范围）
 }>();
 
 // 切仓库时收起 stash 菜单/弹窗，避免上一仓库的列表串到新仓库
@@ -294,12 +296,13 @@ const conflictFiles = computed(() => (props.status?.files ?? []).filter(isUnmerg
 // 进行中的多步操作：冲突态不只是 merge，cherry-pick / revert 也会停在半路。
 // 把「还差几个文件」「能不能收尾」直接说清楚，用户不用回终端猜下一步。
 const opInfo = computed(() => {
-  const op = props.op?.operation ?? "";
+  const op = props.op?.display || props.op?.operation || "";
   const meta: Record<string, { title: string; noun: string }> = {
     merge: { title: "正在合并", noun: "合并" },
     "cherry-pick": { title: "正在拣选提交", noun: "拣选" },
     revert: { title: "正在撤销提交", noun: "撤销" },
     rebase: { title: "正在变基", noun: "变基" },
+    am: { title: "正在应用补丁", noun: "补丁应用" },
   };
   const m = meta[op];
   return m ? { ...m, left: props.op?.conflicts.length ?? 0 } : null;
@@ -552,6 +555,20 @@ async function genCommitMsg() {
         >
           <ListTree v-if="flatView" class="size-3.5" />
           <List v-else class="size-3.5" />
+        </Button>
+      </Tooltip>
+      <!-- 重置：作用于整个工作区（暂存 + 未暂存 + 未跟踪），所以放在面板级而不是某个区段标题行 -->
+      <Tooltip text="重置到干净状态（丢弃全部改动并删除未跟踪文件）">
+        <Button
+          v-if="status?.files.length"
+          variant="ghost"
+          size="icon"
+          class="h-7 w-7 shrink-0 text-muted-foreground hover:text-destructive"
+          :disabled="busy"
+          aria-label="重置到干净状态"
+          @click="emit('resetClean')"
+        >
+          <Eraser class="size-3.5" />
         </Button>
       </Tooltip>
     </div>
