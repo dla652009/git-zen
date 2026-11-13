@@ -828,7 +828,11 @@ const NAV = [
                             v-else-if="s.kind === 'deleteBranch' || s.kind === 'deleteRemoteBranch'"
                             :model-value="s.name"
                             class="h-7 min-w-0 flex-1 text-xs"
-                            placeholder="要删除的分支名"
+                            :placeholder="
+                              s.kind === 'deleteRemoteBranch'
+                                ? '远程上的分支名（不带 origin/）'
+                                : '要删除的本地分支名'
+                            "
                             @update:model-value="(v: string | number) => (s.name = String(v))"
                           />
                           <span
@@ -904,7 +908,11 @@ const NAV = [
                         v-else-if="newStepKind === 'deleteBranch' || newStepKind === 'deleteRemoteBranch'"
                         v-model="newStepName"
                         class="h-8 min-w-0 flex-1 text-xs"
-                        placeholder="要删除的分支名"
+                        :placeholder="
+                          newStepKind === 'deleteRemoteBranch'
+                            ? '远程上的分支名（不带 origin/）'
+                            : '要删除的本地分支名'
+                        "
                       />
                       <Button variant="default" size="sm" class="ml-auto h-8 shrink-0" @click="addStep(w)">
                         <Plus class="size-3.5" /> 添加

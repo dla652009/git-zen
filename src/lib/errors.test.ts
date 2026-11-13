@@ -17,9 +17,20 @@ assert(
   "pathspec",
 );
 
-// 分支被 worktree 占用：git 2.56 报 used by worktree，旧规则写的是 used as worktree
-assert(humanize("error: cannot delete branch 'x' used by worktree at 'D:/a'").msg.includes("占用"), "used by worktree");
-assert(humanize("error: Cannot delete branch 'x' checked out at 'D:/a'").msg.includes("当前所在的分支"), "cannot delete branch");
+// 删当前分支：git 2.56 的真实文案是「cannot delete branch ... used by worktree」——
+// 「不能删除这个分支」必须排在「未合并」与「worktree 占用」之前，否则用户看到的是别的建议
+assert(
+  humanize("error: cannot delete branch 'main' used by worktree at 'C:/repo'").msg.includes(
+    "不能删除这个分支",
+  ),
+  "删当前分支的真实文案",
+);
+assert(humanize("error: The branch 'feat/x' is not fully merged.").msg.includes("尚未合并"), "not fully merged");
+assert(humanize("error: Cannot delete branch 'x' checked out at 'D:/a'").msg.includes("不能删除这个分支"), "旧文案也命中");
+
+// 分支名本身可能叫 conflict 或含 403：「分支不存在」必须先于「冲突」「认证失败」命中
+assert(humanize("error: branch 'conflict' not found").msg.includes("分支不存在"), "分支名含 conflict");
+assert(humanize("error: branch 'x403y' not found").msg.includes("分支不存在"), "分支名含 403");
 
 // 兜底：不认识的原样给出，并剥掉 Error: 前缀（组件里 String(new Error(...)) 很常见）
 assert(humanizeMsg(new Error("磁盘已满")) === "磁盘已满", "剥 Error: 前缀");

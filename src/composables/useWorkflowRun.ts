@@ -153,12 +153,17 @@ export function useWorkflowRun(opts: {
       }
       st.state = "running";
       try {
+        // 后面的步骤是否还依赖起始分支：只有依赖时才不许删它（先切走再删是合法流程）
+        const needsStart = wf.steps.slice(i + 1).some(
+          (s) => s.kind === "switchBack" || ("ref" in s && s.ref.mode === "start"),
+        );
         const note = await execStep(
           path,
           wf.steps[i]!,
           inputs[i] ?? "",
           prefixes[i] ?? "",
           startBranch,
+          needsStart,
           () => guard() === null,
         );
         st.note = note ?? "";
@@ -255,6 +260,7 @@ export function useWorkflowRun(opts: {
     inputBranch: string,
     inputPrefix: string,
     startBranch: string,
+    startNeededLater: boolean,
     alive: () => boolean = () => true,
   ): Promise<string | undefined> {
     const refName = (r: BranchRef) =>
@@ -325,9 +331,9 @@ export function useWorkflowRun(opts: {
             `不能删除当前所在的分支「${hit.name}」：请在这之前切到别的分支（或显式加一步「切回起始分支」）`,
           );
         }
-        if (hit.name === startBranch) {
+        if (hit.name === startBranch && startNeededLater) {
           throw new Error(
-            `「${hit.name}」是本次流程的起始分支，删掉后无法切回：请改成这一步之前先切走的流程`,
+            `「${hit.name}」是本次流程的起始分支，后面的步骤还要用它（「切回起始分支」或「起始分支」分支来源）：先删掉那些步骤，或把它写成具体名字`,
           );
         }
         await api.branchDelete(path, hit.name, true);
@@ -335,8 +341,9 @@ export function useWorkflowRun(opts: {
       }
       case "deleteRemoteBranch": {
         // 远程删除只作用于 origin：push --delete 找不到分支时会直接报错，不会静默成功。
-        // 分支名前面有人会照抄描述里的 origin/ 前缀，这里顺手剥掉
-        const name = step.name.trim().replace(/^origin\//, "");
+        // 分支名原样传，不剥 origin/ 前缀 —— 远程上真存在名叫 origin/foo 的分支时，
+        // 剥掉会把「另一个同名分支」删掉，而 git 自己完全能精确删 origin/foo。
+        const name = step.name.trim();
         if (!name) throw new Error("删除远程分支：分支名不能为空");
         await api.pushDelete(path, "origin", name);
         return;
