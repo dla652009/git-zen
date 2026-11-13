@@ -807,6 +807,18 @@ labelable 元素 = `button` / `input`（非 hidden）/ `meter` / `output` / `pro
 一句话记住：**跨文件的功能，编号和游标的定义域也要跨文件**，只改渲染不改游标会得到
 「看起来在工作、其实半途而废」的交互。
 
+### diff 内搜索合并为 useDiffSearch（DiffViewer / FileHistoryModal 共用）
+
+两处搜索状态机（DV 多文件分段、FH 单段）原先逐字复制，现收敛到
+`src/composables/useDiffSearch.ts`，搜索栏 UI 收敛到 `components/DiffSearchBar.vue`。
+差异只经 opts 注入：`activeSection`（当前渲染段）、`onHitInOtherSection`（DV 切 selectedFile）、
+`root`（焦点/DOM 查找范围，避免两个弹层同时存在时选错）、`focusBackSelector`（关搜索后焦点交还）。
+
+- **`cur` 无命中统一为 -1**（FH 原来用 0）；`hitRow` 统一为「当前段内的命中行号，不在当前段就是 -1」。
+- **FH 搜索栏补上上一个/下一个 Tooltip，header 搜索按钮改用 `[data-search-toggle]`**（原组件 ref）。
+- composable 对 `lib/diffSearch` 用显式 `.ts` 扩展名 import：自检脚本用 Node strip-types 直跑，
+  ESM 不做无扩展名解析；tsconfig 因此开启 `allowImportingTsExtensions`（源码里仅此一处显式 `.ts`，其余仍走 bundler 解析）。
+
 ### 给「偶尔才用」的功能加开销，先问不用的时候付多少
 
 diff 行的渲染原本是纯文本。加搜索最直接的做法是每行都切一遍片段，命中就包 `<span>`。

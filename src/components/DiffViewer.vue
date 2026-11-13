@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from "vue";
-import { X, Bot, Maximize2, Minimize2, Search, ChevronUp, ChevronDown, ListTree, List, Folder } from "@lucide/vue";
+import { ref, computed, watch, onMounted, onUnmounted } from "vue";
+import { X, Bot, Maximize2, Minimize2, Search, ChevronDown, ListTree, List, Folder } from "@lucide/vue";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, isAbortError } from "../ai";
 import { settings } from "../settings";
 import { patchSections, type PatchLine, type PatchSection } from "../lib/patch";
-import { searchSections, type Segment } from "../lib/diffSearch";
+import { useDiffSearch } from "../composables/useDiffSearch";
 // 左侧文件列表的层级与「变更列表」共用一套逻辑：元素类型不同，但「这是不是一个文件列表」
 // 的期待是一样的，第二份实现迟早会分叉
 import { buildFileRows, type FileRow } from "../lib/fileTree";
@@ -32,7 +32,8 @@ async function saveExplainToFile() {
     err.value = humanizeMsg(e);
   }
 }
-import { Badge, Button, Input, Spinner, Md, Tooltip } from "@/components/ui";
+import { Badge, Button, Spinner, Md, Tooltip } from "@/components/ui";
+import DiffSearchBar from "./DiffSearchBar.vue";
 
 export interface DiffTarget {
   path: string;
@@ -194,24 +195,21 @@ const viewRows = computed<FileRow<PatchSection>[]>(() =>
 // 命中跨文件连续编号，跳转时自动切到命中所在的文件 —— 多文件 diff 里只搜当前文件
 // 会让人以为没找到；左侧列表会显示每个文件各命中几处。
 const rootEl = ref<HTMLElement | null>(null);
-const searchOpen = ref(false);
-const q = ref("");
-const cur = ref(-1); // 当前停在第几个命中；-1 表示没有
-const found = computed(() => searchSections(sections.value, q.value));
-const count = computed(() => found.value.count);
 // 正在渲染的是第几段（左列表选中的文件）
 const curSectionIdx = computed(() => sections.value.findIndex((s) => s.file === selectedFile.value));
 const curLines = computed(() => sections.value[curSectionIdx.value]?.lines ?? []);
-// 当前命中落在「正在渲染的那一段」的哪一行；不在这一段就是 -1（不画高亮）
-const hitRow = computed(() => {
-  const h = cur.value >= 0 ? found.value.hits[cur.value] : undefined;
-  return h && h.section === curSectionIdx.value ? h.row : -1;
-});
-// 查询为空时给 null，让模板走回纯文本渲染：否则每一行都要白白建一个片段数组
-const segments = computed<Segment[][] | null>(() =>
-  q.value.trim() ? (found.value.sections[curSectionIdx.value]?.rows ?? null) : null,
-);
-const segsFor = (li: number): Segment[] | null => segments.value?.[li] ?? null;
+const { searchOpen, q, cur, found, count, hitRow, segsFor, goTo, toggleSearch, closeSearch } =
+  useDiffSearch({
+    sections,
+    activeSection: curSectionIdx,
+    root: rootEl,
+    // 命中在别的文件：先切过去，下一帧再滚（composable 内部已经 await nextTick）
+    onHitInOtherSection: (i) => {
+      const f = sections.value[i]?.file;
+      if (f) selectedFile.value = f;
+    },
+    focusBackSelector: "[data-search-toggle]",
+  });
 // 每个文件命中几处：左侧列表按文件取，行里拿到的是 section 而不是下标
 const hitCounts = computed(() => {
   const m = new Map<string, number>();
@@ -224,34 +222,6 @@ const hitCounts = computed(() => {
 });
 const hitsOfFile = (file: string): number => hitCounts.value.get(file) ?? 0;
 
-function go(d: number) {
-  if (!count.value) return;
-  cur.value = (cur.value + d + count.value) % count.value;
-}
-function focusSearch() {
-  void nextTick(() => rootEl.value?.querySelector<HTMLInputElement>("[data-search-input]")?.focus());
-}
-function toggleSearch() {
-  if (searchOpen.value) {
-    focusSearch();
-    return;
-  }
-  searchOpen.value = true;
-  cur.value = count.value ? 0 : -1;
-  focusSearch();
-}
-// 关搜索要把焦点交还给搜索开关：输入框随 v-if 一起被卸掉，浏览器会把焦点丢回 body，
-// 而 v-trap 的 Tab 循环是绑在弹层容器上的（focusTrap.ts 的 el.addEventListener）——
-// 焦点一旦离开容器它就收不到事件，下一次 Tab 会直接穿透到弹层背后。
-function focusSearchToggle() {
-  void nextTick(() => rootEl.value?.querySelector<HTMLElement>("[data-search-toggle]")?.focus());
-}
-function closeSearch() {
-  searchOpen.value = false;
-  q.value = "";
-  cur.value = -1;
-  focusSearchToggle();
-}
 // 左列表手动切文件时把游标挪到该文件的第一个命中，否则计数还停在别的文件上、当前文件里却一个高亮都没有
 function pickFile(file: string) {
   selectedFile.value = file;
@@ -259,16 +229,6 @@ function pickFile(file: string) {
   const i = found.value.hits.findIndex((h) => sections.value[h.section]?.file === file);
   if (i >= 0 && i !== cur.value) cur.value = i;
 }
-watch(q, () => (cur.value = count.value ? 0 : -1));
-// 查询变了、或游标动了，都要把当前命中滚进视野（跟浏览器查找一样，边打字边定位）
-watch([found, cur], async () => {
-  const h = cur.value >= 0 ? found.value.hits[cur.value] : undefined;
-  if (!h) return;
-  const f = sections.value[h.section]?.file;
-  if (f && f !== selectedFile.value) selectedFile.value = f; // 命中在别的文件：先切过去
-  await nextTick();
-  rootEl.value?.querySelector('[data-hit="1"]')?.scrollIntoView({ block: "center" });
-});
 // Ctrl+F 打开搜索。焦点在别的浮层里就不抢（两个 diff 弹层理论上不会同时开，
 // 真同时开着时让焦点所在的那个响应）
 function onFindKey(e: KeyboardEvent) {
@@ -470,34 +430,14 @@ onUnmounted(() => {
       </header>
 
       <!-- 搜索栏：常驻会白占 36px 高，所以由 header 的按钮或 Ctrl+F 开关 -->
-      <div v-if="searchOpen" class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5">
-        <Search class="size-3.5 shrink-0 text-muted-foreground" />
-        <Input
-          v-model="q"
-          data-search-input
-          class="h-7 flex-1 text-xs"
-          placeholder="在 diff 里查找…"
-          @keydown.enter.exact.prevent="go(1)"
-          @keydown.shift.enter.prevent="go(-1)"
-          @keydown.esc.stop.prevent="closeSearch"
-        />
-        <span class="shrink-0 text-2xs tabular-nums text-muted-foreground">{{
-          q.trim() ? (count ? `${cur + 1}/${count}` : "无匹配") : ""
-        }}</span>
-        <Tooltip text="上一个（Shift+Enter）">
-          <Button variant="quiet" size="icon" class="h-6 w-6" :disabled="!count" aria-label="上一个匹配" @click="go(-1)">
-            <ChevronUp class="size-3.5" />
-          </Button>
-        </Tooltip>
-        <Tooltip text="下一个（Enter）">
-          <Button variant="quiet" size="icon" class="h-6 w-6" :disabled="!count" aria-label="下一个匹配" @click="go(1)">
-            <ChevronDown class="size-3.5" />
-          </Button>
-        </Tooltip>
-        <Button variant="quiet" size="icon" class="h-6 w-6" aria-label="关闭搜索" @click="closeSearch">
-          <X class="size-3.5" />
-        </Button>
-      </div>
+      <DiffSearchBar
+        v-if="searchOpen"
+        v-model:q="q"
+        :count="count"
+        :cur="cur"
+        @go="goTo"
+        @close="closeSearch"
+      />
 
         <!-- 双栏：左文件列表 / 右选中文件的 diff（参考 FileHistoryModal 布局） -->
         <div class="flex min-h-0 flex-1">

@@ -1,11 +1,11 @@
 <script setup lang="ts">
 // 文件变更历史双栏弹窗：左侧该文件的提交列表，右侧选中提交中此文件的 diff
-import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
-import { X, Bot, Search, ChevronUp, ChevronDown, Maximize2, Minimize2 } from "@lucide/vue";
+import { ref, computed, onMounted, onUnmounted } from "vue";
+import { X, Bot, Search, Maximize2, Minimize2 } from "@lucide/vue";
 import * as api from "../gitApi";
 import type { LogEntry } from "../gitApi";
 import { patchLines } from "../lib/patch";
-import { searchSections, type Segment } from "../lib/diffSearch";
+import { useDiffSearch } from "../composables/useDiffSearch";
 import { humanizeMsg } from "../lib/errors";
 import {
   AI_PROMPTS,
@@ -16,7 +16,8 @@ import {
   isAbortError,
 } from "../ai";
 import { settings } from "../settings";
-import { Button, Input, Spinner, Tooltip } from "@/components/ui";
+import { Button, Spinner, Tooltip } from "@/components/ui";
+import DiffSearchBar from "./DiffSearchBar.vue";
 
 const props = defineProps<{ repo: string; path: string }>();
 const emit = defineEmits<{ close: [] }>();
@@ -34,49 +35,16 @@ const diffText = ref("");
 // 两套都会留在 class 上，谁生效由产物 CSS 顺序决定（不是先写的赢）。
 const fullscreen = ref(false);
 
-// diff 内搜索
+// diff 内搜索（单段：整份 diff 就是一个 section）
 const rootEl = ref<HTMLElement | null>(null);
-const searchOpen = ref(false);
-const q = ref("");
-const cur = ref(0);
-
 // 模板与搜索共用同一份解析结果，避免一次渲染里解析两遍 patch
 const lines = computed(() => patchLines(diffText.value));
-const found = computed(() => searchSections([{ file: props.path, lines: lines.value }], q.value));
-const count = computed(() => found.value.count);
-const segs = computed<Segment[][] | null>(() => (q.value.trim() ? found.value.sections[0]?.rows ?? null : null));
-const segsFor = (li: number): Segment[] | null => segs.value?.[li] ?? null;
-const hitRow = computed(() => found.value.hits[cur.value]?.row ?? -1);
-
-watch(q, () => (cur.value = count.value ? 0 : -1));
-// 必须同时盯 found，不能只盯 cur：cur 初值就是 0，敲第一个字符时 watch(q) 把它设回 0，
-// 值没变 → Vue 用 Object.is 比较后不触发 → 高亮已经跳到第 1 个命中，视图却还停在顶部，
-// 回车会「先到第 2 个」。found 是 computed，查询一变引用就变，靠它兜住这一步。
-watch([found, cur], async () => {
-  await nextTick();
-  rootEl.value?.querySelector('[data-hit="1"]')?.scrollIntoView({ block: "center" });
+const { searchOpen, q, cur, count, hitRow, segsFor, goTo, toggleSearch, closeSearch } = useDiffSearch({
+  sections: computed(() => [{ file: props.path, lines: lines.value }]),
+  activeSection: computed(() => 0),
+  root: rootEl,
+  focusBackSelector: "[data-search-toggle]",
 });
-
-function go(d: number) {
-  if (!count.value) return;
-  cur.value = (cur.value + d + count.value) % count.value;
-}
-
-// 关闭搜索后焦点要还给它：输入框随 v-if 消失时浏览器会把焦点丢回 body，
-// 而 v-trap 的 Tab 循环监听在弹层容器上，焦点一旦离开容器，下一次 Tab 就直接穿透到弹层背后。
-const searchBtn = ref<{ $el: HTMLButtonElement } | null>(null);
-
-function toggleSearch() {
-  searchOpen.value = true;
-  nextTick(() => rootEl.value?.querySelector<HTMLInputElement>("[data-search-input]")?.focus());
-}
-
-function closeSearch() {
-  searchOpen.value = false;
-  q.value = "";
-  cur.value = 0;
-  nextTick(() => searchBtn.value?.$el.focus());
-}
 
 function onWinKeydown(e: KeyboardEvent) {
   if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "f") return;
@@ -243,10 +211,10 @@ function closeEvo() {
         </Tooltip>
         <Tooltip text="搜索（Ctrl+F）">
           <Button
-            ref="searchBtn"
             variant="ghost"
             size="icon"
             class="h-6 w-6"
+            data-search-toggle
             aria-label="在 diff 里搜索"
             :aria-pressed="searchOpen"
             @click="toggleSearch"
@@ -271,30 +239,14 @@ function closeEvo() {
       </header>
 
       <!-- diff 内搜索：回车下一个、Shift+回车上一个、Esc 只关搜索栏（stop 掉，别连带关掉弹窗） -->
-      <div v-if="searchOpen" class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1.5">
-        <Search class="size-3.5 shrink-0 text-muted-foreground" />
-        <Input
-          v-model="q"
-          data-search-input
-          class="h-7 flex-1 text-xs"
-          placeholder="在 diff 里查找…"
-          @keydown.enter.exact.prevent="go(1)"
-          @keydown.shift.enter.prevent="go(-1)"
-          @keydown.esc.stop.prevent="closeSearch"
-        />
-        <span class="shrink-0 text-2xs tabular-nums text-muted-foreground">
-          {{ q.trim() ? (count ? `${cur + 1}/${count}` : "无匹配") : "" }}
-        </span>
-        <Button variant="quiet" size="icon" class="h-6 w-6" :disabled="!count" aria-label="上一个匹配" @click="go(-1)">
-          <ChevronUp class="size-3.5" />
-        </Button>
-        <Button variant="quiet" size="icon" class="h-6 w-6" :disabled="!count" aria-label="下一个匹配" @click="go(1)">
-          <ChevronDown class="size-3.5" />
-        </Button>
-        <Button variant="quiet" size="icon" class="h-6 w-6" aria-label="关闭搜索" @click="closeSearch">
-          <X class="size-3.5" />
-        </Button>
-      </div>
+      <DiffSearchBar
+        v-if="searchOpen"
+        v-model:q="q"
+        :count="count"
+        :cur="cur"
+        @go="goTo"
+        @close="closeSearch"
+      />
 
       <!-- AI 演进解读：与 diff 主区并列的一条可收起面板 -->
       <div

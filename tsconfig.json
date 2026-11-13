@@ -5,6 +5,7 @@
     "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "types": ["vite/client"],
     "baseUrl": ".",
@@ -21,6 +22,7 @@
     "src/lib/overlays.test.ts",
     "src/lib/patch.test.ts",
     "src/lib/safeJson.test.ts",
+    "src/lib/useDiffSearch.test.ts",
     "src/workflow.test.ts"
   ]
 }
