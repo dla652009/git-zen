@@ -1396,3 +1396,20 @@ Win7 主题下是 Aero caption，其它主题是中性样式（`decorations` 是
 - [x] Win7 皮肤：30px 玻璃渐变 caption + 29×22 三键（悬停泛蓝、关闭键转红）；
       普通主题用 `bg-card` + `border-b`；窗口 1px 内描边由组件里的 fixed 覆盖层给
 - [x] 让渡：Win11 Snap Layout、标题栏右键系统菜单、还原态圆角（要透明窗口，会丢投影）
+
+## M25 命令面板（Ctrl+K）
+
+仓库 / 分支 / 动作三类条目混排搜索，与 Ctrl+P / Ctrl+B 并存。
+
+- [x] `composables/usePalette.ts`：open/query/index 状态、过滤、上下选（跳过禁用项）、
+      IME `isComposing` 守卫与选中项滚进可视区，交互骨架对齐 `useSwitcher`
+- [x] `components/CommandPalette.vue`：遮罩 + 顶部输入框 + 结果列表；左侧 lucide 图标、
+      右侧小字标注类型；复用 `.surface` / `.pop-in` / `Transition name="dlg"`
+- [x] 空查询 = MRU 前 5 个仓库 + 全部动作（分支不展示）；有查询时仓库额外匹配路径，
+      分支/动作只匹配名称
+- [x] 动作可用性与工具栏一致：无仓库禁用刷新/新建分支/新建标签/时间线/总览，
+      busy 时禁用刷新与其它写操作入口；折叠类文案随当前状态切换
+- [x] `overlays.ts` 登记 `palette`（紧随 `folderDd`）；`onGlobalKeydown` 加 Ctrl+K 分支，
+      输入框内放行「palette 开着时的 Ctrl+K」，确认框开着时不许唤起
+- [x] 面板内 Esc 自行消费并 `stopPropagation`，避免冒泡到全局分层关闭链连带关掉下层浮层
+- [x] 验证：`npx vue-tsc --noEmit` / `node scripts/check-contract.mjs` / `npx vite build` 全过

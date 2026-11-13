@@ -28,6 +28,8 @@ import {
   GripVertical,
   History,
   LayoutGrid,
+  PanelLeft,
+  PanelRight,
 } from "@lucide/vue";
 import * as api from "./gitApi";
 import { abortAi } from "./ai";
@@ -63,6 +65,7 @@ import GroupNameDialog from "./components/GroupNameDialog.vue";
 import AiReviewDialog from "./components/AiReviewDialog.vue";
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue";
 import RepoSwitcher from "./components/RepoSwitcher.vue";
+import CommandPalette from "./components/CommandPalette.vue";
 import BranchSwitcher from "./components/BranchSwitcher.vue";
 import WorkflowConfirmDialog from "./components/WorkflowConfirmDialog.vue";
 import WorkflowRunDialog from "./components/WorkflowRunDialog.vue";
@@ -128,6 +131,7 @@ import { isUnmerged } from "./lib/conflict";
 import { useSidebarResize } from "./composables/useSidebarResize";
 import { useRepoCache } from "./composables/useRepoCache";
 import { useSwitcher } from "./composables/useSwitcher";
+import { usePalette, type PaletteResult } from "./composables/usePalette";
 import { useWorkflowRun } from "./composables/useWorkflowRun";
 import { useAiPanel } from "./composables/useAiPanel";
 import { useRepoSession } from "./composables/useRepoSession";
@@ -1588,6 +1592,133 @@ function openReposOverview() {
   void loadRepoRows();
 }
 
+// ---- 命令面板（Ctrl+K）：仓库 / 分支 / 动作混排 ----
+// 状态、过滤与键盘交互在 composables/usePalette.ts；这里只组装条目与执行动作。
+// 仓库按 MRU 排序（与 Ctrl+P 一致，但独立实现，不读 useSwitcher 内部状态）；
+// 空查询时面板只取前 5 个仓库 + 全部动作，分支靠输入过滤。
+const paletteItems = computed<PaletteResult[]>(() => {
+  const mru = (p: string) => {
+    const i = mruPaths.value.indexOf(p);
+    return i === -1 ? Number.MAX_SAFE_INTEGER : i;
+  };
+  const repoItems = [...repos.value]
+    .sort((a, b) => mru(a.path) - mru(b.path))
+    .map(
+      (r): PaletteResult => ({
+        kind: "repo",
+        id: `repo:${r.path}`,
+        label: r.name,
+        detail: r.path,
+        icon: FolderOpen,
+        run: () => switchRepo(r.path),
+      }),
+    );
+
+  // 远程分支剥前缀成 DWIM 名（switchBranch 直接 checkout 该名建跟踪分支），与 Ctrl+B 同构
+  const branchItems = branchList.value
+    .filter((b) => !b.name.endsWith("/HEAD"))
+    .map((b): PaletteResult => {
+      const name = b.remote ? b.name.replace(/^[^/]+\//, "") : b.name;
+      const target: Branch = b.remote ? { ...b, name } : b;
+      return {
+        kind: "branch",
+        id: `branch:${b.name}`,
+        label: name,
+        detail: b.remote ? `远程 · ${b.name}` : "本地分支",
+        icon: b.remote ? Cloud : GitBranch,
+        run: () => switchBranch(target),
+      };
+    });
+
+  const hasRepo = !!repo.value;
+  const actionItems: PaletteResult[] = [
+    {
+      kind: "action",
+      id: "action:refresh",
+      label: "刷新",
+      detail: "F5",
+      icon: RefreshCw,
+      disabled: !hasRepo || busy.value || refreshing.value,
+      run: doRefresh,
+    },
+    {
+      kind: "action",
+      id: "action:create-branch",
+      label: "新建分支",
+      icon: GitBranchPlus,
+      disabled: !hasRepo || busy.value,
+      run: openCreateBranch,
+    },
+    {
+      kind: "action",
+      id: "action:create-tag",
+      label: "新建标签",
+      icon: Tag,
+      disabled: !hasRepo || busy.value,
+      run: () => openCreateTag(),
+    },
+    {
+      kind: "action",
+      id: "action:open-repo",
+      label: "打开仓库",
+      detail: "从磁盘选择…",
+      icon: FolderOpen,
+      run: () => (openModal.value = "choose"),
+    },
+    {
+      kind: "action",
+      id: "action:repos",
+      label: "所有仓库总览",
+      icon: LayoutGrid,
+      disabled: !hasRepo,
+      run: openReposOverview,
+    },
+    {
+      kind: "action",
+      id: "action:reflog",
+      label: "时间线（reflog）",
+      icon: History,
+      disabled: !hasRepo || busy.value,
+      run: openReflog,
+    },
+    {
+      kind: "action",
+      id: "action:settings",
+      label: "设置",
+      icon: SettingsIcon,
+      run: () => (showSettings.value = true),
+    },
+    {
+      kind: "action",
+      id: "action:toggle-left",
+      label: leftFold.value ? "展开左侧栏" : "折叠左侧栏",
+      detail: "Ctrl+Shift+L",
+      icon: PanelLeft,
+      run: () => toggleFold("l"),
+    },
+    {
+      kind: "action",
+      id: "action:toggle-right",
+      label: rightFold.value ? "展开右侧栏" : "折叠右侧栏",
+      detail: "Ctrl+Shift+R",
+      icon: PanelRight,
+      run: () => toggleFold("r"),
+    },
+  ];
+
+  return [...repoItems, ...branchItems, ...actionItems];
+});
+
+const {
+  showPalette,
+  paletteQuery,
+  paletteIndex,
+  paletteResults,
+  openPalette,
+  pickPalette,
+  onPaletteKeydown,
+} = usePalette({ items: paletteItems });
+
 // 顺序拉：并发 pull 在多仓库上是同一条网络与同一把索引锁，串行反而更快也更稳
 async function pullAllRepos() {
   // 批次/单仓库流程跑着的时候不能再并发 pull —— 会同一批仓库两边同时写
@@ -1844,6 +1975,7 @@ function askStashDrop(index: number, subject: string) {
 // 如果忘了在这里补对应的层，vue-tsc 会直接报缺键 —— 不再靠「记得改 if 链」。
 const overlayLayers: Record<OverlayName, OverlayLayer> = {
   folderDd: { open: () => !!folderDd.value, close: () => (folderDd.value = null) },
+  palette: { open: () => showPalette.value, close: () => (showPalette.value = false) },
   error: { open: () => !!error.value, close: () => dismissError() },
   confirm: { open: () => !!confirmState.value, close: () => (confirmState.value = null) },
   repoSwitcher: { open: () => showSwitcher.value, close: () => (showSwitcher.value = false) },
@@ -1912,7 +2044,8 @@ function onGlobalKeydown(e: KeyboardEvent) {
   if (typing) {
     const toggleSelf =
       (e.ctrlKey && (e.key === "p" || e.key === "P") && showSwitcher.value) ||
-      (e.ctrlKey && (e.key === "b" || e.key === "B") && showBranchSwitcher.value);
+      (e.ctrlKey && (e.key === "b" || e.key === "B") && showBranchSwitcher.value) ||
+      (e.ctrlKey && (e.key === "k" || e.key === "K") && showPalette.value);
     if (e.key !== "Escape" && !(e.ctrlKey && e.key === "Tab") && !toggleSelf) return;
   }
 
@@ -1949,6 +2082,12 @@ function onGlobalKeydown(e: KeyboardEvent) {
     e.preventDefault();
     if (showBranchSwitcher.value) showBranchSwitcher.value = false;
     else openBranchSwitcher();
+  } else if (e.ctrlKey && (e.key === "k" || e.key === "K")) {
+    // 模态确认框开着时不许唤起：框里写的是当前仓库的状态，操作可能作用到别的仓库
+    if (confirmState.value) return;
+    e.preventDefault();
+    if (showPalette.value) showPalette.value = false;
+    else openPalette();
   } else if (e.ctrlKey && e.shiftKey && (e.key === "L" || e.key === "l")) {
     e.preventDefault();
     toggleFold("l");
@@ -3022,6 +3161,16 @@ onUnmounted(() => {
       :current="repo"
       @pick="pickSwitcher"
       @keydown="onSwitcherKeydown"
+    />
+
+    <!-- 命令面板（Ctrl+K）：渲染在 CommandPalette.vue -->
+    <CommandPalette
+      v-model:open="showPalette"
+      v-model:query="paletteQuery"
+      v-model:index="paletteIndex"
+      :results="paletteResults"
+      @pick="pickPalette"
+      @keydown="onPaletteKeydown"
     />
 
     <!-- 选项卡重命名弹窗 -->

@@ -9,6 +9,7 @@
 /** 优先级从上到下：越靠前越「上层」，Esc 先关它 */
 export const overlayOrder = [
   "folderDd",
+  "palette",
   "error",
   "confirm",
   "repoSwitcher",
