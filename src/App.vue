@@ -2,7 +2,7 @@
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   FolderOpen,
@@ -52,6 +52,7 @@ import HistoryGraph from "./components/HistoryGraph.vue";
 import ChangesPanel from "./components/ChangesPanel.vue";
 import DiffViewer from "./components/DiffViewer.vue";
 import type { DiffTarget, CommitTarget } from "./components/DiffViewer.vue";
+import RangeDiffDialog from "./components/RangeDiffDialog.vue";
 import SettingsModal from "./components/SettingsModal.vue";
 import FileHistoryModal from "./components/FileHistoryModal.vue";
 import BranchTree from "./components/BranchTree.vue";
@@ -1324,6 +1325,31 @@ function onSquashRange(p: { base: string; hashes: string[]; subjects: string[] }
   });
 }
 
+// 导出 patch：无损操作，不弹确认框，直接选保存位置。
+// 先捕获仓库路径：原生保存对话框打开期间用户仍可能切走选项卡
+async function onExportPatch(p: { base: string; head: string; count: number }) {
+  const targetRepo = repo.value;
+  try {
+    const target = await saveDialog({
+      title: "导出 patch",
+      defaultPath: `patch-${p.head.slice(0, 8)}-${p.count}.patch`,
+      filters: [{ name: "Patch", extensions: ["patch", "diff"] }],
+    });
+    if (!target) return;
+    const text = await api.diffRange(targetRepo, p.base, p.head);
+    await api.writeTextFile(target, text);
+    toast(`已导出 ${p.count} 个提交的 patch`);
+  } catch (e) {
+    showError(String(e));
+  }
+}
+
+// 比较 A..B：数据由弹窗自己并行拉（diff + 提交清单），这里只存参数
+const rangeDiff = ref<{ a: string; b: string; aSubject: string; bSubject: string } | null>(null);
+function onCompareRange(p: { a: string; b: string; aSubject: string; bSubject: string }) {
+  rangeDiff.value = p;
+}
+
 // Review / Release Notes 的生成、缓存与保存都抽到 composables/useAiPanel.ts
 const {
   reviewBusy,
@@ -2362,6 +2388,7 @@ const overlayLayers: Record<OverlayName, OverlayLayer> = {
   },
   reflog: { open: () => showReflog.value, close: () => (showReflog.value = false) },
   repos: { open: () => showRepos.value, close: () => (showRepos.value = false) },
+  rangeDiff: { open: () => !!rangeDiff.value, close: () => (rangeDiff.value = null) },
   diff: { open: () => !!diffState.value, close: () => (diffState.value = null) },
 };
 
@@ -2869,6 +2896,8 @@ onUnmounted(() => {
             @batch-cherry-pick="onBatchCherryPick"
             @batch-revert="onBatchRevert"
             @squash-range="onSquashRange"
+            @export-patch="onExportPatch"
+            @compare-range="onCompareRange"
           />
           <!-- 空态：这是用户看到的第一屏，值得比别的空态多花一点功夫 -->
           <div v-else-if="repo" class="grid h-full place-items-center">
@@ -3287,6 +3316,20 @@ onUnmounted(() => {
       :commit="diffState.target"
       @close="diffState = null"
     />
+    </Transition>
+
+    <!-- 比较 A..B：提交清单 + 合并 diff 汇总 -->
+    <Transition name="dlg">
+      <RangeDiffDialog
+        v-if="rangeDiff"
+        :key="rangeDiff.a + rangeDiff.b"
+        :repo="repo"
+        :a="rangeDiff.a"
+        :b="rangeDiff.b"
+        :a-subject="rangeDiff.aSubject"
+        :b-subject="rangeDiff.bSubject"
+        @close="rangeDiff = null"
+      />
     </Transition>
 
     <!-- 选项卡右键菜单（重命名 / 关闭；分组操作在右侧管理按钮里） -->

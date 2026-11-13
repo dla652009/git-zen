@@ -1305,6 +1305,13 @@ AI 读的 diff 必须是 `merge-base(dst, src)..src`。直接 `dst..src` 会把�
 - **「压成一条」的连续性按 `props.commits` 的真实顺序判定，而不是 `shown`**：过滤隐藏的中间
   提交也算断开，否则 soft reset 到 base 会把用户没选中的提交一起压掉。base 取最早选中项的
   `parents[0]`，根提交没有父提交，按钮禁用。
+- **导出 patch 沿用压条的 base 判定，但不要求 ≥2**：`git diff base..head` 会把区间内所有提交
+  都算进去，所以区间内必须全部选中（否则混进没选的提交）；单个提交导出同样成立。
+  操作条因此从「≥2 才显示」放宽到「≥1 显示」，批量按钮仍从 2 个起出现。
+- **比较 `A..B` 的 a/b 也按 `props.commits` 下标定**（新→旧，下标大为旧），不看选中顺序或
+  `shown` 顺序；区间内容用 `git_commits_range(a, b)` + `git_diff_range(a, b)` 并行拉。
+- **`RangeDiffDialog` 不嵌 `DiffViewer`**：区间浏览不需要双栏文件列表/搜索/AI，重组件反而拖慢。
+  直接复用 `lib/patch.ts` 的 `patchSections`（解析器只有一份），只渲染文件名 + 增删着色。
 
 ## tauri build 与 CI 环境变量
 

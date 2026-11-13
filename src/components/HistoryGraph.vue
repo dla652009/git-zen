@@ -24,6 +24,10 @@ const emit = defineEmits<{
   batchRevert: [hashes: string[]];
   /** 压成一条：base 是这批提交的父提交（soft reset 的目标） */
   squashRange: [p: { base: string; hashes: string[]; subjects: string[] }];
+  /** 导出 patch：范围 base..head（base = 最早选中项的父提交） */
+  exportPatch: [p: { base: string; head: string; count: number }];
+  /** 比较两个提交：a 旧、b 新 */
+  compareRange: [p: { a: string; b: string; aSubject: string; bSubject: string }];
   selectionChange: [n: number];
 }>();
 
@@ -175,6 +179,44 @@ const squashHint = computed(() => {
   return "所选提交包含根提交，没有父提交可回退";
 });
 
+// 导出 patch：base..head 会包含区间内所有提交，所以和压条同判定——
+// 区间内必须全部选中，否则导出的 patch 里会混进用户没选的提交。单选也允许。
+const exportInfo = computed(() => {
+  const picked = selectedEntries.value;
+  if (!picked.length) return null;
+  const index = new Map(props.commits.map((c, i) => [c.hash, i]));
+  const positions = picked.map((c) => index.get(c.hash)!).sort((a, b) => a - b);
+  const sequential = positions.every((p, i) => i === 0 || p === positions[i - 1] + 1);
+  const oldest = props.commits[positions[positions.length - 1]];
+  const base = oldest?.parents[0] ?? "";
+  return {
+    base,
+    sequential,
+    head: picked[0].hash, // picked 是 shown 顺序（新→旧），第一条就是最新选中项
+    count: picked.length,
+    contiguous: sequential && !!base,
+  };
+});
+const canExport = computed(() => !!exportInfo.value?.contiguous);
+const exportHint = computed(() => {
+  if (canExport.value) return "导出所选区间的 patch（区间内提交需全部选中）";
+  if (!exportInfo.value?.sequential) return "所选提交不连续";
+  return "所选提交包含根提交，没有父提交可作为起点";
+});
+
+// 比较 A..B：恰好两个时出现；props.commits 新→旧，下标大的更早，作为 a
+const comparePair = computed(() => {
+  if (selectionCount.value !== 2) return null;
+  const [x, y] = selectedEntries.value;
+  if (!x || !y) return null;
+  const index = new Map(props.commits.map((c, i) => [c.hash, i]));
+  const ix = index.get(x.hash);
+  const iy = index.get(y.hash);
+  if (ix === undefined || iy === undefined) return null;
+  const [older, newer] = ix > iy ? [x, y] : [y, x];
+  return { a: older, b: newer };
+});
+
 function onKeydown(e: KeyboardEvent) {
   if (e.key === "Escape" && selection.value.size) {
     e.stopPropagation();
@@ -194,6 +236,21 @@ function emitSquash() {
   const info = squashInfo.value;
   if (!info?.contiguous) return;
   emit("squashRange", { base: info.base, hashes: info.hashes, subjects: info.subjects });
+}
+function emitExportPatch() {
+  const info = exportInfo.value;
+  if (!info?.contiguous) return;
+  emit("exportPatch", { base: info.base, head: info.head, count: info.count });
+}
+function emitCompare() {
+  const pair = comparePair.value;
+  if (!pair) return;
+  emit("compareRange", {
+    a: pair.a.hash,
+    b: pair.b.hash,
+    aSubject: pair.a.subject,
+    bSubject: pair.b.subject,
+  });
 }
 
 // 沿 parent 链向上找最近的可见祖先（过滤掉的中间节点被跳过）
@@ -367,24 +424,35 @@ const hitSegments = computed(() => {
       <Spinner v-if="loadingMore" :size="12" label="正在加载更多…" />
       <span v-else>已到底部</span>
     </div>
-    <!-- 批量操作条：sticky 在列表底部，不随滚动离开视口 -->
+    <!-- 批量操作条：sticky 在列表底部，不随滚动离开视口。
+         选中 1 个也显示（导出 patch 对单个提交同样有意义），批量按钮从 2 个起出现 -->
     <div
-      v-if="selectionCount >= 2"
+      v-if="selectionCount >= 1"
       class="pointer-events-none sticky bottom-0 z-20 flex justify-center px-2 pb-2"
     >
       <div
         class="pointer-events-auto surface-menu shadow-elev-3 flex items-center gap-1 rounded-md px-2 py-1"
       >
         <span class="px-1 text-xs text-muted-foreground">已选 {{ selectionCount }}</span>
-        <Button variant="ghost" size="sm" @click="emitCherryPick">Cherry-pick</Button>
-        <Button variant="ghost" size="sm" @click="emitBatchRevert">Revert</Button>
-        <Tooltip :text="squashHint">
+        <template v-if="selectionCount >= 2">
+          <Button variant="ghost" size="sm" @click="emitCherryPick">Cherry-pick</Button>
+          <Button variant="ghost" size="sm" @click="emitBatchRevert">Revert</Button>
+          <Tooltip :text="squashHint">
+            <span class="inline-flex">
+              <Button variant="ghost" size="sm" :disabled="!canSquash" @click="emitSquash">
+                压成一条
+              </Button>
+            </span>
+          </Tooltip>
+        </template>
+        <Tooltip :text="exportHint">
           <span class="inline-flex">
-            <Button variant="ghost" size="sm" :disabled="!canSquash" @click="emitSquash">
-              压成一条
+            <Button variant="ghost" size="sm" :disabled="!canExport" @click="emitExportPatch">
+              导出 patch
             </Button>
           </span>
         </Tooltip>
+        <Button v-if="comparePair" variant="ghost" size="sm" @click="emitCompare">比较 A..B</Button>
         <Button variant="ghost" size="sm" @click="clearSelection">清除</Button>
       </div>
     </div>

@@ -709,6 +709,21 @@ pub async fn git_diff_mr(repo: String, src: String, dst: String) -> Result<Strin
     .await
 }
 
+/// 两个提交之间的合并 diff（base..head）：多选导出 patch 与「比较 A..B」共用。
+/// 只接受 commit hash（过 check_hex），不接受分支名，避免把用户输入拼进 revision。
+#[tauri::command]
+pub async fn git_diff_range(repo: String, base: String, head: String) -> Result<String, String> {
+    offload(move || {
+        check_hex(&base)?;
+        check_hex(&head)?;
+        run(
+            &repo,
+            &["diff", "--no-color", &format!("{}..{}", base.trim(), head.trim())],
+        )
+    })
+    .await
+}
+
 /// 放弃未推送的提交：硬重置回上游（未提交的工作区改动一并丢弃，确认框负责明示；
 /// reflog 在 git 默认 gc 期内仍可找回）。ahead>0 才有入口，无上游由 git 报错兜底
 #[tauri::command]
