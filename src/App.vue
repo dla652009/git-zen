@@ -1507,7 +1507,7 @@ function askResetTo(hash: string) {
     body:
       `把 ${status.value?.branch || "当前分支"} 重置到 ${hash.slice(0, 7)}。` +
       (dirty ? `工作区 ${dirty} 个未提交的文件改动会一并丢弃。` : "") +
-      "被移走的提交仍能在时间线里找回。",
+      "被移走的提交仍能在时间线里找回；未提交的改动不在时间线里，丢了找不回。",
     ok: () => api.resetTo(path, hash, "hard"),
   });
 }
@@ -2042,17 +2042,6 @@ onUnmounted(() => {
           <GitBranchPlus class="size-4" />
         </Button>
       </Tooltip>
-      <Tooltip text="时间线（reflog：找回被覆盖的提交）">
-        <Button
-          variant="quiet"
-          size="icon"
-          :disabled="!repo || busy"
-          aria-label="时间线"
-          @click="openReflog"
-        >
-          <History class="size-4" />
-        </Button>
-      </Tooltip>
       <Tooltip text="设置">
         <Button variant="quiet" size="icon" aria-label="设置" @click="showSettings = true">
           <SettingsIcon class="size-4" />
@@ -2285,6 +2274,21 @@ onUnmounted(() => {
             <Search class="pointer-events-none absolute top-1/2 left-3 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input v-model="filter" placeholder="搜索提交信息 / 作者…" class="h-7 pl-8 text-xs" />
           </div>
+          <!-- 时间线放在历史区：用户在这里看提交，「找回被覆盖的提交」才想得起来。
+               它只记录 HEAD 的移动，救不了未提交的改动 —— 这点在弹窗和确认框里都写明 -->
+          <Tooltip text="时间线（reflog：找回被覆盖的提交）">
+            <Button
+              variant="quiet"
+              size="sm"
+              class="h-7 shrink-0 gap-1 px-2 text-xs"
+              :disabled="!repo || busy"
+              aria-label="时间线"
+              @click="openReflog"
+            >
+              <History class="size-3.5" />
+              时间线
+            </Button>
+          </Tooltip>
         </div>
         <div class="relative min-h-0 flex-1">
           <!-- 切换分支时的 loading 遮罩 -->

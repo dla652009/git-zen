@@ -44,6 +44,7 @@ const short = (h: string) => h.slice(0, 7);
       <div id="dlg-reflog-title" class="text-base font-semibold">时间线</div>
       <p class="mt-1 text-xs text-muted-foreground">
         reflog 记录的是 HEAD 的每一次移动（含被 reset / 覆盖掉的提交），可以回到其中任意一步。
+        它只记录提交 —— 未提交的文件改动不会出现在这里，也恢复不了。
       </p>
 
       <div class="mt-3 max-h-80 min-h-24 overflow-auto rounded-md border border-border-soft bg-background/40 p-1">
