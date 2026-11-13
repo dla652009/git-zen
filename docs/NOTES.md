@@ -1209,3 +1209,8 @@ catppuccin-mocha/catppuccin-latte/win7）。删一套主题要动四处，漏一
 - **同一个 flush 里的两个 watch 按注册顺序执行**。批次弹窗「换批次就重置展开」的 watch
   注册在「自动展开当前行」之后，于是在新批次的首行上先展开、后清空 —— 首行永远不展开，
   从第二行起才正常。合并成一个 watch（先按对象身份重置，再展开）比调 flush 更省事。
+- **后端的参数校验会把前端的语义线索吃掉**。游离 HEAD 时 `checkout("")` 在 `git.rs`
+  的 `check_positional` 就被拦成「分支名不能为空」——那本该是「你不在任何分支上」，
+  用户照着提示也修不好。涉及「空的含义」这类错误，要么前端先拦（知道为什么空），
+  要么后端分开报。另外 `humanize` 的规则别跨场景共用：`needed a single revision`
+  在负数 ref、空 revision 等路径也会出现，套上「游离 HEAD」会误导。

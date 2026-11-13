@@ -256,6 +256,14 @@ export function useWorkflowRun(opts: {
   ): Promise<string | undefined> {
     const refName = (r: BranchRef) =>
       r.mode === "fixed" ? (r.name ?? "") : r.mode === "start" ? startBranch : inputBranch;
+    // 前端先拦：空分支名会被后端 check_positional 挡成「分支名不能为空」，
+    // 前端知道空的原因（游离 HEAD），能说清该怎么办
+    const usesStart = step.kind === "switchBack" || ("ref" in step && step.ref?.mode === "start");
+    if (usesStart && !startBranch) {
+      throw new Error(
+        "仓库处于游离 HEAD（不在任何分支上），取不到「起始分支」：请先切到一个分支，或在流程里把分支写成具体名字",
+      );
+    }
     switch (step.kind) {
       case "checkout":
         // 目标不存在 → git 报错中止（要建分支就在流程里放"新建分支"原语）
@@ -424,23 +432,7 @@ export function useWorkflowRun(opts: {
         }
       }
       // 弹窗可能在跑的时候就被关掉了（长批次很常见），所以结果也给一条 toast
-      const done = batch.rows.filter((r) => r.state === "done").length;
-      const failRows = batch.rows.filter((r) => r.state === "fail");
-      const skipped = batch.rows.filter((r) => r.state === "skipped").length;
-      if (failRows.length || skipped) {
-        // 关着窗跑的：结果（哪一行失败、失败在哪一步）只有弹窗里有，光一条 toast
-        // 既说不清是谁挂了、也没地方重试 —— 和有失败时把窗口重新打开
-        wfBatchOpen.value = true;
-        const names = failRows.map((r) => r.name);
-        const bits = [`${done} 个成功`];
-        if (failRows.length) {
-          bits.push(`${failRows.length} 个失败（${names.slice(0, 3).join("、")}${names.length > 3 ? " 等" : ""}）`);
-        }
-        if (skipped) bits.push(`${skipped} 个未执行`);
-        toast(`「${wf.name}」批量执行：${bits.join("，")}`, "warn");
-      } else {
-        toast(`「${wf.name}」已在 ${done} 个仓库上执行完成`);
-      }
+      reportBatch(batch);
     } finally {
       batch.cur = -1;
       batch.done = true;
@@ -449,6 +441,29 @@ export function useWorkflowRun(opts: {
     }
     // 当前仓库的行也刷新一次（批次可能就改了它）
     await afterBatch();
+  }
+
+  /**
+   * 批次收尾的结果可见性：有失败/跳过就把弹窗重新打开（否则失败原因、失败步骤、
+   * 重试入口全在看不见的地方，只剩一条数不出是谁挂了的 toast），并报一条带仓库名的 toast。
+   * 首跑、单行重试、继续剩余三个入口都走这里 —— 规则只有一套，入口不同不该有不同待遇。
+   */
+  function reportBatch(batch: { wf: Workflow; rows: WfBatchRow[] }) {
+    const done = batch.rows.filter((r) => r.state === "done").length;
+    const failRows = batch.rows.filter((r) => r.state === "fail");
+    const skipped = batch.rows.filter((r) => r.state === "skipped").length;
+    if (!failRows.length && !skipped) {
+      toast(`「${batch.wf.name}」已在 ${done} 个仓库上执行完成`);
+      return;
+    }
+    wfBatchOpen.value = true;
+    const names = failRows.map((r) => r.name);
+    const bits = [`${done} 个成功`];
+    if (failRows.length) {
+      bits.push(`${failRows.length} 个失败（${names.slice(0, 3).join("、")}${names.length > 3 ? " 等" : ""}）`);
+    }
+    if (skipped) bits.push(`${skipped} 个未执行`);
+    toast(`「${batch.wf.name}」批量执行：${bits.join("，")}`, "warn");
   }
 
   // 收尾：刷新当前仓库 + 让总览重取行。失败不该盖掉已经跑完的批次结果
@@ -481,6 +496,7 @@ export function useWorkflowRun(opts: {
       opts.busy.value = false;
       opts.runningAction.value = "";
     }
+    reportBatch(batch);
     await afterBatch();
   }
 
@@ -506,6 +522,7 @@ export function useWorkflowRun(opts: {
       opts.busy.value = false;
       opts.runningAction.value = "";
     }
+    reportBatch(batch);
     await afterBatch();
   }
 

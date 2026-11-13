@@ -26,8 +26,8 @@ export function humanize(raw: unknown): { msg: string; detail?: string } {
     [/failed to connect|connection timed out|could not resolve host/i, "网络不通：无法连接远程仓库"],
     [/not fully merged|used as worktree/i, "该分支尚未合并或有其他占用，为防误删请到终端确认处理"],
     [
-      /empty string is not a valid pathspec|needed a single revision/i,
-      "仓库处于游离 HEAD（不在任何分支上）：先切到一个分支，或在工作流里把分支写成具体名字",
+      /empty string is not a valid pathspec/i,
+      "分支名为空：仓库可能处于游离 HEAD（不在任何分支上），先切到一个分支再重试",
     ],
   ];
   const hit = rules.find(([re]) => re.test(s));
