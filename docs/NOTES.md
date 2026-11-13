@@ -1214,3 +1214,14 @@ catppuccin-mocha/catppuccin-latte/win7）。删一套主题要动四处，漏一
   用户照着提示也修不好。涉及「空的含义」这类错误，要么前端先拦（知道为什么空），
   要么后端分开报。另外 `humanize` 的规则别跨场景共用：`needed a single revision`
   在负数 ref、空 revision 等路径也会出现，套上「游离 HEAD」会误导。
+- **`git branch -D` 在 Windows 上大小写不敏感**。`feature/x` 能删掉 `Feature/X` 的同一个 ref 文件，
+  而 `status.branch` 给的是原始大小写 —— 拿它和新填的名字做 `===` 比较，「删当前分支」这道拦截
+  就会被绕过：HEAD 变 unborn，后续「提交推送」产出 root commit，历史从这里断开。做法是先把名字
+  拿去 `git_branches` 里解析成规范名（精确优先、忽略大小写只在唯一命中时采用），再用规范名比对与删除。
+- **删分支的步骤必须检查「这是不是起始分支」**。删掉 `$起始分支` 之后，「切回起始分支」的
+  `checkout` 只会给一句英文 pathspec；更糟的是删除已经生效、而重试永远停在那一步（重试沿用同一个
+  startBranch），既不回滚也没有收尾提示。`switchBack` 自己也应先验存在，报「已不存在（可能被前面的步骤删掉）」。
+- **humanize 的规则顺序在「一条 stderr 里叠着多句 fatal」时才是关键**。没配 origin 时 git 连打两行，
+  `could not read from remote repository` 排在前面就会被判成「认证失败」，而真正的原因是「没有远程」。
+  凡是 git 可能连打「根因 + 后果」两行的规则，都要让根因那条排在前面；新加的规则用自检文件钉住顺序
+  （`src/lib/errors.test.ts`），否则下一次插入就会悄悄改掉命中结果。

@@ -4,12 +4,13 @@
 // flowInputsReady / confirmFlow 来自 composables/useWorkflowRun.ts），这里只渲染。
 // inputs / prefixes 是模板直接写入的真双向数据（v-model 落在它们的属性上），用 defineModel；
 // close / confirm 是动作，emit 回 App 走原来的代码路径。
+import { computed } from "vue";
 import { imeGuard } from "../lib/imeGuard";
 import { describeStep } from "../workflow";
 import type { InputSlot, Workflow } from "../workflow";
 import { Button, Input, Select } from "@/components/ui";
 
-defineProps<{
+const props = defineProps<{
   confirm: { wf: Workflow; slots: InputSlot[] } | null;
   ready: boolean;
   statusBranch?: string;
@@ -23,6 +24,13 @@ const inputs = defineModel<Record<number, string>>("inputs", { required: true })
 const prefixes = defineModel<Record<number, string>>("prefixes", { required: true });
 const stopOnFail = defineModel<boolean>("stopOnFail", { default: false });
 const emit = defineEmits<{ close: []; confirm: [] }>();
+
+// 删除类步骤不可逆：确认框里提前说一句，别等执行完才发现提交没了
+const deletesBranch = computed(() =>
+  !!props.confirm?.wf.steps.some(
+    (s) => s.kind === "deleteBranch" || s.kind === "deleteRemoteBranch",
+  ),
+);
 
 // Enter 提交走 keydown + isComposing：Chromium 里确认候选词那次 keyup 的 isComposing 已回 false
 const imeConfirm = imeGuard(() => emit("confirm"));
@@ -99,9 +107,9 @@ const imeConfirm = imeGuard(() => emit("confirm"));
       </ol>
       <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
         顺序执行、任一步失败立即中止。「提交推送」在有改动时自动全部暂存，无改动时跳过；
-        工作区有未提交改动时拉取/合并可能失败或被带入提交。<span v-if="batchNames?.length"
-          >流程里若用到 AI（如生成提交信息），每个仓库各调一次。</span
-        >
+        工作区有未提交改动时拉取/合并可能失败或被带入提交。<span v-if="deletesBranch"
+          >「删除分支」用强制 -D，未合并的提交会丢；「删除远程分支」直接作用于远程仓库。</span
+        ><span v-if="batchNames?.length">流程里若用到 AI（如生成提交信息），每个仓库各调一次。</span>
       </p>
       <div class="mt-5 flex justify-end gap-2">
         <Button variant="ghost" size="sm" @click="emit('close')">取消</Button>

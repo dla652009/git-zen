@@ -3,7 +3,7 @@ import { computed, reactive, ref, nextTick, onMounted, watch, type Component } f
 import {
   X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe, Workflow as WorkflowIcon, ChevronDown,
   GripVertical, Pin, Pencil, Trash2, TriangleAlert, Copy,
-  GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload,
+  GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload, CloudOff,
 } from "@lucide/vue";
 import { VueDraggable } from "vue-draggable-plus";
 import {
@@ -200,11 +200,15 @@ const STEP_ICONS: Record<WorkflowStep["kind"], Component> = {
   createBranch: GitBranchPlus,
   switchBack: Undo2,
   commitPush: Upload,
+  deleteBranch: Trash2,
+  deleteRemoteBranch: CloudOff,
 };
 // 会动到工作区或可能中途卡住的步骤，执行前先给个交代
 const DANGER_HINTS: Partial<Record<WorkflowStep["kind"], string>> = {
   merge: "合并可能产生冲突，冲突时流程会停在这一步",
   commitPush: "有改动时会 git add -A 把工作区全部改动（含未跟踪文件）一起提交",
+  deleteBranch: "强制 -D 删除：未合并的提交会直接丢失，只能靠时间线找回",
+  deleteRemoteBranch: "直接删掉远程仓库上的分支，别人拉取后也会看到它消失",
 };
 
 // 拖拽之外的键盘路径：Alt+↑/↓（拖拽对纯键盘用户不可达）
@@ -229,6 +233,8 @@ function missingHint(): string {
     return "请先填分支名，或把模式改成「起始分支」/「运行时输入」";
   if (k === "commitPush" && newStepMsgSource.value === "fixed")
     return "请先填固定提交信息，或把信息来源改成「AI 生成」";
+  if ((k === "deleteBranch" || k === "deleteRemoteBranch") && !newStepName.value.trim())
+    return "请先填要删除的分支名";
   return "当前配置不完整，请检查后再添加";
 }
 function addStep(w: Workflow) {
@@ -272,6 +278,15 @@ function buildDraftStep(): WorkflowStep | null {
       if (newStepMsgSource.value === "fixed" && !message) return null;
       return { kind: "commitPush", msgSource: newStepMsgSource.value, message: message || undefined };
     }
+    // 清理类：名字写死在流程里（「跑完就删掉 feature/xxx」是固定意图，不适合运行时再问）
+    case "deleteBranch": {
+      const name = newStepName.value.trim();
+      return name ? { kind: "deleteBranch", name } : null;
+    }
+    case "deleteRemoteBranch": {
+      const name = newStepName.value.trim();
+      return name ? { kind: "deleteRemoteBranch", name } : null;
+    }
   }
 }
 const KIND_LABELS: Record<WorkflowStep["kind"], string> = {
@@ -282,6 +297,8 @@ const KIND_LABELS: Record<WorkflowStep["kind"], string> = {
   merge: "合并",
   createBranch: "新建分支",
   switchBack: "切回起始分支",
+  deleteBranch: "删除分支",
+  deleteRemoteBranch: "删除远程分支",
 };
 const STEP_KIND_OPTIONS = Object.entries(KIND_LABELS).map(([value, label]) => ({ value, label }));
 const REF_MODE_OPTIONS = [
@@ -807,6 +824,13 @@ const NAV = [
                             placeholder="默认前缀（可选，如 feat/）；执行时可改"
                             @update:model-value="(v: string | number) => (s.prefix = String(v) || undefined)"
                           />
+                          <Input
+                            v-else-if="s.kind === 'deleteBranch' || s.kind === 'deleteRemoteBranch'"
+                            :model-value="s.name"
+                            class="h-7 min-w-0 flex-1 text-xs"
+                            placeholder="要删除的分支名"
+                            @update:model-value="(v: string | number) => (s.name = String(v))"
+                          />
                           <span
                             v-else
                             class="min-w-0 flex-1 text-xs text-muted-foreground"
@@ -875,6 +899,12 @@ const NAV = [
                         v-model="newStepPrefix"
                         class="h-8 min-w-0 flex-1 text-xs"
                         placeholder="默认前缀（可选，如 feat/）"
+                      />
+                      <Input
+                        v-else-if="newStepKind === 'deleteBranch' || newStepKind === 'deleteRemoteBranch'"
+                        v-model="newStepName"
+                        class="h-8 min-w-0 flex-1 text-xs"
+                        placeholder="要删除的分支名"
                       />
                       <Button variant="default" size="sm" class="ml-auto h-8 shrink-0" @click="addStep(w)">
                         <Plus class="size-3.5" /> 添加

@@ -16,15 +16,21 @@ export function humanize(raw: unknown): { msg: string; detail?: string } {
     [/nothing to commit/i, "没有可提交的内容：先暂存文件"],
     [/cherry-pick is now empty|previous cherry-pick/i, "该提交的改动已在当前分支上（空拣选），无需重复 cherry-pick"],
     [/already exists and is not an empty directory/i, "目标目录已存在且非空：换一个目录名或位置"],
+    // 「没有配置远程」时 git 会连打两行：does not appear to be a git repository + could not read
+    // from remote repository。必须让前者先命中，否则会把「没配 origin」误诊成认证问题
+    [/does not appear to be a git repository|No configured push destination/i, "远程不可用：没有配置 origin（先在终端 git remote add origin <url>）或地址失效"],
     [/could not read from remote repository/i, "无法读取远程仓库：URL 错误、无权访问或认证失败"],
     [/repository .* does not exist/i, "仓库不存在：检查 URL 拼写与访问权限"],
     [/authentication|permission denied|could not read Username|403/i, "认证失败：请检查系统 git 凭据（credential helper / ssh key）"],
-    [/does not appear to be a git repository|No configured push destination/i, "远程不可用：没有配置 origin（先在终端 git remote add origin <url>）或地址失效"],
     [/not a git repository/i, "所选目录不是 Git 仓库"],
     [/does not have any commits yet/i, "空仓库：还没有任何提交"],
     [/conflict/i, "产生合并冲突：在左侧解决冲突文件后暂存并提交，或用「放弃合并」退出"],
     [/failed to connect|connection timed out|could not resolve host/i, "网络不通：无法连接远程仓库"],
-    [/not fully merged|used as worktree/i, "该分支尚未合并或有其他占用，为防误删请到终端确认处理"],
+    [/remote ref does not exist/i, "远程没有这个分支：可能已被别人删除，或名字拼写有误"],
+    [/branch '.*' not found|branch .* not found/i, "分支不存在：检查名字拼写（大小写也要一致）"],
+    [/pathspec .* did not match/i, "目标分支或文件不存在：可能已被删除，或名字拼写有误"],
+    [/not fully merged|used (as|by) worktree/i, "该分支尚未合并或有其他占用，为防误删请到终端确认处理"],
+    [/cannot delete branch/i, "不能删除当前所在的分支：先切到别的分支再删"],
     [
       /empty string is not a valid pathspec/i,
       "分支名为空：仓库可能处于游离 HEAD（不在任何分支上），先切到一个分支再重试",

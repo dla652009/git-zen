@@ -21,6 +21,10 @@ export type WorkflowStep =
   | { kind: "push" } // 推送当前分支（发布类流程在 merge 之后需要独立推送）
   | { kind: "merge"; ref: BranchRef } // 合并目标到当前分支；冲突即失败停留
   | { kind: "createBranch"; prefix?: string } // 分支名运行时输入
+  // 清理类原语：名字在编辑流程时写死（「跑完删掉 feature/xxx」是固定意图），强制 -D
+  | { kind: "deleteBranch"; name: string }
+  // 远程删除固定走 origin：多远程的仓库极少见，需要时先手动 fetch 确认
+  | { kind: "deleteRemoteBranch"; name: string }
   | { kind: "switchBack" };
 
 export interface Workflow {
@@ -56,6 +60,10 @@ export function describeStep(s: WorkflowStep, startBranch?: string): string {
       return `新建分支（运行时输入名称${s.prefix ? `，默认前缀 ${s.prefix}` : ""}）`;
     case "switchBack":
       return `切回起始分支${startBranch ? `（${startBranch}）` : ""}`;
+    case "deleteBranch":
+      return `删除本地分支 ${s.name.trim() || "（未填分支名）"}（强制 -D）`;
+    case "deleteRemoteBranch":
+      return `删除远程分支 origin/${s.name.trim() || "（未填分支名）"}`;
     case "commitPush":
       return s.msgSource === "ai"
         ? "提交并推送（AI 生成信息，无改动跳过）"

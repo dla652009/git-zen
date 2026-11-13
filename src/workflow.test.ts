@@ -42,6 +42,10 @@ assert(
   d({ kind: "commitPush", msgSource: "ai" }).includes("AI 生成信息"),
   "commitPush ai",
 );
+// 删除类：名字写死进标签，空名字要给可读提示而不是「删除 undefined」
+assert(d({ kind: "deleteBranch", name: "feat/x" }) === "删除本地分支 feat/x（强制 -D）", "deleteBranch");
+assert(d({ kind: "deleteRemoteBranch", name: "feat/x" }) === "删除远程分支 origin/feat/x", "deleteRemoteBranch");
+assert(d({ kind: "deleteBranch", name: "  " }).includes("未填分支名"), "deleteBranch 空名字");
 
 // flowNeedsInput：ask 引用与新建分支需要输入，纯固定名流程不需要
 assert(flowNeedsInput({ id: "x", name: "x", steps: [{ kind: "pull" }] }) === false, "无需输入");
@@ -89,6 +93,18 @@ assert(
     steps: [{ kind: "checkout", ref: { mode: "ask" } }],
   })[0]!.branch === undefined,
   "ask 引用槽不带前缀",
+);
+// 删除类：名字写死在步骤里，执行时不该再问用户
+assert(
+  flowInputSlots({
+    id: "x",
+    name: "x",
+    steps: [
+      { kind: "deleteBranch", name: "feat/x" },
+      { kind: "deleteRemoteBranch", name: "feat/x" },
+    ],
+  }).length === 0,
+  "删除类步骤不产生运行时输入槽",
 );
 
 // defaultBranchPrefix：步骤里配的优先于设置里的第一个，都没有才是「无前缀」

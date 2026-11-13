@@ -1350,3 +1350,29 @@ merge / cherry-pick / revert / rebase / am 先放弃。**刻意不带 `clean -x`
 - [x] 入口：`所有仓库` 总览加勾选框（默认全不选 + 三态全选）与「运行工作流」下拉；
       确认框复用同一份，补「将对 N 个仓库执行」与「失败即停」勾选
 - [x] 浮层登记：`overlays.ts` 增 `flowBatch`（Esc 只收起、不置空 `wfBatch`）
+
+## M23 工作流清理原语：删除分支 / 删除远程分支
+
+用户原话：工作流里加一个删除分支和删除远程分支，填写对应的分支名。
+
+- [x] **两种新原语**：`{ kind: "deleteBranch"; name }` / `{ kind: "deleteRemoteBranch"; name }`，
+      复用已有命令（`git_branch_delete` / `git_push_delete`），**零新增 Rust**
+- [x] **名字在编辑流程时写死**（用户拍板）：`flowInputSlots` 不为它们产槽位 ——
+      「跑完删掉 feature/xxx」是固定意图，执行时再问一遍只会点错
+- [x] **本地删除固定 `-D`**（用户拍板）：不带「未合并会拒绝」的软删，语义就是「不管有没有合并都删」
+- [x] **远程删除固定走 `origin`**：多远程仓库极少见；找不到该远程时 git 直接报错，不会静默成功
+- [x] **删当前分支前置拦截**：先把名字用 `git_branches` 解析成「规范名」再比对 `status.branch` ——
+      `-D` 在 Windows 上按大小写不敏感命中同一个 ref 文件（`feature/x` 能删掉 `Feature/X`），
+      直接字符串比较会漏；漏掉的后果是 HEAD 变 unborn、后续提交变成 root commit 断历史
+- [x] **删起始分支也拦**：删掉 `$起始分支` 会让后面的「切回起始分支」永久失败（删除已生效、
+      重试停在同一步），因此直接拒绝并说明
+- [x] **`switchBack` 先验存在**：起始分支可能被前面的步骤删掉，`checkout` 只会甩英文 pathspec
+- [x] 编辑器：`STEP_ICONS` 加 `Trash2` / `CloudOff`，`KIND_LABELS` 加两项，两者都进 `DANGER_HINTS`
+      （强删丢提交、远程删除影响他人）；步骤行与添加表单共用 `newStepName` 输入分支名；
+      执行确认框在含删除步骤时补一句「不可逆」
+- [x] 错误翻译补规则并修顺序：`does not appear to be a git repository` 提到
+      `could not read from remote repository` 之前（否则「没配 origin」被误诊成认证失败）；
+      新增 `remote ref does not exist` / `branch '…' not found` / `pathspec … did not match` /
+      `used by worktree` / `cannot delete branch`
+- [x] 自检：`describeStep` 三种情形 + 「删除类不产生运行时输入槽」+ 新增 `src/lib/errors.test.ts`
+      钉住上面那组规则的命中顺序（已接进 `pnpm verify`）

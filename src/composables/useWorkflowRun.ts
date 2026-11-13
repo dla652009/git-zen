@@ -295,9 +295,52 @@ export function useWorkflowRun(opts: {
         await api.branchCreate(path, name);
         return;
       }
-      case "switchBack":
+      case "switchBack": {
+        // 起始分支可能已经被前面的「删除分支」步骤删掉：那时 checkout 只会甩一句英文
+        // pathspec，而且删除已经发生、重试永远停在这一步
+        const list = await api.branches(path);
+        if (!list.some((b) => !b.remote && b.name === startBranch)) {
+          throw new Error(
+            `起始分支「${startBranch}」已不存在（可能被前面的步骤删掉了），无法切回`,
+          );
+        }
         await api.checkout(path, startBranch);
         return;
+      }
+      case "deleteBranch": {
+        const name = step.name.trim();
+        if (!name) throw new Error("删除分支：分支名不能为空");
+        // 用分支列表把名字解析成「规范名」再删：git 的 -D 对大小写不敏感（Windows 上
+        // feature/x 能删掉 Feature/X 的同一个 ref 文件），而 status.branch 是原始大小写，
+        // 直接字符串比较会漏掉这种情况 —— 删掉当前分支后 HEAD 变 unborn，后续提交直接断历史
+        const list = await api.branches(path);
+        const local = list.filter((b) => !b.remote);
+        const exact = local.find((b) => b.name === name);
+        const ci = local.filter((b) => b.name.toLowerCase() === name.toLowerCase());
+        const hit = exact ?? (ci.length === 1 ? ci[0] : undefined);
+        if (!hit) throw new Error(`分支「${name}」不存在：检查名字拼写（大小写也要一致）`);
+        const st = await api.status(path);
+        if (hit.name === st.branch) {
+          throw new Error(
+            `不能删除当前所在的分支「${hit.name}」：请在这之前切到别的分支（或显式加一步「切回起始分支」）`,
+          );
+        }
+        if (hit.name === startBranch) {
+          throw new Error(
+            `「${hit.name}」是本次流程的起始分支，删掉后无法切回：请改成这一步之前先切走的流程`,
+          );
+        }
+        await api.branchDelete(path, hit.name, true);
+        return;
+      }
+      case "deleteRemoteBranch": {
+        // 远程删除只作用于 origin：push --delete 找不到分支时会直接报错，不会静默成功。
+        // 分支名前面有人会照抄描述里的 origin/ 前缀，这里顺手剥掉
+        const name = step.name.trim().replace(/^origin\//, "");
+        if (!name) throw new Error("删除远程分支：分支名不能为空");
+        await api.pushDelete(path, "origin", name);
+        return;
+      }
       case "commitPush": {
         const st = await api.status(path);
         if (!st.files.length) return "无改动，跳过";
@@ -325,6 +368,9 @@ export function useWorkflowRun(opts: {
         await api.push(path, st.branch); // 无上游自动 -u
         return;
       }
+      default:
+        // 加了新的步骤原语却漏了执行分支：这里报出来，不要静默「什么都没做」
+        throw new Error(`未知的步骤类型：${(step as { kind: string }).kind}`);
     }
   }
 
