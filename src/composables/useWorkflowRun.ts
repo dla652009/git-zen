@@ -22,8 +22,12 @@ export type WfBatchRowState = "pending" | "running" | "done" | "fail" | "skipped
 export interface WfBatchRow extends WfRunState {
   path: string;
   name: string;
-  /** 该仓库起始分支，`$起始分支` 与「切回起始分支」都靠它 */
-  startBranch: string;
+  /**
+   * 该仓库起始分支，`$起始分支` 与「切回起始分支」都靠它。
+   * `null` = 还没取过。**不能用空串当哨兵**：游离 HEAD 的仓库分支本来就是空串，
+   * 那会让「重试不重取起始分支」这条规矩在这个场景失效，还会把 `checkout("")` 打出去
+   */
+  startBranch: string | null;
   state: WfBatchRowState;
 }
 
@@ -332,7 +336,7 @@ export function useWorkflowRun(opts: {
     return {
       path: t.path,
       name: t.name,
-      startBranch: "",
+      startBranch: null,
       states: [],
       error: "",
       failIndex: -1,
@@ -349,7 +353,7 @@ export function useWorkflowRun(opts: {
     row.state = "running";
     row.error = "";
     row.failIndex = -1;
-    if (!row.startBranch) {
+    if (row.startBranch === null) {
       try {
         row.startBranch = (await api.status(row.path)).branch;
       } catch (e) {
@@ -370,7 +374,7 @@ export function useWorkflowRun(opts: {
         row,
         batch.inputs,
         batch.prefixes,
-        row.startBranch,
+        row.startBranch ?? "",
         fromIndex,
         () => null,
       );
@@ -421,11 +425,17 @@ export function useWorkflowRun(opts: {
       }
       // 弹窗可能在跑的时候就被关掉了（长批次很常见），所以结果也给一条 toast
       const done = batch.rows.filter((r) => r.state === "done").length;
-      const fail = batch.rows.filter((r) => r.state === "fail").length;
+      const failRows = batch.rows.filter((r) => r.state === "fail");
       const skipped = batch.rows.filter((r) => r.state === "skipped").length;
-      if (fail || skipped) {
+      if (failRows.length || skipped) {
+        // 关着窗跑的：结果（哪一行失败、失败在哪一步）只有弹窗里有，光一条 toast
+        // 既说不清是谁挂了、也没地方重试 —— 和有失败时把窗口重新打开
+        wfBatchOpen.value = true;
+        const names = failRows.map((r) => r.name);
         const bits = [`${done} 个成功`];
-        if (fail) bits.push(`${fail} 个失败`);
+        if (failRows.length) {
+          bits.push(`${failRows.length} 个失败（${names.slice(0, 3).join("、")}${names.length > 3 ? " 等" : ""}）`);
+        }
         if (skipped) bits.push(`${skipped} 个未执行`);
         toast(`「${wf.name}」批量执行：${bits.join("，")}`, "warn");
       } else {
@@ -474,6 +484,31 @@ export function useWorkflowRun(opts: {
     await afterBatch();
   }
 
+  /** 把「失败即停」跳过的仓库接着跑完；说好顺序跑，所以一次一个 */
+  async function resumeBatchSkipped() {
+    const batch = wfBatch.value;
+    if (!batch || opts.busy.value) return;
+    const rest = batch.rows.filter((r) => r.state === "skipped");
+    if (!rest.length) return;
+    opts.busy.value = true;
+    opts.runningAction.value = "workflow";
+    batch.done = false;
+    try {
+      for (const row of rest) {
+        batch.cur = batch.rows.indexOf(row);
+        const ok = await runBatchRow(batch.wf, row, 0, batch);
+        // 剩下仍是 skipped 的行保持原样，按钮会再出现一次
+        if (!ok && batch.stopOnFail) break;
+      }
+    } finally {
+      batch.cur = -1;
+      batch.done = true;
+      opts.busy.value = false;
+      opts.runningAction.value = "";
+    }
+    await afterBatch();
+  }
+
   // 关弹窗：执行中只是隐藏（状态留在 wfBatch 里继续更新），跑完才真正清空
   function closeWfBatch() {
     wfBatchOpen.value = false;
@@ -498,6 +533,7 @@ export function useWorkflowRun(opts: {
     wfBatchOpen,
     runFlowBatch,
     retryBatchRow,
+    resumeBatchSkipped,
     closeWfBatch,
   };
 }

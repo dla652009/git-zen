@@ -16,7 +16,8 @@ interface StepView {
 interface RowView {
   path: string;
   name: string;
-  startBranch: string;
+  /** null = 还没取（游离 HEAD 的仓库取到的就是空串，不能用空串当哨兵） */
+  startBranch: string | null;
   state: "pending" | "running" | "done" | "fail" | "skipped";
   states: StepView[];
   error: string;
@@ -33,7 +34,12 @@ interface BatchView {
 }
 
 const props = defineProps<{ batch: BatchView | null; open: boolean; busy: boolean; repo: string }>();
-const emit = defineEmits<{ close: []; retry: [index: number]; switchTo: [path: string] }>();
+const emit = defineEmits<{
+  close: [];
+  retry: [index: number];
+  resume: [];
+  switchTo: [path: string];
+}>();
 
 const expanded = ref<string[]>([]);
 function toggle(path: string) {
@@ -45,19 +51,22 @@ function show(path: string): boolean {
   return expanded.value.includes(path);
 }
 
-// 正在跑的仓库自动展开 —— 否则用户只看到一行「进行中」，不知道卡在哪一步
+// 自动展开正在跑的仓库 —— 否则用户只看到一行「进行中」，不知道卡在哪一步。
+// 与「换批次重置展开」合并成一个 watch：两个 watch 在同一个 flush 里按注册顺序执行，
+// 重置那个注册在后就会把这里刚展开的第一行擦掉（新批次首行永远不展开）
+let seenBatch: BatchView | null = null;
 watch(
-  () => [props.batch?.cur, props.batch?.rows.length] as const,
+  () => [props.batch, props.batch?.cur ?? -1, props.batch?.rows.length ?? 0] as const,
   () => {
     const b = props.batch;
+    if (b !== seenBatch) {
+      seenBatch = b;
+      expanded.value = [];
+    }
     const row = b && b.cur >= 0 ? b.rows[b.cur] : null;
     if (row && !expanded.value.includes(row.path)) expanded.value = [...expanded.value, row.path];
   },
-);
-// 换了一个批次就重置展开状态（按对象身份，不按流程名 —— 同名流程连跑两次也算新的一批）
-watch(
-  () => props.batch,
-  () => (expanded.value = []),
+  { immediate: true },
 );
 
 const counts = computed(() => {
@@ -178,7 +187,7 @@ function stepDone(r: RowView): string {
                 <span v-else class="size-1.5 rounded-full border border-border" />
               </span>
               <span class="min-w-0 flex-1" :class="s.state === 'fail' && 'text-destructive'">
-                {{ describeStep(batch.wf.steps[si]!, r.startBranch) }}
+                {{ describeStep(batch.wf.steps[si]!, r.startBranch ?? "") }}
                 <span v-if="s.note" class="text-xs text-muted-foreground">· {{ s.note }}</span>
               </span>
             </li>
@@ -188,7 +197,13 @@ function stepDone(r: RowView): string {
 
       <div class="mt-3 flex items-center justify-between gap-2">
         <span class="text-xs text-muted-foreground">执行期间可以关掉这个窗口，流程会继续跑</span>
-        <Button variant="secondary" size="sm" @click="emit('close')">关闭</Button>
+        <div class="flex items-center gap-1.5">
+          <!-- 勾了「失败即停」之后剩下的仓库停在 skipped，给一个一次跑完的出口 -->
+          <Button v-if="counts.skipped && !busy" variant="secondary" size="sm" @click="emit('resume')">
+            继续执行剩余 {{ counts.skipped }} 个
+          </Button>
+          <Button variant="secondary" size="sm" @click="emit('close')">关闭</Button>
+        </div>
       </div>
     </div>
   </div>

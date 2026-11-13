@@ -840,6 +840,13 @@ function switchRepo(path: string) {
   activate(path);
 }
 
+// 批次弹窗里「切到该仓库」：切完把弹窗收起来 —— 它是全屏遮罩，不收起就看不见刚切过去的
+// 仓库。批次还在跑时 closeWfBatch 只隐藏；跑完若有失败会自己重新弹出来，成功则只留 toast
+function switchRepoFromBatch(path: string) {
+  switchRepo(path);
+  closeWfBatch();
+}
+
 // 关闭选项卡会把仓库从 gz.repos（持久化列表）里摘掉，重开必须再走一次系统目录选择框——
 // 恢复成本远高于一次确认。按项目既有约定（「丢失一条已保存记录」类操作都要确认，
 // 例如删除分支、删除工作流），这里也走确认框；磁盘上的仓库本身不受影响。
@@ -1304,6 +1311,7 @@ const {
   closeWfRun,
   retryFlow,
   retryBatchRow,
+  resumeBatchSkipped,
   closeWfBatch,
 } = useWorkflowRun({ repo, status, busy, runningAction, refresh, onBatchDone: loadRepoRows });
 
@@ -3030,7 +3038,8 @@ onUnmounted(() => {
       :repo="repo"
       @close="closeWfBatch()"
       @retry="retryBatchRow($event)"
-      @switch-to="switchRepo"
+      @resume="resumeBatchSkipped()"
+      @switch-to="switchRepoFromBatch"
     />
 
     <!-- 拖拽仓库进窗口的提示遮罩 -->

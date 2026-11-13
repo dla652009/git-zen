@@ -1202,3 +1202,10 @@ catppuccin-mocha/catppuccin-latte/win7）。删一套主题要动四处，漏一
 - **「全部拉取」是唯一绕过 `busy` 的多仓库写操作**。其它写路径都经 `confirmOk` 或按钮
   `:disabled="busy"`，只有它直接开跑；批次进行中再点它，就是对同一批仓库两边同时 spawn
   `git pull`。多仓库动作都要在入口先判 `busy`。
+- **空串不能当作「还没取过」的哨兵**。游离 HEAD 的仓库 `status.branch` 就是 `""`，
+  用 `if (!startBranch)` 判「未取」会把这个合法值当成未取，于是每次重试都重新现取，
+  「重试沿用首轮起始分支」的修复在这个场景失效，还会把 `checkout("")` 打出去。
+  用 `null` 显式区分；`humanize` 里给 `empty string is not a valid pathspec` 补了中文提示。
+- **同一个 flush 里的两个 watch 按注册顺序执行**。批次弹窗「换批次就重置展开」的 watch
+  注册在「自动展开当前行」之后，于是在新批次的首行上先展开、后清空 —— 首行永远不展开，
+  从第二行起才正常。合并成一个 watch（先按对象身份重置，再展开）比调 flush 更省事。
