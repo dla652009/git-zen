@@ -95,6 +95,7 @@ function stepDone(r: RowView): string {
 </script>
 
 <template>
+  <Transition name="dlg">
   <div
     v-if="batch && open"
     v-trap
@@ -108,11 +109,11 @@ function stepDone(r: RowView): string {
       <div id="dlg-wf-batch-title" class="mb-1 flex items-center gap-2 text-base font-semibold">
         <WorkflowIcon class="size-4 text-primary" />
         {{ batch.wf.name }}
-        <span class="text-xs font-normal text-muted-foreground">
+        <span class="text-xs font-normal text-muted-foreground tabular-nums">
           {{ counts.total }} 个仓库
         </span>
       </div>
-      <div class="mb-3 text-xs text-muted-foreground">
+      <div class="mb-3 text-xs text-muted-foreground tabular-nums">
         <template v-if="!batch.done">
           已完成 {{ counts.done }}/{{ counts.total }}<span v-if="counts.fail">，失败 {{ counts.fail }}</span>
         </template>
@@ -199,7 +200,7 @@ function stepDone(r: RowView): string {
         <span class="text-xs text-muted-foreground">执行期间可以关掉这个窗口，流程会继续跑</span>
         <div class="flex items-center gap-1.5">
           <!-- 勾了「失败即停」之后剩下的仓库停在 skipped，给一个一次跑完的出口 -->
-          <Button v-if="counts.skipped && !busy" variant="secondary" size="sm" @click="emit('resume')">
+          <Button v-if="counts.skipped && !busy" variant="secondary" size="sm" class="tabular-nums" @click="emit('resume')">
             继续执行剩余 {{ counts.skipped }} 个
           </Button>
           <Button variant="secondary" size="sm" @click="emit('close')">关闭</Button>
@@ -207,4 +208,5 @@ function stepDone(r: RowView): string {
       </div>
     </div>
   </div>
+  </Transition>
 </template>

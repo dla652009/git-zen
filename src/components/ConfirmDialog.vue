@@ -28,6 +28,7 @@ const emit = defineEmits<{ confirm: [] }>();
 </script>
 
 <template>
+  <Transition name="dlg">
   <div
     v-if="open"
     v-trap
@@ -41,7 +42,7 @@ const emit = defineEmits<{ confirm: [] }>();
       <div id="dlg-confirm-title" class="mb-3 text-base font-semibold">{{ title }}</div>
       <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
         <span>{{ body }}</span>
-        <span v-if="stats" class="inline-flex items-center gap-1 font-mono text-xs">
+        <span v-if="stats" class="inline-flex items-center gap-1 font-mono text-xs tabular-nums">
           <span class="rounded bg-[var(--diff-add-bg)] px-1.5 py-0.5 text-[var(--diff-add-text)]">
             +{{ stats.add }}
           </span>
@@ -77,4 +78,5 @@ const emit = defineEmits<{ confirm: [] }>();
       </div>
     </div>
   </div>
+  </Transition>
 </template>

@@ -68,16 +68,24 @@ function toggle(path: string) {
         />
         <ChevronDown class="size-3 shrink-0 transition-transform duration-fast" :class="collapsed.has(n.path) && '-rotate-90'" />
         <span class="truncate text-muted-foreground" :title="`${n.seg}（含 ${n.count} 个分支）`">{{ n.seg }}</span>
-        <span class="shrink-0 text-2xs opacity-60">{{ n.count }}</span>
+        <span class="shrink-0 text-2xs tabular-nums opacity-60">{{ n.count }}</span>
       </div>
-      <BranchTree
-        v-if="!collapsed.has(n.path)"
-        v-model="collapsed"
-        :nodes="n.children"
-        :depth="(props.depth ?? 0) + 1"
-        @switch="emit('switch', $event)"
-        @menu="(b, x, y) => emit('menu', b, x, y)"
-      />
+      <!-- 文件夹的展开/收起与一级分组同一套高度动画（class 见 style.css 的 .collapse-*）。
+           内层 div 是唯一 grid item：BranchTree 是多根 fragment，直接做 0fr 只压得动第一行。
+           树里的行没有拖拽/键盘导航（只有 click / contextmenu），包一层不影响交互。 -->
+      <Transition name="collapse">
+        <div v-if="!collapsed.has(n.path)">
+          <div>
+            <BranchTree
+              v-model="collapsed"
+              :nodes="n.children"
+              :depth="(props.depth ?? 0) + 1"
+              @switch="emit('switch', $event)"
+              @menu="(b, x, y) => emit('menu', b, x, y)"
+            />
+          </div>
+        </div>
+      </Transition>
     </template>
 
     <!-- 叶子：真实分支 -->
@@ -88,7 +96,7 @@ function toggle(path: string) {
         n.branch?.current && 'font-semibold text-primary',
       ]"
       :style="{ paddingLeft: TREE_BASE + (props.depth ?? 0) * STEP + LEAF_OFFSET + 'px', lineHeight: ROW_LEADING }"
-      :title="`${n.branch!.name}${n.branch!.current ? '（当前分支）' : '（点击切换，右键更多操作）'}`"
+      :title="`${n.branch!.name}${n.branch!.current ? '（当前分支）' : '（单击切换 · 右键更多操作）'}`"
       @click="!n.branch!.current && emit('switch', n.branch!)"
       @contextmenu.prevent="emit('menu', n.branch!, $event.clientX, $event.clientY)"
     >
@@ -100,7 +108,7 @@ function toggle(path: string) {
         :style="{ left: x + 'px' }"
       />
       <span class="truncate">{{ n.seg }}</span>
-      <span class="ml-auto shrink-0 pl-1 text-2xs leading-none">
+      <span class="ml-auto shrink-0 pl-1 text-2xs leading-none tabular-nums">
         <span v-if="n.branch!.ahead" class="mr-0.5 text-[var(--c-mod)]">↑{{ n.branch!.ahead }}</span>
         <span v-if="n.branch!.behind" class="text-[var(--c-conf)]">↓{{ n.branch!.behind }}</span>
       </span>

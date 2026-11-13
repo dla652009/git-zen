@@ -87,6 +87,7 @@ const menuItems = computed<MenuItem[]>(() => [
 </script>
 
 <template>
+  <Transition name="dlg">
   <div
     v-if="open"
     v-trap
@@ -120,7 +121,7 @@ const menuItems = computed<MenuItem[]>(() => [
         >
           <WorkflowIcon class="size-3.5" />
           运行工作流
-          <span v-if="picked.length" class="text-xs text-muted-foreground">{{ picked.length }}</span>
+          <span v-if="picked.length" class="text-xs text-muted-foreground tabular-nums">{{ picked.length }}</span>
           <Play class="size-3 rotate-90" />
         </Button>
       </div>
@@ -136,7 +137,7 @@ const menuItems = computed<MenuItem[]>(() => [
           >
           全选
         </label>
-        <span>
+        <span class="tabular-nums">
           共 {{ stats.total }} 个仓库 · {{ stats.dirty }} 个有未提交改动 ·
           {{ stats.behind }} 个落后远端
         </span>
@@ -173,12 +174,12 @@ const menuItems = computed<MenuItem[]>(() => [
             >
               <span class="w-36 shrink-0 truncate font-medium">{{ r.name }}</span>
               <code class="w-32 shrink-0 truncate font-mono text-muted-foreground">{{ r.branch || "—" }}</code>
-              <span class="flex w-24 shrink-0 items-center gap-1.5 font-mono text-[var(--c-conf)]">
+              <span class="flex w-24 shrink-0 items-center gap-1.5 font-mono tabular-nums text-[var(--c-conf)]">
                 <span v-if="r.ahead">↑{{ r.ahead }}</span>
                 <span v-if="r.behind">↓{{ r.behind }}</span>
               </span>
               <span
-                class="min-w-0 flex-1 truncate text-right"
+                class="min-w-0 flex-1 truncate text-right tabular-nums"
                 :class="r.dirty ? '' : 'text-muted-foreground'"
               >
                 {{ r.dirty ? `${r.dirty} 个变更` : "干净" }}
@@ -192,6 +193,7 @@ const menuItems = computed<MenuItem[]>(() => [
         <Button variant="ghost" size="sm" @click="open = false">关闭</Button>
       </div>
     </div>
+    <Transition name="dlg">
     <ContextMenu
       v-if="menuPos"
       :x="menuPos.x"
@@ -199,5 +201,7 @@ const menuItems = computed<MenuItem[]>(() => [
       :items="menuItems"
       @close="menuPos = null"
     />
+    </Transition>
   </div>
+  </Transition>
 </template>

@@ -792,11 +792,11 @@ function askDeleteGroup(g: string) {
   openConfirm({
     title: "删除分组",
     okText: "删除分组",
-    body: `确认删除分组「${g}」？组内 ${groupCount(g)} 个仓库将回到选项卡栏（不会关闭任何仓库）。`,
+    body: `确认删除分组「${g}」？组内 ${groupCount(g)} 个仓库将回到标签栏（不会关闭任何仓库）。`,
     ok: async () => {
       deleteGroup(g);
       if (mgrExpanded.value === g) mgrExpanded.value = "";
-      toast(`已删除分组「${g}」，组内仓库回到选项卡栏`);
+      toast(`已删除分组「${g}」，组内仓库回到标签栏`);
     },
   });
 }
@@ -1139,7 +1139,7 @@ function branchMenuItems(b: Branch): MenuItem[] {
     { separator: true, label: "" },
     { label: "删除（未合并会拒绝）", danger: true, fn: () => askDelete(b) },
     {
-      label: "强制删除（-D，未合并提交将丢失）",
+      label: "强制删除（-D，未合并的提交将丢失）",
       danger: true,
       fn: () =>
         openConfirm({
@@ -1326,7 +1326,7 @@ function runWorkflowOnRepos(name: string, paths: string[]) {
   if (!wf) return;
   // 先判忙：否则总览被关掉、什么都没有发生，用户不知道点了没生效
   if (busy.value) {
-    toast("正在执行其它操作，稍后再运行工作流");
+    toast("有操作进行中，稍后再运行工作流");
     return;
   }
   const targets = paths.map((p) => ({
@@ -1592,7 +1592,7 @@ function openReposOverview() {
 async function pullAllRepos() {
   // 批次/单仓库流程跑着的时候不能再并发 pull —— 会同一批仓库两边同时写
   if (busy.value) {
-    toast("正在执行工作流，稍后再拉取");
+    toast("工作流运行中，稍后再拉取");
     return;
   }
   const targets = repoRows.value.filter((r) => r.behind > 0);
@@ -2022,7 +2022,7 @@ onUnmounted(() => {
     </Transition>
     <!-- 自绘标题栏（decorations:false 之后窗口没有系统镶边）：拖动、双击最大化、三键都在这里 -->
     <TitleBar :title="windowTitle" />
-    <!-- 窗口镶边（header / 选项卡栏 / footer）统一用卡片色，工作区回落画布色：
+    <!-- 窗口镶边（header / 标签栏 / footer）统一用卡片色，工作区回落画布色：
          选项卡的「连着下面」才好成立 —— 激活页签跟内容同色，才像真的嵌进去 -->
     <header class="flex items-center gap-2 border-b border-border bg-card px-3 py-2">
       <Tooltip text="打开仓库">
@@ -2041,7 +2041,7 @@ onUnmounted(() => {
       <span v-else class="text-xs text-muted-foreground">未打开仓库</span>
       <span class="flex-1" />
       <Badge v-if="status?.behind" variant="warning">↓{{ status.behind }}</Badge>
-      <Tooltip v-if="status?.ahead" text="未推送的提交：Review 或放弃">
+      <Tooltip v-if="status?.ahead" text="查看未推送的提交">
         <button
           class="cursor-pointer border-0 bg-transparent p-0"
           aria-label="未推送提交菜单"
@@ -2060,7 +2060,7 @@ onUnmounted(() => {
           Pull
         </Button>
       </Tooltip>
-      <Tooltip text="推送（无上游自动建立跟踪）">
+      <Tooltip text="推送到远程">
         <Button :disabled="!repo || busy" @click="doPush">
           <Spinner v-if="runningAction === 'push'" :size="14" />
           <ArrowUpFromLine v-else class="size-3.5" />
@@ -2068,7 +2068,7 @@ onUnmounted(() => {
         </Button>
       </Tooltip>
       <!-- 钉住的工作流（最多 3 个，在设置页勾）：常用流程不必每次展开下拉再点一次 -->
-      <Tooltip v-for="w in pinnedFlows" :key="w.id" :text="`执行工作流：${w.name}`">
+      <Tooltip v-for="w in pinnedFlows" :key="w.id" :text="`运行 ${w.name}`">
         <Button :disabled="!repo || busy" @click="runFlow(w)">
           <WorkflowIcon class="size-3.5 shrink-0" />
           <span class="max-w-[7rem] truncate">{{ w.name }}</span>
@@ -2108,7 +2108,7 @@ onUnmounted(() => {
       </Tooltip>
     </header>
 
-    <!-- 仓库选项卡栏：文件夹（分组）+ 未分组仓库，可拖动排序；最右侧按钮打开分组管理 -->
+    <!-- 仓库标签栏：文件夹（分组）+ 未分组仓库，可拖动排序；最右侧按钮打开分组管理 -->
     <div data-tab-bar class="flex items-end border-b border-border bg-card">
       <VueDraggable
         v-model="barOrder"
@@ -2233,15 +2233,22 @@ onUnmounted(() => {
           <ChevronDown class="size-3 transition-transform duration-fast" :class="collapsedGroups.has('local') && '-rotate-90'" />
           <GitBranch class="size-3.5" />
           本地
-          <span class="text-xs font-normal text-muted-foreground">{{ localBranches.length }}</span>
+          <span class="text-xs font-normal text-muted-foreground tabular-nums">{{ localBranches.length }}</span>
         </div>
-        <BranchTree
-          v-if="!collapsedGroups.has('local')"
-          v-model="collapsedGroups"
-          :nodes="localNodes"
-          @switch="switchBranch"
-          @menu="(b, x, y) => (branchMenu = { x, y, b })"
-        />
+        <!-- Transition 的外层是高度动画容器，内层是唯一 grid item（overflow:hidden 见 style.css）；
+             BranchTree 是多根 fragment，必须再包一层，否则 0fr 只作用于第一行 -->
+        <Transition name="collapse">
+          <div v-if="!collapsedGroups.has('local')">
+            <div>
+              <BranchTree
+                v-model="collapsedGroups"
+                :nodes="localNodes"
+                @switch="switchBranch"
+                @menu="(b, x, y) => (branchMenu = { x, y, b })"
+              />
+            </div>
+          </div>
+        </Transition>
 
         <!-- 远程分组：一级栏图标+强调，默认收起 -->
         <template v-for="[prefix, list] in remoteGroups" :key="prefix">
@@ -2252,15 +2259,20 @@ onUnmounted(() => {
             <ChevronDown class="size-3 transition-transform duration-fast" :class="!openRemotes.has(prefix) && '-rotate-90'" />
             <Cloud class="size-3.5" />
             {{ prefix }}
-            <span class="text-xs font-normal text-muted-foreground">{{ list.length }}</span>
+            <span class="text-xs font-normal text-muted-foreground tabular-nums">{{ list.length }}</span>
           </div>
-          <BranchTree
-            v-if="openRemotes.has(prefix)"
-            v-model="collapsedGroups"
-            :nodes="remoteNodeMap.get(prefix) ?? []"
-            @switch="switchBranch"
-            @menu="(b, x, y) => (branchMenu = { x, y, b })"
-          />
+          <Transition name="collapse">
+            <div v-if="openRemotes.has(prefix)">
+              <div>
+                <BranchTree
+                  v-model="collapsedGroups"
+                  :nodes="remoteNodeMap.get(prefix) ?? []"
+                  @switch="switchBranch"
+                  @menu="(b, x, y) => (branchMenu = { x, y, b })"
+                />
+              </div>
+            </div>
+          </Transition>
         </template>
 
         <!-- 标签组：右键组头出 新建/AI Release Notes，右键行出 推送/删除/复制 -->
@@ -2273,22 +2285,26 @@ onUnmounted(() => {
           <ChevronDown class="size-3 transition-transform duration-fast" :class="collapsedGroups.has('gz:tags') && '-rotate-90'" />
           <Tag class="size-3.5" />
           标签
-          <span class="ml-auto text-xs font-normal text-muted-foreground">{{ tags.length }}</span>
+          <span class="ml-auto text-xs font-normal text-muted-foreground tabular-nums">{{ tags.length }}</span>
         </div>
-        <ul v-if="!collapsedGroups.has('gz:tags')" class="pb-1">
-          <li
-            v-for="t in tagsFiltered"
-            :key="t.name"
-            class="flex cursor-pointer items-center gap-1 py-1.5 pr-3 pl-6 transition-colors duration-fast hover:bg-hover"
-            :title="`${t.annotated ? '附注标签' : '轻量标签'} · ${t.date} · 指向 ${t.target.slice(0, 10)}${t.message ? '\n' + t.message : ''}（右键更多操作）`"
-            @contextmenu.prevent="tagMenu = { x: $event.clientX, y: $event.clientY, name: t.name }"
-          >
-            <span class="truncate text-xs">{{ t.name }}</span>
-          </li>
-          <li v-if="!tagsFiltered.length" class="py-1.5 pl-6 pr-3 text-xs text-muted-foreground">
-            {{ tags.length ? "无匹配标签" : "暂无标签 · 右键组头新建" }}
-          </li>
-        </ul>
+        <Transition name="collapse">
+          <div v-if="!collapsedGroups.has('gz:tags')">
+            <ul class="pb-1">
+              <li
+                v-for="t in tagsFiltered"
+                :key="t.name"
+                class="flex cursor-pointer items-center gap-1 py-1.5 pr-3 pl-6 transition-colors duration-fast hover:bg-hover"
+                :title="`${t.annotated ? '附注标签' : '轻量标签'} · ${t.date} · 指向 ${t.target.slice(0, 10)}${t.message ? '\n' + t.message : ''}（右键更多操作）`"
+                @contextmenu.prevent="tagMenu = { x: $event.clientX, y: $event.clientY, name: t.name }"
+              >
+                <span class="truncate text-xs">{{ t.name }}</span>
+              </li>
+              <li v-if="!tagsFiltered.length" class="py-1.5 pl-6 pr-3 text-xs text-muted-foreground">
+                {{ tags.length ? "无匹配标签" : "暂无标签 · 右键组头新建" }}
+              </li>
+            </ul>
+          </div>
+        </Transition>
       </aside>
 
       <!-- 左把手：拖宽 / 双击折叠（Ctrl+Shift+L）；折叠后点箭头展开 -->
@@ -2335,7 +2351,7 @@ onUnmounted(() => {
           </div>
           <!-- 时间线放在历史区：用户在这里看提交，「找回被覆盖的提交」才想得起来。
                它只记录 HEAD 的移动，救不了未提交的改动 —— 这点在弹窗和确认框里都写明 -->
-          <Tooltip text="时间线（reflog：找回被覆盖的提交）">
+          <Tooltip text="时间线 · 找回被覆盖的提交">
             <Button
               variant="quiet"
               size="icon"
@@ -2475,6 +2491,7 @@ onUnmounted(() => {
     />
 
     <!-- 打开仓库：本地 / 从远程克隆 -->
+    <Transition name="dlg">
     <div
       v-if="openModal"
       v-trap
@@ -2574,6 +2591,7 @@ onUnmounted(() => {
         </template>
       </div>
     </div>
+    </Transition>
 
     <!-- 新建标签弹窗（target 为空 = 打在当前 HEAD） -->
     <CreateTagDialog
@@ -2587,6 +2605,7 @@ onUnmounted(() => {
     />
 
     <!-- 历史行右键菜单（ui/ContextMenu 统一渲染：Esc/键盘/外点关闭） -->
+    <Transition name="dlg">
     <ContextMenu
       v-if="commitCtx"
       :x="commitCtx.x"
@@ -2628,8 +2647,10 @@ onUnmounted(() => {
       ]"
       @close="commitCtx = null"
     />
+    </Transition>
 
     <!-- 分支右键菜单：管理操作（切换在行单击） -->
+    <Transition name="dlg">
     <ContextMenu
       v-if="branchMenu"
       :x="branchMenu.x"
@@ -2637,7 +2658,9 @@ onUnmounted(() => {
       :items="branchMenuItems(branchMenu.b)"
       @close="branchMenu = null"
     />
+    </Transition>
     <!-- 标签行右键菜单 -->
+    <Transition name="dlg">
     <ContextMenu
       v-if="tagMenu"
       :x="tagMenu.x"
@@ -2645,7 +2668,9 @@ onUnmounted(() => {
       :items="tagMenuItems(tagMenu.name)"
       @close="tagMenu = null"
     />
+    </Transition>
     <!-- 标签组头右键菜单 -->
+    <Transition name="dlg">
     <ContextMenu
       v-if="tagHeaderMenu"
       :x="tagHeaderMenu.x"
@@ -2656,7 +2681,9 @@ onUnmounted(() => {
       ]"
       @close="tagHeaderMenu = null"
     />
+    </Transition>
     <!-- ↑N 徽标下拉：Review / 放弃未推送 -->
+    <Transition name="dlg">
     <ContextMenu
       v-if="aheadMenu"
       :x="aheadMenu.x"
@@ -2664,7 +2691,9 @@ onUnmounted(() => {
       :items="aheadMenuItems()"
       @close="aheadMenu = null"
     />
+    </Transition>
     <!-- 工作流入口下拉 -->
+    <Transition name="dlg">
     <ContextMenu
       v-if="flowMenu"
       :x="flowMenu.x"
@@ -2672,15 +2701,18 @@ onUnmounted(() => {
       :items="flowMenuItems()"
       @close="flowMenu = null"
     />
+    </Transition>
 
     <!-- 设置弹窗 -->
     <!-- 文件变更历史弹窗（左提交列表 / 右文件diff） -->
+    <Transition name="dlg">
     <FileHistoryModal
       v-if="fileHistoryModal"
       :repo="repo"
       :path="fileHistoryModal"
       @close="fileHistoryModal = null"
     />
+    </Transition>
 
     <!-- AI Review 报告弹窗：渲染在 AiReviewDialog.vue -->
     <AiReviewDialog
@@ -2707,17 +2739,19 @@ onUnmounted(() => {
       @generate="genReleaseNotes()"
     />
 
+    <Transition name="dlg">
     <SettingsModal
       v-if="showSettings"
       :repo="repo"
       :initial-tab="showSettingsTab"
       @close="showSettings = false"
     />
+    </Transition>
 
     <footer class="flex items-center gap-3 border-t border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
       <span class="font-medium text-foreground">{{ status?.branch ?? "—" }}</span>
       <span class="flex-1" />
-      <span v-if="status">{{ status.files.length }} 个变更文件</span>
+      <span v-if="status" class="tabular-nums">{{ status.files.length }} 个变更文件</span>
       <Tooltip v-if="remoteWebUrl" text="打开远程仓库网页">
         <Button
           variant="ghost"
@@ -2735,6 +2769,7 @@ onUnmounted(() => {
     </footer>
 
     <!-- diff 弹层 -->
+    <Transition name="dlg">
     <DiffViewer
       v-if="diffState?.kind === 'file'"
       :key="diffState.target.path + diffState.target.cached"
@@ -2749,8 +2784,10 @@ onUnmounted(() => {
       :commit="diffState.target"
       @close="diffState = null"
     />
+    </Transition>
 
     <!-- 选项卡右键菜单（重命名 / 关闭；分组操作在右侧管理按钮里） -->
+    <Transition name="dlg">
     <ContextMenu
       v-if="tabCtx"
       :x="tabCtx.x"
@@ -2762,8 +2799,10 @@ onUnmounted(() => {
       ]"
       @close="tabCtx = null"
     />
+    </Transition>
 
     <!-- 分组文件夹右键菜单（重命名 / 管理 / 删除） -->
+    <Transition name="dlg">
     <ContextMenu
       v-if="folderCtx"
       :x="folderCtx.x"
@@ -2775,6 +2814,7 @@ onUnmounted(() => {
       ]"
       @close="folderCtx = null"
     />
+    </Transition>
 
     <!-- 拖拽跟手标签（分组下拉 / 管理弹窗共用） -->
     <div
@@ -2786,13 +2826,14 @@ onUnmounted(() => {
     </div>
 
     <!-- 分组文件夹下拉：成员仓库列表，点击激活 -->
+    <Transition name="dlg">
     <div v-if="folderDd" class="fixed inset-0 z-40" @click="closeFolderDd" @contextmenu.prevent="folderDd = null">
       <div
         ref="folderDdEl"
         class="fixed max-h-[60vh] w-[260px] overflow-y-auto surface-menu rounded-sm py-1 pop-in"
         :style="{ left: folderDd.x + 'px', top: folderDd.y + 'px' }"
       >
-        <div class="px-3 pt-3 pb-1.5 text-2xs font-semibold tracking-wide text-muted-foreground">
+        <div class="px-3 pt-3 pb-1.5 text-2xs font-semibold tracking-wide text-muted-foreground tabular-nums">
           {{ folderDd.group }} · {{ folderMembers.length }} 个仓库
         </div>
         <div
@@ -2814,7 +2855,7 @@ onUnmounted(() => {
             />
             <span class="truncate">{{ r.name }}</span>
           </button>
-          <Tooltip text="移出分组（回到选项卡栏）">
+          <Tooltip text="移出分组">
             <button
               class="mr-1 shrink-0 cursor-pointer text-muted-foreground opacity-0 transition-opacity duration-fast group-hover/member:opacity-100 hover:text-destructive"
               aria-label="移出分组"
@@ -2826,7 +2867,7 @@ onUnmounted(() => {
           </Tooltip>
         </div>
         <div v-if="!folderMembers.length" class="px-3 py-2 text-xs text-muted-foreground">
-          空分组 · 用选项卡栏右侧的「管理分组」添加仓库
+          空分组 · 用标签栏右侧的「管理分组」添加仓库
         </div>
         <div class="mt-1 border-t border-border/60 pt-1">
           <button
@@ -2838,8 +2879,10 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 分组管理弹窗：新建 / 重命名 / 删除 / 分配仓库 -->
+    <Transition name="dlg">
     <div
       v-if="showGroupMgr"
       v-trap
@@ -2927,7 +2970,7 @@ onUnmounted(() => {
                   <span class="flex-1 truncate text-xs text-muted-foreground">{{ r.path }}</span>
                   <button
                     class="cursor-pointer text-muted-foreground transition-colors duration-fast hover:text-destructive"
-                    title="移出分组（回到标签栏，可在下方列表点回来）"
+                    title="移出分组"
                     @mousedown.stop
                     @click="removeMember(r.path)"
                   >
@@ -2964,6 +3007,7 @@ onUnmounted(() => {
         </footer>
       </div>
     </div>
+    </Transition>
 
     <!-- 分组命名弹窗（新建 / 重命名共用）：渲染在 GroupNameDialog.vue -->
     <GroupNameDialog

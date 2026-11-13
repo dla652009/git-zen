@@ -1,3 +1,24 @@
+<script lang="ts">
+// 模块级共享状态：任一 tooltip 正在显示、或刚在 500ms 内显示过，后续 tooltip 走「快速链路」
+// 立即出现 —— 沿工具栏扫过去时逐个即时切换，单独悬停仍然等 400ms。
+const SHOW_DELAY = 400;
+const CHAIN_WINDOW = 500;
+let activeCount = 0;
+let lastActiveAt = 0;
+
+function beginShow() {
+  activeCount++;
+  lastActiveAt = Date.now();
+}
+function endShow() {
+  activeCount = Math.max(0, activeCount - 1);
+  lastActiveAt = Date.now();
+}
+function chainActive() {
+  return activeCount > 0 || Date.now() - lastActiveAt < CHAIN_WINDOW;
+}
+</script>
+
 <script setup lang="ts">
 import { ref, nextTick, onUnmounted } from "vue";
 
@@ -44,25 +65,58 @@ function watchDisabled() {
   const first = hostEl.value?.firstElementChild as (HTMLElement & { disabled?: boolean }) | null;
   if (!first) return;
   mo = new MutationObserver(() => {
-    if (first.disabled) show.value = false;
+    if (first.disabled) hideNow();
   });
   mo.observe(first, { attributes: true, attributeFilter: ["disabled"] });
 }
 
-function enter() {
+let showTimer: ReturnType<typeof setTimeout> | null = null;
+function clearShowTimer() {
+  if (showTimer !== null) {
+    clearTimeout(showTimer);
+    showTimer = null;
+  }
+}
+
+function showNow() {
+  if (show.value) return;
   show.value = true;
+  beginShow();
   watchDisabled();
   place();
 }
-function leave() {
+function hideNow() {
+  if (!show.value) return;
   show.value = false;
+  endShow();
+}
+
+function enter() {
+  clearShowTimer();
+  if (chainActive()) {
+    showNow();
+    return;
+  }
+  showTimer = setTimeout(() => {
+    showTimer = null;
+    showNow();
+  }, SHOW_DELAY);
+}
+function leave() {
+  clearShowTimer();
+  hideNow();
 }
 // 面板滚动时锚点会移动，直接隐藏最省心
 function onScroll() {
-  show.value = false;
+  clearShowTimer();
+  hideNow();
 }
 
-onUnmounted(() => mo?.disconnect());
+onUnmounted(() => {
+  clearShowTimer();
+  hideNow();
+  mo?.disconnect();
+});
 </script>
 
 <template>

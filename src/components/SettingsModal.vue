@@ -367,7 +367,7 @@ const SHORTCUT_GROUPS: { title: string; items: [string, string][] }[] = [
       ["右键", "仓库选项卡、分组文件夹、分支、标签、文件、提交各有各的菜单"],
       [
         "拖动",
-        "仓库选项卡拖到分组文件夹上即收纳；分组下拉与「管理分组」里的仓库可拖动换组，拖到选项卡栏空白处即移出分组",
+        "仓库选项卡拖到分组文件夹上即收纳；分组下拉与「管理分组」里的仓库可拖动换组，拖到标签栏空白处即移出分组",
       ],
     ],
   },
@@ -700,7 +700,7 @@ const NAV = [
                       />
                       <WorkflowIcon class="size-3.5 shrink-0 text-primary" />
                       <span class="truncate font-medium">{{ w.name }}</span>
-                      <span class="shrink-0 text-xs text-muted-foreground">{{ w.steps.length }} 步</span>
+                      <span class="shrink-0 text-xs text-muted-foreground tabular-nums">{{ w.steps.length }} 步</span>
                     </button>
                     <Tooltip :text="pinHint(w)">
                       <Button
@@ -981,6 +981,7 @@ const NAV = [
     <!-- 删除工作流确认：组件内独立浮层，风格对齐 App.vue 的危险操作确认框。
          不进 overlays 的 overlayOrder —— 那张表是 App.vue 顶层浮层的，登记它得同步改 App.vue；
          Esc 因此由自己捕获（同 ContextMenu 的做法）。 -->
+    <Transition name="dlg">
     <div
       v-if="delFlow"
       v-trap
@@ -1000,9 +1001,11 @@ const NAV = [
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 重命名工作流：pencil 按钮此前只写 wfRename、模板里没有对应 UI（点了没反应），这里补上输入框。
          同样不进 overlayOrder，Esc 自己捕获（同上面的删除确认框）。 -->
+    <Transition name="dlg">
     <div
       v-if="wfRename"
       v-trap
@@ -1027,5 +1030,6 @@ const NAV = [
         </div>
       </div>
     </div>
+    </Transition>
   </div>
 </template>

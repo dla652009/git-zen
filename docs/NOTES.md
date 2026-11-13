@@ -1255,3 +1255,5 @@ catppuccin-mocha/catppuccin-latte/win7）。删一套主题要动四处，漏一
   （`pointer-events-none fixed inset-0 ring-1 ring-inset`），把 Win7 还原态的圆角让渡掉——
   最大化时 Win7 本来也是直角。
 - **全屏浮层要从标题栏下方开始（`top-8`）**。标题栏是常驻 z-[90]，任何 `fixed inset-0` 的全屏 surface（如 DiffViewer 的全屏模式 `h-full`）会顶到 y=0 被盖掉 32px 头部；浮层改成 `fixed inset-x-0 top-8 bottom-0`。居中弹窗（最高点离窗口顶 ≥52px，minHeight 520）不受影响，不用跟着改。
+- **浮层退场用 `<Transition name="dlg">`，不要给 `.pop-in` 加退场**。`pop-in` 是 `@starting-style` 入场工具类，`v-if` 卸载时它管不到。`style.css` 里的 `.dlg-leave-*` 对根元素只做 opacity（根通常是 `fixed inset-0` 遮罩，缩放会在窗口四边露画布），内部 `.pop-in` 面板才做 `scale(0.97) translateY(-4px)`。两个例外：① 组件自己在使用处 `v-if`（ContextMenu、DiffViewer、SettingsModal 等）时 Transition 必须包在**使用处**，包在组件根部不会触发退场；② 有些浮层根是透明全屏点击层（右键菜单、下拉），同样靠上面的 opacity + 面板 scale，不要改成整层缩放。
+- **Tooltip 有 400ms 延迟 + 快速链路**。模块级 `activeCount` / `lastActiveAt` 记「刚有 tooltip 显示过」，任一 tooltip 在显示或 500ms 内显示过时，下一个立即出现，这样沿工具栏扫过去不重复等待；单独悬停仍等 400ms。定时器在 leave / click / scroll / unmount 全部清理，卸载时若正在显示还要把计数减回去。

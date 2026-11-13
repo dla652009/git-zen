@@ -226,7 +226,7 @@ function closeEvo() {
     >
       <header class="flex shrink-0 items-center gap-2 border-b border-border px-4 py-2.5">
         <span id="dlg-file-history-title" class="truncate font-medium">{{ path }}</span>
-        <span class="shrink-0 text-xs text-muted-foreground">文件变更历史 · {{ commits.length }} 个提交</span>
+        <span class="shrink-0 text-xs text-muted-foreground tabular-nums">文件变更历史 · {{ commits.length }} 个提交</span>
         <span class="flex-1" />
         <Tooltip text="AI 解读这个文件的演进">
           <Button
@@ -333,7 +333,7 @@ function closeEvo() {
               @click="select(c.hash)"
             >
               <div class="truncate text-xs font-medium">{{ c.subject }}</div>
-              <div class="mt-0.5 text-xs text-muted-foreground">
+              <div class="mt-0.5 text-xs text-muted-foreground tabular-nums">
                 <span class="font-mono">{{ c.hash.slice(0, 8) }}</span> · {{ c.author }} · {{ c.date }}
               </div>
             </li>

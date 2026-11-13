@@ -166,7 +166,7 @@ function stashRestore(index: number, pop: boolean) {
   stashMenuOpen.value = false;
   emit("action", async () => {
     await api.stashApply(props.repo, index, pop);
-    toast(pop ? "已恢复并移除记录" : "已恢复（记录保留）");
+    toast(pop ? "已恢复并移除记录" : "已恢复，记录保留");
   });
 }
 // pop=true 的入口先走这一步：确认按钮是破坏性红色，Esc/取消直接关掉
@@ -497,7 +497,7 @@ async function genCommitMsg() {
         :class="opInfo.left ? 'text-[var(--c-mod)]' : 'text-[var(--c-add)]'"
       />
       <div class="min-w-0 flex-1 text-xs leading-relaxed">
-        <div class="font-medium">
+        <div class="font-medium tabular-nums">
           {{ opInfo.title }}
           <template v-if="opInfo.left">（还剩 {{ opInfo.left }} 个冲突文件）</template>
         </div>
@@ -527,7 +527,7 @@ async function genCommitMsg() {
     >
       <GitMerge class="mt-0.5 size-3.5 shrink-0 text-[var(--c-mod)]" />
       <div class="min-w-0 flex-1 text-xs leading-relaxed">
-        <div class="font-medium">合并冲突未解决（{{ conflictFiles.length }} 个文件）</div>
+        <div class="font-medium tabular-nums">合并冲突未解决（{{ conflictFiles.length }} 个文件）</div>
         <div class="mt-0.5 text-muted-foreground">
           逐个解决后暂存并提交即完成合并；也可以直接放弃，回到合并前。
         </div>
@@ -579,7 +579,7 @@ async function genCommitMsg() {
         </Button>
       </Tooltip>
       <!-- 重置：作用于整个工作区（暂存 + 未暂存 + 未跟踪），所以放在面板级而不是某个区段标题行 -->
-      <Tooltip text="重置到干净状态（丢弃全部改动并删除未跟踪文件）">
+      <Tooltip text="重置到干净状态">
         <Button
           v-if="status?.files.length"
           variant="ghost"
@@ -626,12 +626,14 @@ async function genCommitMsg() {
         </Button>
       </Tooltip>
     </div>
-    <ul class="max-h-[34%] overflow-y-auto px-1.5">
+    <!-- TransitionGroup 负责列表内重排的 FLIP 与行的进出场；relative 给离场行的
+         position:absolute 提供包含块（行宽在 .row-leave-active 里钉住） -->
+    <TransitionGroup name="row" tag="ul" class="relative max-h-[34%] overflow-y-auto px-1.5">
       <template v-for="row in stagedRows" :key="row.key">
         <!-- 目录行：点整行展开/收起，右侧按钮对整棵子树生效 -->
         <li
           v-if="row.kind === 'dir'"
-          class="group/li flex cursor-pointer items-center gap-1 rounded-sm py-1.5 pr-2 text-xs whitespace-nowrap transition-colors duration-fast hover:bg-hover focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
+          class="group/li flex w-full cursor-pointer items-center gap-1 rounded-sm py-1.5 pr-2 text-xs whitespace-nowrap transition-colors duration-fast hover:bg-hover focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
           :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
           tabindex="0"
           role="button"
@@ -645,11 +647,11 @@ async function genCommitMsg() {
             :class="row.collapsed && '-rotate-90'"
           />
           <Folder class="size-3.5 shrink-0 text-muted-foreground" />
-          <Tooltip :text="`${row.path} · 共 ${row.count} 个文件（单击展开/收起）`">
+          <Tooltip :text="`${row.path} · 共 ${row.count} 个文件`">
             <span class="truncate text-muted-foreground">{{ row.label }}</span>
           </Tooltip>
           <!-- 收起时才报数量：展开着就能看见里面有几个，再报一遍是噪音 -->
-          <span v-if="row.collapsed" class="shrink-0 text-2xs text-muted-foreground">{{ row.count }}</span>
+          <span v-if="row.collapsed" class="shrink-0 text-2xs text-muted-foreground tabular-nums">{{ row.count }}</span>
           <Tooltip text="取消暂存此目录下的全部改动">
             <Button
               variant="ghost"
@@ -665,14 +667,14 @@ async function genCommitMsg() {
         <!-- 文件行：位置已经表达了目录，名字只显示文件名（完整路径在 tooltip 里） -->
         <li
           v-if="row.kind === 'file'"
-          class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-sm py-1.5 pr-2 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
+          class="group/li flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-sm py-1.5 pr-2 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
           :class="selKey === row.key && 'bg-primary-soft'"
           :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
           @click="onRowClick(row.key, () => emit('openDiff', { path: row.path, cached: !isUnmerged(row.item), untracked: false, conflict: isUnmerged(row.item) }))"
           @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f: row.item, cached: true }"
         >
           <component :is="statusMeta(row.item).icon" :class="statusMeta(row.item).cls" class="size-4 shrink-0" />
-          <Tooltip :text="`${statusMeta(row.item).desc} · ${row.item.path}（单击选中 · 再单击查看变更）`">
+          <Tooltip :text="`${statusMeta(row.item).desc} · ${row.item.path}`">
             <span class="truncate text-sm">
               <template v-if="renameNames(row.item)">
                 <span class="text-muted-foreground line-through">{{ renameNames(row.item)![0] }}</span>
@@ -694,11 +696,12 @@ async function genCommitMsg() {
           </Tooltip>
         </li>
       </template>
-      <li v-if="!staged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
-      <li v-else-if="!stagedRows.length" class="px-3 py-1.5 text-xs text-muted-foreground">
+      <!-- TransitionGroup 要求子节点都有 key：空态行也用固定 key，进出场跟着淡入淡出 -->
+      <li v-if="!staged.length" key="empty" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
+      <li v-else-if="!stagedRows.length" key="nomatch" class="px-3 py-1.5 text-xs text-muted-foreground">
         没有匹配的文件
       </li>
-    </ul>
+    </TransitionGroup>
 
     <!-- 未暂存 -->
     <div class="mt-2 flex items-center gap-2 border-t border-border px-3 pt-3 pb-1.5">
@@ -731,12 +734,12 @@ async function genCommitMsg() {
         </Button>
       </Tooltip>
     </div>
-    <ul class="min-h-[80px] flex-1 overflow-y-auto px-1.5">
+    <TransitionGroup name="row" tag="ul" class="relative min-h-[80px] flex-1 overflow-y-auto px-1.5">
       <template v-for="row in unstagedRows" :key="row.key">
         <!-- 目录行：点整行展开/收起，右侧按钮对整棵子树生效 -->
         <li
           v-if="row.kind === 'dir'"
-          class="group/li flex cursor-pointer items-center gap-1 rounded-sm py-1.5 pr-2 text-xs whitespace-nowrap transition-colors duration-fast hover:bg-hover focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
+          class="group/li flex w-full cursor-pointer items-center gap-1 rounded-sm py-1.5 pr-2 text-xs whitespace-nowrap transition-colors duration-fast hover:bg-hover focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
           :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
           tabindex="0"
           role="button"
@@ -750,11 +753,11 @@ async function genCommitMsg() {
             :class="row.collapsed && '-rotate-90'"
           />
           <Folder class="size-3.5 shrink-0 text-muted-foreground" />
-          <Tooltip :text="`${row.path} · 共 ${row.count} 个文件（单击展开/收起）`">
+          <Tooltip :text="`${row.path} · 共 ${row.count} 个文件`">
             <span class="truncate text-muted-foreground">{{ row.label }}</span>
           </Tooltip>
           <!-- 收起时才报数量：展开着就能看见里面有几个，再报一遍是噪音 -->
-          <span v-if="row.collapsed" class="shrink-0 text-2xs text-muted-foreground">{{ row.count }}</span>
+          <span v-if="row.collapsed" class="shrink-0 text-2xs text-muted-foreground tabular-nums">{{ row.count }}</span>
           <Tooltip text="暂存此目录下的全部改动">
             <Button
               variant="ghost"
@@ -770,14 +773,14 @@ async function genCommitMsg() {
         <!-- 文件行：位置已经表达了目录，名字只显示文件名（完整路径在 tooltip 里） -->
         <li
           v-if="row.kind === 'file'"
-          class="group/li flex cursor-pointer items-center gap-2 overflow-hidden rounded-sm py-1.5 pr-2 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
+          class="group/li flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-sm py-1.5 pr-2 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
           :class="selKey === row.key && 'bg-primary-soft'"
           :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
           @click="onRowClick(row.key, () => emit('openDiff', { path: row.path, cached: false, untracked: row.item.x === '?', conflict: isUnmerged(row.item) }))"
           @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f: row.item, cached: false }"
         >
           <component :is="statusMeta(row.item).icon" :class="statusMeta(row.item).cls" class="size-4 shrink-0" />
-          <Tooltip :text="`${statusMeta(row.item).desc} · ${row.item.path}（单击选中 · 再单击查看变更）`">
+          <Tooltip :text="`${statusMeta(row.item).desc} · ${row.item.path}`">
             <span class="truncate text-sm">
               <template v-if="renameNames(row.item)">
                 <span class="text-muted-foreground line-through">{{ renameNames(row.item)![0] }}</span>
@@ -799,13 +802,14 @@ async function genCommitMsg() {
           </Tooltip>
         </li>
       </template>
-      <li v-if="!unstaged.length" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
-      <li v-else-if="!unstagedRows.length" class="px-3 py-1.5 text-xs text-muted-foreground">
+      <li v-if="!unstaged.length" key="empty" class="px-3 py-1.5 text-xs text-muted-foreground">无</li>
+      <li v-else-if="!unstagedRows.length" key="nomatch" class="px-3 py-1.5 text-xs text-muted-foreground">
         没有匹配的文件
       </li>
-    </ul>
+    </TransitionGroup>
 
     <!-- 文件右键菜单（ui/ContextMenu 统一渲染） -->
+    <Transition name="dlg">
     <ContextMenu
       v-if="fileCtx"
       :x="fileCtx.x"
@@ -837,6 +841,7 @@ async function genCommitMsg() {
       ]"
       @close="fileCtx = null"
     />
+    </Transition>
 
     <!-- 提交区：固定底部卡片 -->
     <div class="shrink-0 space-y-2 border-t border-border bg-card p-3">
@@ -891,7 +896,7 @@ async function genCommitMsg() {
           <input v-model="pushAfterCommit" type="checkbox" class="accent-[var(--primary)]" />
           提交后推送到远程
         </label>
-        <Tooltip text="更多提交操作（amend / 撤销上次提交）">
+        <Tooltip text="更多提交操作">
           <Button
             variant="ghost"
             size="icon"
@@ -903,10 +908,11 @@ async function genCommitMsg() {
           </Button>
         </Tooltip>
       </div>
-      <Button variant="default" class="w-full" :disabled="!canCommit" @click="doCommit">
+      <Button variant="default" class="w-full tabular-nums" :disabled="!canCommit" @click="doCommit">
         <Spinner v-if="busy" :size="14" />
         {{ busy ? "处理中…" : `提交${staged.length ? ` (${staged.length})` : ""}` }}
       </Button>
+      <Transition name="dlg">
       <ContextMenu
         v-if="commitMenuPos"
         :x="commitMenuPos.x"
@@ -914,9 +920,11 @@ async function genCommitMsg() {
         :items="commitMenuItems"
         @close="commitMenuPos = null"
       />
+      </Transition>
     </div>
 
     <!-- stash 下拉菜单：收纳入口 + 记录列表（恢复/恢复并删除/删除） -->
+    <Transition name="dlg">
     <div
       v-if="stashMenuOpen"
       class="fixed inset-0 z-30"
@@ -947,14 +955,14 @@ async function genCommitMsg() {
             v-for="e in stashEntries"
             :key="e.index"
             class="group/st flex items-center gap-2 px-3 py-1.5 text-xs transition-colors duration-fast hover:bg-hover"
-            :title="`${e.subject} · ${e.date}\n右侧图标：恢复（保留记录）/ 恢复并删除（pop）/ 删除记录`"
+            :title="`${e.subject} · ${e.date}\n右侧图标：恢复改动 / 恢复并删除 / 删除记录`"
           >
             <Archive class="size-3 shrink-0 text-muted-foreground" />
             <span class="min-w-0 flex-1 truncate">{{ e.subject }}</span>
             <span
               class="flex shrink-0 items-center gap-1 opacity-60 transition-opacity duration-fast group-hover/st:opacity-100 group-focus-within/st:opacity-100"
             >
-              <Tooltip text="恢复（保留记录，可再次恢复）">
+              <Tooltip text="恢复改动">
                 <Button
                   variant="ghost"
                   size="icon"
@@ -965,7 +973,7 @@ async function genCommitMsg() {
                   <RotateCcw class="size-3.5" />
                 </Button>
               </Tooltip>
-              <Tooltip text="恢复并删除记录（pop）">
+              <Tooltip text="恢复并删除记录">
                 <Button
                   variant="ghost"
                   size="icon"
@@ -976,7 +984,7 @@ async function genCommitMsg() {
                   <ArchiveRestore class="size-3.5" />
                 </Button>
               </Tooltip>
-              <Tooltip text="仅删除记录（不恢复）">
+              <Tooltip text="删除记录">
                 <Button
                   variant="ghost"
                   size="icon"
@@ -995,8 +1003,10 @@ async function genCommitMsg() {
         </template>
       </div>
     </div>
+    </Transition>
 
     <!-- stash 收纳弹窗 -->
+    <Transition name="dlg">
     <div
       v-if="stashPushOpen"
       v-trap
@@ -1022,8 +1032,10 @@ async function genCommitMsg() {
         </div>
       </div>
     </div>
+    </Transition>
 
     <!-- 「恢复并删除」确认：pop 会丢掉这条 stash 记录，属破坏性操作 -->
+    <Transition name="dlg">
     <div
       v-if="stashPopConfirm"
       v-trap
@@ -1050,5 +1062,6 @@ async function genCommitMsg() {
         </div>
       </div>
     </div>
+    </Transition>
   </div>
 </template>

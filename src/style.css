@@ -585,6 +585,86 @@ body,
   }
 }
 
+/* 浮层退场：pop-in 只声明了入场（@starting-style），v-if 卸载时是硬切。
+   <Transition name="dlg"> 用下面这对类补退场：遮罩淡出，内部 .pop-in 面板轻微缩小。
+   只让面板做 transform —— 外层通常是 fixed inset-0，缩放它会在窗口四边露出画布。 */
+.dlg-leave-active {
+  transition: opacity var(--dur-base) var(--ease-out);
+  pointer-events: none; /* 退场期间不再拦截点击 */
+}
+.dlg-leave-to {
+  opacity: 0;
+}
+.dlg-leave-active :where(.pop-in) {
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.dlg-leave-to :where(.pop-in) {
+  transform: scale(0.97) translateY(-4px);
+}
+
+/* 变更列表行的移动动画（ChangesPanel 的 <TransitionGroup name="row">）。
+   暂存/取消暂存时文件在列表里重排走 FLIP，是「滑过去」而不是瞬移。
+   跨列表（未暂存 ↔ 已暂存）是两个独立的 TransitionGroup，不做手工跨容器 FLIP：
+   表现为旧行淡出 + 新行淡入，衔接上已经够连贯，成本却低得多。
+   .row-move 必须声明 transform 过渡 —— Vue 靠它判断该不该启用 FLIP。 */
+.row-move {
+  transition: transform var(--dur-base) var(--ease-out);
+}
+.row-enter-active {
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    transform var(--dur-base) var(--ease-out);
+}
+/* 离场行脱离文档流：不再占位，兄弟行才能立刻上移并参与 FLIP。
+   absolute 后宽度不再由流决定，所以用 left/right 钉住（0.375rem = 列表的 px-1.5），
+   并显式 width:auto 覆盖行上的 w-full，否则「100% + left 偏移」会向右溢出。
+   top/bottom 保持 auto：静态位置就是它消失前所在的位置，不会跳。 */
+.row-leave-active {
+  position: absolute;
+  left: 0.375rem;
+  right: 0.375rem;
+  width: auto;
+  pointer-events: none; /* 退场期间不再响应悬停/点击 */
+  transition:
+    opacity var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+.row-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.row-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* 分支树分组的折叠/展开（App.vue 一级分组 + BranchTree.vue 递归文件夹共用 <Transition name="collapse">）。
+   高度用 grid-template-rows 0fr → 1fr 过渡：不需要 JS 量高，行数多少都成立，
+   也不会像 max-height 那样猜错真实高度、在尾段空转。
+   两个硬条件：动画期间外层是 grid 容器（0fr 才有意义）；
+   内层是唯一的 grid item，必须 overflow:hidden + min-height:0，否则内容不肯被裁掉，0fr 失效。 */
+.collapse-enter-active,
+.collapse-leave-active {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition:
+    grid-template-rows var(--dur-base) var(--ease-out),
+    opacity var(--dur-fast) var(--ease-out);
+}
+.collapse-enter-from,
+.collapse-leave-to {
+  grid-template-rows: 0fr;
+  opacity: 0;
+}
+.collapse-enter-active > *,
+.collapse-leave-active > * {
+  overflow: hidden;
+  min-height: 0;
+}
+.collapse-leave-active {
+  pointer-events: none; /* 退场期间不再响应悬停/点击 */
+}
+
 /* 侧栏/抽屉类横向入场 */
 @utility slide-in-right {
   transition:
@@ -666,7 +746,7 @@ html[data-theme="win7"] ::-webkit-scrollbar-thumb:hover {
 }
 
 /* ── 窗口镶边 ───────────────────────────────────────────────────────────── */
-/* 顶部工具条 / 选项卡栏 / 侧栏：三条极淡的 Aero 渐变。
+/* 顶部工具条 / 标签栏 / 侧栏：三条极淡的 Aero 渐变。
    这三块是「一眼像 Win7 程序」最省力的一层皮。 */
 html[data-theme="win7"] header {
   background-image: linear-gradient(180deg, #fbfdfe 0%, #eef3f7 55%, #e4ebf1 100%);
@@ -891,7 +971,7 @@ html[data-theme="xp"] ::-webkit-scrollbar-thumb:hover {
 }
 
 /* ── 窗口镶边 ───────────────────────────────────────────────────────────── */
-/* 顶部工具条 / 选项卡栏 / 侧栏：Luna 米银的立体渐变，收 1px 下缘线 */
+/* 顶部工具条 / 标签栏 / 侧栏：Luna 米银的立体渐变，收 1px 下缘线 */
 html[data-theme="xp"] header {
   background-image: linear-gradient(180deg, #f7f8fa 0%, #e9ebee 55%, #dcdfe4 100%);
   border-bottom-color: #a8adb8;

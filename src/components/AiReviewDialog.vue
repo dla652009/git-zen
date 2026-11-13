@@ -18,6 +18,7 @@ const emit = defineEmits<{ save: []; regen: [] }>();
 </script>
 
 <template>
+  <Transition name="dlg">
   <div
     v-if="open"
     v-trap
@@ -30,7 +31,7 @@ const emit = defineEmits<{ save: []; regen: [] }>();
     <div class="flex max-h-[80vh] w-dlg-xl flex-col surface rounded-lg pop-in">
       <header class="flex shrink-0 items-center gap-2 border-b border-border px-5 py-3">
         <Bot class="size-4 text-primary" />
-        <span id="dlg-review-title" class="text-base font-semibold">AI Review · 未推送的 {{ ahead }} 个提交</span>
+        <span id="dlg-review-title" class="text-base font-semibold tabular-nums">AI Review · 未推送的 {{ ahead }} 个提交</span>
         <span class="flex-1" />
         <Button variant="ghost" size="icon" @click="open = false"><X class="size-4" /></Button>
       </header>
@@ -49,4 +50,5 @@ const emit = defineEmits<{ save: []; regen: [] }>();
       </footer>
     </div>
   </div>
+  </Transition>
 </template>

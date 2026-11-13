@@ -26,6 +26,7 @@ const emit = defineEmits<{ pick: [path: string]; keydown: [e: KeyboardEvent] }>(
 </script>
 
 <template>
+  <Transition name="dlg">
   <div
     v-if="open"
     v-trap
@@ -74,4 +75,5 @@ const emit = defineEmits<{ pick: [path: string]; keydown: [e: KeyboardEvent] }>(
       </ul>
     </div>
   </div>
+  </Transition>
 </template>

@@ -410,7 +410,7 @@ onUnmounted(() => {
         <span id="dlg-diff-title" class="truncate font-medium">
           {{ commit ? commit.subject : file?.path }}
         </span>
-        <span class="shrink-0 text-xs text-muted-foreground">
+        <span class="shrink-0 text-xs text-muted-foreground tabular-nums">
           {{ commit ? `${commit.author} · ${commit.date}` : file?.cached ? "已暂存的变更" : "工作区变更" }}
         </span>
         <Badge v-if="file?.conflict" variant="warning">合并冲突</Badge>
@@ -542,10 +542,10 @@ onUnmounted(() => {
               >
                 <div class="truncate text-xs font-medium">{{ row.label }}</div>
                 <div class="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
-                  <span>{{ row.item.lines.length }} 行</span>
+                  <span class="tabular-nums">{{ row.item.lines.length }} 行</span>
                   <span
                     v-if="q.trim() && hitsOfFile(row.item.file)"
-                    class="shrink-0 rounded-xs bg-primary/15 px-1 text-2xs text-primary"
+                    class="shrink-0 rounded-xs bg-primary/15 px-1 text-2xs text-primary tabular-nums"
                     >{{ hitsOfFile(row.item.file) }} 处</span
                   >
                 </div>
@@ -574,7 +574,7 @@ onUnmounted(() => {
               :class="l.cls"
               class="flex"
               :title="tipFor(l)"
-            ><span class="w-10 shrink-0 select-none pr-1.5 text-right opacity-45">{{ l.oldLine ?? "" }}</span><span class="w-10 shrink-0 select-none pr-2 text-right opacity-45">{{ l.newLine ?? "" }}</span><span class="min-w-0 flex-1" :data-hit="hitRow === li ? '1' : undefined"><template v-if="segsFor(li)"><span
+            ><span class="w-10 shrink-0 select-none pr-1.5 text-right tabular-nums opacity-45">{{ l.oldLine ?? "" }}</span><span class="w-10 shrink-0 select-none pr-2 text-right tabular-nums opacity-45">{{ l.newLine ?? "" }}</span><span class="min-w-0 flex-1" :data-hit="hitRow === li ? '1' : undefined"><template v-if="segsFor(li)"><span
               v-for="(g, k) in segsFor(li)!"
               :key="k"
               :class="g.hit && g.at === cur ? 'rounded-xs bg-primary/40' : g.hit ? 'bg-primary/15' : ''"

@@ -18,6 +18,7 @@ const emit = defineEmits<{ save: []; generate: [] }>();
 </script>
 
 <template>
+  <Transition name="dlg">
   <div
     v-if="open"
     v-trap
@@ -51,4 +52,5 @@ const emit = defineEmits<{ save: []; generate: [] }>();
       </footer>
     </div>
   </div>
+  </Transition>
 </template>

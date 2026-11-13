@@ -42,7 +42,7 @@ function tip(c: LogEntry): string {
     c.subject,
     `${c.hash.slice(0, 10)} · ${c.author} · ${c.date}`,
     c.refs.length ? c.refs.join(" ") : "",
-    "单击选中 · 双击查看变更 · 右键更多操作",
+    "再次单击查看变更 · 右键更多操作",
   ]
     .filter(Boolean)
     .join("\n");
@@ -227,7 +227,7 @@ const hitSegments = computed(() => {
         </span>
         <Badge v-for="r in c.refs" :key="r" :variant="refVariant(r)">{{ r.replace(/^tag: /, "") }}</Badge>
         <span
-          class="max-w-[38%] shrink-0 truncate text-sm text-muted-foreground"
+          class="max-w-[38%] shrink-0 truncate text-sm text-muted-foreground tabular-nums"
           :title="`${c.author} · ${c.date}`"
           >{{ c.author }} · {{ c.date }}</span
         >

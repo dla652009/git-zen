@@ -37,6 +37,7 @@ const imeConfirm = imeGuard(() => emit("confirm"));
 </script>
 
 <template>
+  <Transition name="dlg">
   <div
     v-if="confirm"
     v-trap
@@ -48,11 +49,11 @@ const imeConfirm = imeGuard(() => emit("confirm"));
   >
     <div class="w-dlg-md surface rounded-lg p-5 pop-in">
       <div id="dlg-wf-confirm-title" class="mb-3 text-base font-semibold">
-        执行工作流：{{ confirm.wf.name }}
+        运行工作流：{{ confirm.wf.name }}
       </div>
       <div v-if="batchNames?.length" class="mb-3 rounded-md border border-border-soft bg-muted/30 px-3 py-2 text-xs">
         <div class="mb-1 text-muted-foreground">
-          将对 <span class="font-medium text-foreground">{{ batchNames.length }}</span> 个仓库依次执行
+          将对 <span class="font-medium text-foreground tabular-nums">{{ batchNames.length }}</span> 个仓库依次执行
           （串行，一个跑完再跑下一个）：
         </div>
         <div class="max-h-24 overflow-auto leading-relaxed text-foreground">
@@ -117,4 +118,5 @@ const imeConfirm = imeGuard(() => emit("confirm"));
       </div>
     </div>
   </div>
+  </Transition>
 </template>

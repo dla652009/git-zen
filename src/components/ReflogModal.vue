@@ -31,6 +31,7 @@ const short = (h: string) => h.slice(0, 7);
 </script>
 
 <template>
+  <Transition name="dlg">
   <div
     v-if="open"
     v-trap
@@ -92,4 +93,5 @@ const short = (h: string) => h.slice(0, 7);
       </div>
     </div>
   </div>
+  </Transition>
 </template>

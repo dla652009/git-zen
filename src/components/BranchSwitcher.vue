@@ -19,6 +19,7 @@ const emit = defineEmits<{ pick: [b: Branch]; keydown: [e: KeyboardEvent] }>();
 </script>
 
 <template>
+  <Transition name="dlg">
   <div
     v-if="open"
     v-trap
@@ -57,8 +58,8 @@ const emit = defineEmits<{ pick: [b: Branch]; keydown: [e: KeyboardEvent] }>();
           <Cloud v-if="b.remote" class="size-3.5 shrink-0 text-muted-foreground" />
           <GitBranch v-else class="size-3.5 shrink-0 text-muted-foreground" />
           <span class="truncate">{{ b.name }}</span>
-          <span v-if="b.ahead" class="shrink-0 text-2xs text-[var(--c-mod)]">↑{{ b.ahead }}</span>
-          <span v-if="b.behind" class="shrink-0 text-2xs text-[var(--c-conf)]">↓{{ b.behind }}</span>
+          <span v-if="b.ahead" class="shrink-0 text-2xs tabular-nums text-[var(--c-mod)]">↑{{ b.ahead }}</span>
+          <span v-if="b.behind" class="shrink-0 text-2xs tabular-nums text-[var(--c-conf)]">↓{{ b.behind }}</span>
           <span class="flex-1" />
           <Badge v-if="b.current" variant="default">当前</Badge>
           <Badge v-if="b.remote" variant="muted">远程</Badge>
@@ -69,4 +70,5 @@ const emit = defineEmits<{ pick: [b: Branch]; keydown: [e: KeyboardEvent] }>();
       </ul>
     </div>
   </div>
+  </Transition>
 </template>

@@ -21,6 +21,7 @@ const imeConfirm = imeGuard(() => emit("confirm"));
 </script>
 
 <template>
+  <Transition name="dlg">
   <div
     v-if="open"
     v-trap
@@ -54,4 +55,5 @@ const imeConfirm = imeGuard(() => emit("confirm"));
       </div>
     </div>
   </div>
+  </Transition>
 </template>

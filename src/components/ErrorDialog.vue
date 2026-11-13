@@ -15,6 +15,7 @@ const emit = defineEmits<{ retry: [] }>();
 </script>
 
 <template>
+  <Transition name="dlg">
   <div
     v-if="open"
     v-trap
@@ -39,4 +40,5 @@ const emit = defineEmits<{ retry: [] }>();
       </div>
     </div>
   </div>
+  </Transition>
 </template>

@@ -24,6 +24,7 @@ const imeClose = imeGuard(() => {
 </script>
 
 <template>
+  <Transition name="dlg">
   <div
     v-if="open"
     v-trap
@@ -59,4 +60,5 @@ const imeClose = imeGuard(() => {
       </div>
     </div>
   </div>
+  </Transition>
 </template>
