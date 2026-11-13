@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, watch } from "vue";
 import { layout, LANE_COLORS } from "../graph";
 import type { LogEntry } from "../gitApi";
-import { Badge, Spinner } from "@/components/ui";
+import { Badge, Button, Spinner, Tooltip } from "@/components/ui";
 
 // 泳道历史图：虚拟滚动——几千提交时只渲染可视区 ± BUFFER 行的内容与连线，
 // 全量高度用空占位撑起（行高固定 26px，窗口换算无需测量）。
@@ -18,6 +18,13 @@ const emit = defineEmits<{
   openCommit: [c: LogEntry];
   commitMenu: [p: { x: number; y: number; c: LogEntry }];
   loadMore: [];
+  /** 批量拣选：旧→新（按 cherry-pick 的依赖顺序，先拣祖先） */
+  batchCherryPick: [hashes: string[]];
+  /** 批量撤销：新→旧（先撤最近提交，避免相互覆盖） */
+  batchRevert: [hashes: string[]];
+  /** 压成一条：base 是这批提交的父提交（soft reset 的目标） */
+  squashRange: [p: { base: string; hashes: string[]; subjects: string[] }];
+  selectionChange: [n: number];
 }>();
 
 const ROW_H = 26;
@@ -50,10 +57,58 @@ function tip(c: LogEntry): string {
 
 // 单击选中（轻反馈零代价），双击同一行才打开 diff——防扫视误触弹大窗
 const selected = ref("");
-function onRowClick(c: LogEntry) {
+// 多选是叠加在单选之上的独立状态：Ctrl/Cmd 改它，Shift 按 shown 顺序铺一段，
+// 无修饰键单击只清它、完全走原来的单选语义
+const selection = ref<Set<string>>(new Set());
+// Shift 范围起点。保持「上一次无修饰/ Ctrl 单击的行」，连续 Shift 始终从同一起点扩展
+let rangeAnchor = "";
+
+function onRowClick(c: LogEntry, e: MouseEvent) {
+  viewport.value?.focus({ preventScroll: true });
+  if (e.shiftKey) {
+    if (!rangeAnchor) rangeAnchor = c.hash;
+    extendTo(c.hash);
+    return;
+  }
+  if (e.ctrlKey || e.metaKey) {
+    const next = new Set(selection.value);
+    if (next.has(c.hash)) next.delete(c.hash);
+    else next.add(c.hash);
+    selection.value = next;
+    rangeAnchor = c.hash;
+    return;
+  }
+  // 无修饰键：先清多选，再走原来的单选/打开 diff
+  if (selection.value.size) selection.value = new Set();
+  rangeAnchor = c.hash;
   if (selected.value === c.hash) emit("openCommit", c);
   else selected.value = c.hash;
 }
+
+// Shift 范围按当前可见顺序（shown）铺；锚点被过滤掉时退化为只选当前行
+function extendTo(hash: string) {
+  const list = shown.value;
+  const from = list.findIndex((c) => c.hash === rangeAnchor);
+  const to = list.findIndex((c) => c.hash === hash);
+  const next = new Set(selection.value);
+  if (from === -1 || to === -1) {
+    next.add(hash);
+  } else {
+    const [a, b] = from <= to ? [from, to] : [to, from];
+    for (let i = a; i <= b; i++) next.add(list[i].hash);
+  }
+  selection.value = next;
+}
+
+function clearSelection() {
+  rangeAnchor = "";
+  if (selection.value.size) selection.value = new Set();
+}
+
+// 选中行按 shown 顺序（新→旧）取；批量操作各自决定正序还是逆序
+const selectedEntries = computed(() => shown.value.filter((c) => selection.value.has(c.hash)));
+const selectionCount = computed(() => selection.value.size);
+watch(selection, (s) => emit("selectionChange", s.size));
 
 // 全量布局保证泳道稳定；过滤只决定哪些行可见，连线跨过隐藏提交连到最近可见祖先
 const shown = computed(() => {
@@ -81,6 +136,65 @@ const parentMap = computed(() => {
   props.commits.forEach((c) => m.set(c.hash, c.parents));
   return m;
 });
+
+// 过滤/刷新后把已经不可见的 hash 从多选里摘掉，避免「已选 N」含看不见的提交
+watch(shown, (list) => {
+  const visible = new Set(list.map((c) => c.hash));
+  if (rangeAnchor && !visible.has(rangeAnchor)) rangeAnchor = "";
+  if (!selection.value.size) return;
+  const kept = [...selection.value].filter((h) => visible.has(h));
+  if (kept.length !== selection.value.size) selection.value = new Set(kept);
+});
+
+// 压成一条的前置条件：至少 2 个、在真实历史里连续、最早那个有父提交。
+// 连续性按 props.commits（而不是 shown）判定——过滤隐藏的中间提交也算断开，
+// 否则 soft reset 到 base 会把没选中的提交一起压掉
+const squashInfo = computed(() => {
+  const picked = selectedEntries.value;
+  if (picked.length < 2) return null;
+  const index = new Map(props.commits.map((c, i) => [c.hash, i]));
+  const positions = picked.map((c) => index.get(c.hash)!).sort((a, b) => a - b);
+  const sequential = positions.every((p, i) => i === 0 || p === positions[i - 1] + 1);
+  // props.commits 是新→旧：下标越大越早；最早选中项的 parents[0] 就是要保留的父提交
+  const oldest = props.commits[positions[positions.length - 1]];
+  const base = oldest?.parents[0] ?? "";
+  // picked 是新→旧，反过来给 App 一份旧→新（提交信息的自然叙述顺序）
+  const chronological = [...picked].reverse();
+  return {
+    base,
+    sequential,
+    contiguous: sequential && !!base,
+    hashes: chronological.map((c) => c.hash),
+    subjects: chronological.map((c) => c.subject),
+  };
+});
+const canSquash = computed(() => !!squashInfo.value?.contiguous);
+const squashHint = computed(() => {
+  if (canSquash.value) return "把所选提交压成一条，改动回到暂存区后重新提交";
+  if (!squashInfo.value?.sequential) return "所选提交不连续";
+  return "所选提交包含根提交，没有父提交可回退";
+});
+
+function onKeydown(e: KeyboardEvent) {
+  if (e.key === "Escape" && selection.value.size) {
+    e.stopPropagation();
+    clearSelection();
+  }
+}
+
+function emitCherryPick() {
+  // 旧→新：先拣祖先，后代才落得下来
+  emit("batchCherryPick", [...selectedEntries.value].reverse().map((c) => c.hash));
+}
+function emitBatchRevert() {
+  // 新→旧：先撤最近的，避免前一条的撤销被后面的改动挡住
+  emit("batchRevert", selectedEntries.value.map((c) => c.hash));
+}
+function emitSquash() {
+  const info = squashInfo.value;
+  if (!info?.contiguous) return;
+  emit("squashRange", { base: info.base, hashes: info.hashes, subjects: info.subjects });
+}
 
 // 沿 parent 链向上找最近的可见祖先（过滤掉的中间节点被跳过）
 function nearestShownAncestor(hash: string): string | null {
@@ -177,8 +291,15 @@ const hitSegments = computed(() => {
 </script>
 
 <template>
-  <!-- 滚动容器内聚：App 只接 loadMore -->
-  <div ref="viewport" class="h-full overflow-y-auto" @scroll="onScroll">
+  <!-- 滚动容器内聚：App 只接 loadMore。tabindex 让 Esc 清多选落在历史区内部，
+       不去抢全局键盘（Ctrl+F、浮层 Esc 关闭等保持原样） -->
+  <div
+    ref="viewport"
+    tabindex="0"
+    class="h-full overflow-y-auto"
+    @scroll="onScroll"
+    @keydown="onKeydown"
+  >
     <div v-if="!shown.length" class="grid h-full place-items-center text-sm text-muted-foreground">
       无匹配提交
     </div>
@@ -207,15 +328,19 @@ const hitSegments = computed(() => {
       <div
         v-for="(c, vi) in visible"
         :key="c.hash"
-        class="absolute flex cursor-pointer items-center gap-1.5 overflow-hidden pr-3 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
-        :class="selected === c.hash && 'bg-primary-soft'"
+        class="absolute flex cursor-pointer items-center gap-1.5 overflow-hidden border-l-2 pr-3 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
+        :class="[
+          selected === c.hash ? 'bg-primary-soft' : selection.has(c.hash) && 'bg-primary/15',
+        ]"
         :style="{
           top: (winStart + vi) * ROW_H + 'px',
           height: ROW_H + 'px',
           left: lay.cols * COL_W + 'px',
           right: 0,
+          // 左侧 2px 蓝条标记多选；单选仍是 bg-primary-soft，两者可叠加区分
+          borderLeftColor: selection.has(c.hash) ? 'var(--primary)' : 'transparent',
         }"
-        @click="onRowClick(c)"
+        @click="onRowClick(c, $event)"
         @contextmenu.prevent="emit('commitMenu', { x: $event.clientX, y: $event.clientY, c })"
       >
         <span class="flex-1 truncate" :title="tip(c)">
@@ -241,6 +366,27 @@ const hitSegments = computed(() => {
     >
       <Spinner v-if="loadingMore" :size="12" label="正在加载更多…" />
       <span v-else>已到底部</span>
+    </div>
+    <!-- 批量操作条：sticky 在列表底部，不随滚动离开视口 -->
+    <div
+      v-if="selectionCount >= 2"
+      class="pointer-events-none sticky bottom-0 z-20 flex justify-center px-2 pb-2"
+    >
+      <div
+        class="pointer-events-auto surface-menu shadow-elev-3 flex items-center gap-1 rounded-md px-2 py-1"
+      >
+        <span class="px-1 text-xs text-muted-foreground">已选 {{ selectionCount }}</span>
+        <Button variant="ghost" size="sm" @click="emitCherryPick">Cherry-pick</Button>
+        <Button variant="ghost" size="sm" @click="emitBatchRevert">Revert</Button>
+        <Tooltip :text="squashHint">
+          <span class="inline-flex">
+            <Button variant="ghost" size="sm" :disabled="!canSquash" @click="emitSquash">
+              压成一条
+            </Button>
+          </span>
+        </Tooltip>
+        <Button variant="ghost" size="sm" @click="clearSelection">清除</Button>
+      </div>
     </div>
   </div>
 </template>

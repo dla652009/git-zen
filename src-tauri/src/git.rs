@@ -2375,6 +2375,34 @@ pub async fn git_squash_recent(
     offload(move || squash_recent_impl(&repo, count, &message)).await
 }
 
+/// 把 base 之上的连续提交压成一条：soft reset 到 base 再重新提交。
+///
+/// base 是这批提交的**父提交**（squash 后保留不动），由前端从最早选中提交的
+/// `parents[0]` 取得；「所选提交在真实历史里连续」由前端保证（不连续时按钮不可用），
+/// 这里只兜住 hash 与提交信息的合法性。
+fn squash_range_impl(repo: &str, base_hash: &str, message: &str) -> Result<(), String> {
+    check_hex(base_hash)?;
+    let msg = message.trim();
+    if msg.is_empty() {
+        return Err("提交信息不能为空".into());
+    }
+    let base = base_hash.trim();
+    // 先验 base 存在再动手：reset 失败虽然不会挪 HEAD，但提前给个能看懂的错误
+    run(repo, &["rev-parse", "--verify", "--quiet", base])
+        .map_err(|_| format!("找不到基准提交 {base}"))?;
+    run(repo, &["-c", "alias.reset=reset", "reset", "--soft", base])?;
+    run(repo, &["-c", "alias.commit=commit", "commit", "-m", msg]).map(|_| ())
+}
+
+#[tauri::command]
+pub async fn git_squash_range(
+    repo: String,
+    base_hash: String,
+    message: String,
+) -> Result<(), String> {
+    offload(move || squash_range_impl(&repo, &base_hash, &message)).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3045,6 +3073,46 @@ mod tests {
         assert!(squash_recent_impl(repo.path(), 1, "x").is_err());
         assert!(squash_recent_impl(repo.path(), 5, "x").is_err());
         assert!(squash_recent_impl(repo.path(), 2, "   ").is_err());
+        assert_eq!(
+            run(repo.path(), &["rev-list", "--count", "HEAD"]).unwrap().trim(),
+            "2",
+            "被守卫拦下时 HEAD 必须原封不动"
+        );
+    }
+
+    #[test]
+    fn squash_range_uses_given_base_and_guards() {
+        let repo = TempRepo::new("squash-range");
+        commit_files(&repo, &[("base.txt", "0")], "base");
+        let base = run(repo.path(), &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+        commit_files(&repo, &[("a.txt", "1")], "one");
+        commit_files(&repo, &[("b.txt", "2")], "two");
+        commit_files(&repo, &[("c.txt", "3")], "three");
+
+        squash_range_impl(repo.path(), &base, "three in one").unwrap();
+        assert_eq!(
+            run(repo.path(), &["rev-list", "--count", "HEAD"]).unwrap().trim(),
+            "2",
+            "base 之上的 3 条应压成 1 条"
+        );
+        assert_eq!(
+            run(repo.path(), &["log", "-1", "--pretty=format:%s"]).unwrap().trim(),
+            "three in one"
+        );
+        // 新提交的父提交就是传入的 base（它是被保留下来的锚点）
+        assert_eq!(
+            run(repo.path(), &["rev-parse", "HEAD^"]).unwrap().trim(),
+            base
+        );
+        // soft reset 不动工作区
+        for f in ["a.txt", "b.txt", "c.txt"] {
+            assert!(repo.0.join(f).exists(), "压成一条后 {f} 应当还在");
+        }
+
+        // 守卫：非法/空 base、空提交信息；失败时 HEAD 不动
+        assert!(squash_range_impl(repo.path(), "", "x").is_err());
+        assert!(squash_range_impl(repo.path(), "zzz", "x").is_err());
+        assert!(squash_range_impl(repo.path(), &base, "   ").is_err());
         assert_eq!(
             run(repo.path(), &["rev-list", "--count", "HEAD"]).unwrap().trim(),
             "2",

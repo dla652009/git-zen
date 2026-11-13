@@ -1205,6 +1205,12 @@
 - [ ] **19.4 多选提交 + 批量操作**：批量 cherry-pick / revert / 压成一条 / 导出 patch / 比较 `A..B`。
       「压成一条」（soft reset + commit）是**interactive rebase 的替代品** —— 覆盖 80% 的整理需求，
       风险低一个量级
+      - 批 1（已完成）：Ctrl/Cmd 切换多选、Shift 按 shown 顺序范围选、Esc 清空；底部 sticky 操作条；
+        批量 cherry-pick（旧→新）/ revert（新→旧）顺序执行、遇错即停；压成一条走
+        `git_squash_range(base_hash, message)`（base = 最早选中项的 `parents[0]`）。
+        「连续」按 `props.commits` 真实顺序判定——过滤隐藏了中间提交也算断开，
+        否则 soft reset 会把没选中的提交一并压掉
+      - 批 2（待做）：导出 patch、比较 `A..B`
 - [x] **19.5 全部仓库总览**：`fetchAll` 这个名字有误导性，它其实是「fetch 一个仓库的全部 remote」。
       多仓库只能逐个 tab 点，补一屏总览（落后/领先/脏工作区）+ 全部拉取
 - [x] **19.6 重置到干净状态**：「丢弃暂存」「丢弃某个文件的更改」都是按文件来的，缺整体那一下 ——

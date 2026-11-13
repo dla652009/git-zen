@@ -1254,6 +1254,76 @@ function onCommitMenu(p: { x: number; y: number; c: LogEntry }) {
   commitCtx.value = p;
 }
 
+// ---- 历史区多选批量操作 ----
+// 清单沿用推送预览的 details 结构；hash 截短给眼睛看，完整值留在事件参数里
+function batchDetail(hash: string): { hash: string; text: string } {
+  const c = commits.value.find((x) => x.hash === hash);
+  return { hash: hash.slice(0, 10), text: c?.subject ?? "" };
+}
+
+// 顺序执行，遇错即停：中途失败通常意味着冲突，继续跑只会把索引搅得更乱。
+// 已完成的个数写进 toast，随后把原始错误交给 run()（它负责刷新 + showError）
+async function runBatch(
+  hashes: string[],
+  op: (hash: string) => Promise<unknown>,
+  verb: string,
+) {
+  for (let i = 0; i < hashes.length; i++) {
+    try {
+      await op(hashes[i]);
+    } catch (e) {
+      toast(`已${verb} ${i}/${hashes.length} 个，后续因冲突停止`);
+      throw e;
+    }
+  }
+  toast(`已${verb} ${hashes.length} 个提交`);
+}
+
+function onBatchCherryPick(hashes: string[]) {
+  if (!hashes.length) return;
+  openConfirm({
+    title: `Cherry-pick ${hashes.length} 个提交`,
+    okText: "Cherry-pick",
+    okVariant: "default",
+    body: `按从旧到新的顺序拣选到当前分支 ${status.value?.branch ?? ""}。`,
+    details: hashes.map(batchDetail),
+    note: "遇到冲突会立即停止，已完成的部分保留。",
+    action: "batchCherryPick",
+    ok: () => runBatch(hashes, (h) => api.cherryPick(repo.value, h), "拣选"),
+  });
+}
+
+function onBatchRevert(hashes: string[]) {
+  if (!hashes.length) return;
+  openConfirm({
+    title: `Revert ${hashes.length} 个提交`,
+    okText: "Revert",
+    body: `按从新到旧的顺序在当前分支 ${status.value?.branch ?? ""} 上生成反向提交。`,
+    details: hashes.map(batchDetail),
+    note: "遇到冲突会立即停止，已完成的部分保留。",
+    action: "batchRevert",
+    ok: () => runBatch(hashes, (h) => api.revert(repo.value, h), "撤销"),
+  });
+}
+
+function onSquashRange(p: { base: string; hashes: string[]; subjects: string[] }) {
+  if (!p.hashes.length) return;
+  openConfirm({
+    title: `压成一条提交（${p.hashes.length} 个）`,
+    okText: "压成一条",
+    body: `把 ${p.hashes.length} 个提交压成一条，改动回到暂存区后重新提交。`,
+    details: p.hashes.map((h, i) => ({ hash: h.slice(0, 10), text: p.subjects[i] ?? "" })),
+    input: {
+      label: "提交信息",
+      placeholder: "压成一条后的提交信息",
+      initial: p.subjects.join("; "),
+    },
+    note: "原提交会从当前分支移除（可在时间线里找回）。",
+    action: "squashRange",
+    ok: () => api.squashRange(repo.value, p.base, confirmText.value),
+  });
+}
+
 // Review / Release Notes 的生成、缓存与保存都抽到 composables/useAiPanel.ts
 const {
   reviewBusy,
@@ -1694,15 +1764,19 @@ interface ConfirmState {
   note?: string;
   /** 推送预览的增删行数（渲染成彩色胶囊，所以不能混进 body 字符串） */
   stats?: { add: number; del: number };
+  /** 单行输入（压成一条时让用户改提交信息）；输入值走 confirmText */
+  input?: { label: string; placeholder?: string; initial?: string };
   /** 透传给 run() 的动作名：run 靠它做副作用（如 push 成功后清 AI Review 缓存） */
   action?: string;
   ok: (checked: boolean) => Promise<unknown>;
 }
 const confirmState = ref<ConfirmState | null>(null);
 const confirmChecked = ref(false);
+const confirmText = ref("");
 
 function openConfirm(s: ConfirmState) {
   confirmChecked.value = false;
+  confirmText.value = s.input?.initial ?? "";
   confirmState.value = s;
   // 危险操作的安全默认「焦点落取消」由 ConfirmDialog 的 v-focus 承担
 }
@@ -2792,6 +2866,9 @@ onUnmounted(() => {
             @open-commit="(c: LogEntry) => (diffState = { kind: 'commit', target: c })"
             @commit-menu="onCommitMenu"
             @load-more="loadMorePage"
+            @batch-cherry-pick="onBatchCherryPick"
+            @batch-revert="onBatchRevert"
+            @squash-range="onSquashRange"
           />
           <!-- 空态：这是用户看到的第一屏，值得比别的空态多花一点功夫 -->
           <div v-else-if="repo" class="grid h-full place-items-center">
@@ -3582,8 +3659,10 @@ onUnmounted(() => {
     <ConfirmDialog
       v-model:open="confirmOpen"
       v-model:checked="confirmChecked"
+      v-model:text="confirmText"
       :title="confirmState?.title ?? ''"
       :body="confirmState?.body ?? ''"
+      :input="confirmState?.input"
       :checkbox="confirmState?.checkbox"
       :ok-text="confirmState?.okText"
       :ok-variant="confirmState?.okVariant"

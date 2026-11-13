@@ -1,14 +1,19 @@
 <script setup lang="ts">
-import { Button } from "@/components/ui";
+import { Button, Input } from "@/components/ui";
+import { imeGuard } from "../lib/imeGuard";
 
 // open 由 App.vue 的 confirmState 推导（overlayLayers.confirm 指向它）；
 // 确认结果（ok 回调 + run()）留在 App，这里只负责问
 const open = defineModel<boolean>("open", { required: true });
 const checked = defineModel<boolean>("checked", { required: true });
+// 可选单行输入：用于「压成一条」这类需要先让用户改提交信息的确认
+const text = defineModel<string>("text", { default: "" });
 
 defineProps<{
   title: string;
   body: string;
+  /** 有值时在清单下方渲染一个输入框（标签 + 初值由 App 传入） */
+  input?: { label: string; placeholder?: string };
   checkbox?: string;
   okText?: string;
   /** 默认 destructive：这个框原本只为删除/丢弃/强推这类操作而生。
@@ -25,6 +30,8 @@ defineProps<{
 }>();
 
 const emit = defineEmits<{ confirm: [] }>();
+// 输入框里的 Enter 直接确认；组词中的 Enter 交给输入法
+const imeConfirm = imeGuard(() => emit("confirm"));
 </script>
 
 <template>
@@ -64,6 +71,14 @@ const emit = defineEmits<{ confirm: [] }>();
           <span class="min-w-0 break-words">{{ d.text }}</span>
         </div>
       </div>
+      <label v-if="input" class="mt-3 block text-xs">
+        <span class="mb-1 block text-muted-foreground">{{ input.label }}</span>
+        <Input
+          v-model="text"
+          :placeholder="input.placeholder"
+          @keydown.enter.prevent="imeConfirm"
+        />
+      </label>
       <p v-if="note" class="mt-2 text-xs text-muted-foreground">{{ note }}</p>
       <label v-if="checkbox" class="mt-2 flex cursor-pointer items-center gap-2 text-xs">
         <input v-model="checked" type="checkbox" class="accent-[var(--primary)]" />

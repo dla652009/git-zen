@@ -269,3 +269,6 @@ export const opContinue = (repo: string) =>
 // 把最近 count 个提交压成一条（soft reset + commit；interactive rebase 的有界替代品）
 export const squashRecent = (repo: string, count: number, message: string) =>
   invoke<void>("git_squash_recent", { repo, count, message });
+// 把 base 之上的连续提交压成一条：base 是这批提交的父提交（soft reset 的目标）
+export const squashRange = (repo: string, baseHash: string, message: string) =>
+  invoke<void>("git_squash_range", { repo, baseHash, message });

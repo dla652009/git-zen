@@ -63,7 +63,8 @@ pub fn run() {
             git::git_reset_clean,
             git::git_op_state,
             git::git_op_continue,
-            git::git_squash_recent
+            git::git_squash_recent,
+            git::git_squash_range
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
