@@ -70,6 +70,9 @@
 
 ## 安装说明
 
-- 安装包与免安装版的 SHA256 在构建完成后回填本节。
+- 安装包：`git-zen_0.3.0_x64-setup.exe`（NSIS，3.9 MB）
+  SHA256 `998881ee623e4330d73f8be952fe4b7ae7a7bf42e7432f199bce913be7ce011e`
+- 免安装：`git-zen.exe`（16 MB，依赖系统 WebView2，Windows 10/11 自带）
+  SHA256 `7c86425cfdaaeadb3319702ab41eda7fa61f3468906c7bc03ec2fce5613da247`
 - `identifier` 保持 `com.gitzen.app` 不变 —— 它决定 WebView 数据目录，改了等于清空
   用户的设置、字号、主题与仓库列表。**从 0.2.x 升级原地覆盖，设置保留。**

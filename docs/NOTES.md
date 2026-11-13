@@ -1279,3 +1279,9 @@ AI 读的 diff 必须是 `merge-base(dst, src)..src`。直接 `dst..src` 会把�
 提交也算进来，生成的描述与本次 MR 对不上；`git merge-base` 两次调用虽然多一次进程，
 但语义正确。生成链路（diff → log → AI）每一步之后都要校验发起时的仓库快照，
 用户切走选项卡就停止，避免把 A 的 diff 填进 B 的预览框。
+
+## tauri build 与 CI 环境变量
+
+Alma 的 shell 环境里带着 `CI=1`，tauri-cli 会把它透传给 NSIS 构建参数（`--ci 1`），
+而 CLI 只认 `true/false` → 直接报 `invalid value '1' for '--ci'`。**本地发版构建必须
+`CI=false pnpm tauri build` 覆盖掉**。同样的问题未来可能影响任何读 CI 变量的构建工具。
