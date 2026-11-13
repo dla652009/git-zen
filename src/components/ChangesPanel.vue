@@ -884,12 +884,6 @@ async function genCommitMsg() {
         <Button variant="secondary" size="sm" class="h-5 px-1.5 text-xs" @click="applyPending">覆盖</Button>
         <Button variant="ghost" size="sm" class="h-5 px-1.5 text-xs" @click="pendingMsg = ''">保留原内容</Button>
       </div>
-      <div class="flex items-center gap-1.5">
-        <label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
-          <input v-model="pushAfterCommit" type="checkbox" class="accent-[var(--primary)]" />
-          提交后推送到远程
-        </label>
-      </div>
       <!-- amend / 撤销上次提交都在改写历史，收进「⋯」菜单：图标常驻时认不出是干什么的，
            而菜单项能带说明；两者确认框仍在 App 侧 -->
       <div class="flex items-center gap-1.5">
