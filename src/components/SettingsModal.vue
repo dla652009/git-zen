@@ -226,6 +226,11 @@ const newStepMessage = ref("");
 const newStepPrefix = ref("");
 const newStepLabel = ref("");
 const addStepErr = ref("");
+// 与执行期同一判据：refspec 会删到别的命名空间（如远程 tag），编辑时就不让存
+function isRefspec(name: string): boolean {
+  const n = name.trim();
+  return /^refs\//.test(n) || n.includes(":") || n.startsWith("+");
+}
 // 静默失败会让人以为按钮坏了：说清缺哪一项
 function missingHint(): string {
   const k = newStepKind.value;
@@ -235,6 +240,8 @@ function missingHint(): string {
     return "请先填固定提交信息，或把信息来源改成「AI 生成」";
   if ((k === "deleteBranch" || k === "deleteRemoteBranch") && !newStepName.value.trim())
     return "请先填要删除的分支名";
+  if (k === "deleteRemoteBranch" && isRefspec(newStepName.value))
+    return "远程删除只接受分支名本身（如 feat/x），refs/… / +… / foo:bar 会在执行时被拒";
   return "当前配置不完整，请检查后再添加";
 }
 function addStep(w: Workflow) {
@@ -285,7 +292,8 @@ function buildDraftStep(): WorkflowStep | null {
     }
     case "deleteRemoteBranch": {
       const name = newStepName.value.trim();
-      return name ? { kind: "deleteRemoteBranch", name } : null;
+      if (!name || isRefspec(name)) return null;
+      return { kind: "deleteRemoteBranch", name };
     }
   }
 }

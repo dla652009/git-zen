@@ -30,7 +30,10 @@ export function humanize(raw: unknown): { msg: string; detail?: string } {
     [/failed to connect|connection timed out|could not resolve host/i, "网络不通：无法连接远程仓库"],
     [/remote ref does not exist/i, "远程没有这个分支：可能已被别人删除，或名字拼写有误"],
     [/pathspec .* did not match/i, "目标分支或文件不存在：可能已被删除，或名字拼写有误"],
-    [/cannot delete branch/i, "不能删除这个分支：它是当前所在的分支，或正被另一个工作树检出 —— 换到那个工作树处理，或先在终端 git worktree 清理"],
+    [
+      /cannot delete branch/i,
+      "不能删除这个分支：若是当前分支，先切到别的分支再删；若被另一个工作树检出，就到那个工作树里处理",
+    ],
     [/not fully merged/i, "该分支尚未合并：强删会丢掉上面的提交，确认后到终端用 -D"],
     [/used (as|by) worktree/i, "这个分支正被某个工作树占用，先切到别的分支再删"],
     [
