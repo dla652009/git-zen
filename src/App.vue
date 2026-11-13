@@ -79,7 +79,7 @@ import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
 import { closeTop, type OverlayLayer, type OverlayName } from "./lib/overlays";
 import { readJsonArray, readJsonObject } from "./lib/safeJson";
-import { buildMrUrl } from "./lib/mrUrl";
+import { buildMrUrl, normalizeMrPresets, type MrPreset } from "./lib/mrUrl";
 import { imeGuard } from "./lib/imeGuard";
 
 const repo = ref(localStorage.getItem("gz.repo") ?? "");
@@ -150,6 +150,7 @@ const historyFilePath = ref<string | null>(null);
 const remoteRaw = ref(""); // origin 的 URL（git remote get-url）
 const remoteLink = ref(""); // 用户在设置里自定义的网页链接（留空自动推断）
 const mrTemplate = ref(""); // 用户自定义的 MR/PR 新建页模板（留空自动推断）
+const mrPresets = ref<MrPreset[]>([]); // 用户配置的多条 MR 预设（设置 › 远程）
 // 历史加载遮罩（切仓库、换历史范围时盖住历史区）
 const historyLoading = ref(false);
 
@@ -224,14 +225,43 @@ const mrUrl = computed(() =>
   }),
 );
 const remoteCtx = ref<{ x: number; y: number } | null>(null);
-function openMr() {
-  const url = mrUrl.value;
+function openMrUrl(url: string | null) {
   if (url) {
     openUrl(url).catch(() => {});
     return;
   }
   toast("未能识别该远程主机，可在设置 › 远程配置 MR 页模板", "info");
 }
+function openMr() {
+  openMrUrl(mrUrl.value);
+}
+// 预设项：只配 src/dst，其余（origin / 模板）与自动推断走同一套构造
+function openMrPreset(p: MrPreset) {
+  openMrUrl(
+    buildMrUrl({
+      originUrl: remoteRaw.value,
+      template: mrTemplate.value,
+      srcBranch: p.src || currentBranchName.value,
+      dstBranch: p.dst,
+    }),
+  );
+}
+// 状态栏「远程」右键菜单：有预设就逐条列出（dst 已是人话短标签），
+// 没有预设时保留原来那条自动推断项；主页/复制两项始终在。
+const remoteMenuItems = computed<MenuItem[]>(() => {
+  const items: MenuItem[] = [
+    { label: "打开仓库主页", fn: openRemote, disabled: !remoteWebUrl.value },
+  ];
+  if (mrPresets.value.length) {
+    for (const p of mrPresets.value) {
+      items.push({ label: `新建 MR → ${p.dst}`, fn: () => openMrPreset(p), disabled: !remoteRaw.value });
+    }
+  } else {
+    items.push({ label: "新建 MR / Pull Request…", fn: openMr, disabled: !mrUrl.value });
+  }
+  items.push({ label: "复制 origin URL", fn: () => copyText(remoteRaw.value), disabled: !remoteRaw.value });
+  return items;
+});
 
 const runningAction = ref("");
 
@@ -981,6 +1011,7 @@ function doCloseTab(path: string) {
       remoteRaw.value = "";
       remoteLink.value = "";
       mrTemplate.value = "";
+      mrPresets.value = [];
     }
   }
 }
@@ -1052,6 +1083,9 @@ watch(showSettings, (open) => {
     readJsonObject<Record<string, string>>("gz.remoteLinks", {})[repo.value] ?? "";
   mrTemplate.value =
     readJsonObject<Record<string, string>>("gz.mrTemplates", {})[repo.value] ?? "";
+  mrPresets.value = normalizeMrPresets(
+    readJsonObject<Record<string, unknown>>("gz.mrPresets", {})[repo.value],
+  );
 });
 
 // 历史行右键菜单：复制 hash / checkout / revert
@@ -1378,6 +1412,7 @@ const {
   remoteRaw,
   remoteLink,
   mrTemplate,
+  mrPresets,
   cacheGet,
   cachePeek,
   cachePut,
@@ -3039,11 +3074,7 @@ onUnmounted(() => {
       v-if="remoteCtx"
       :x="remoteCtx.x"
       :y="remoteCtx.y"
-      :items="[
-        { label: '打开仓库主页', fn: openRemote, disabled: !remoteWebUrl },
-        { label: '新建 MR / Pull Request…', fn: openMr, disabled: !mrUrl },
-        { label: '复制 origin URL', fn: () => copyText(remoteRaw), disabled: !remoteRaw },
-      ]"
+      :items="remoteMenuItems"
       @close="remoteCtx = null"
     />
     </Transition>

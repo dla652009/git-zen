@@ -3,7 +3,7 @@
 // 这里守的是「菜单里点新建 MR 会打开哪个页面」：主机识别错、分支参数拼错，
 // 用户看到的是 404 或被平台拒绝的表单，而不会报错——只能靠这组断言兜住。
 import assert from "node:assert";
-import { buildMrUrl } from "./mrUrl.ts";
+import { buildMrUrl, normalizeMrPresets } from "./mrUrl.ts";
 
 const build = (originUrl: string, srcBranch: string, dstBranch?: string, template?: string) =>
   buildMrUrl({ originUrl, srcBranch, dstBranch, template });
@@ -88,5 +88,21 @@ assert.equal(
 assert.equal(build("https://git.example.com/acme/app.git", "feat", "main"), null, "不认识的 host");
 assert.equal(build("", "feat", "main"), null, "origin 为空");
 assert.equal(build("https://github.com/acme/app.git", "", "main"), null, "源分支为空");
+
+// ---- 预设收敛：脏数据不当成合法预设，dst 空的行扔掉 ----
+assert.deepEqual(
+  normalizeMrPresets([
+    { src: " feature/x ", dst: " main " },
+    { src: "", dst: "develop" },
+    { dst: "  " },
+    { src: "feat" },
+    null,
+    "junk",
+  ]),
+  [{ src: "feature/x", dst: "main" }, { dst: "develop" }],
+  "预设 trim、丢空 dst、src 空则不存",
+);
+assert.deepEqual(normalizeMrPresets({ dst: "main" }), [], "非数组退回空");
+assert.deepEqual(normalizeMrPresets(null), [], "null 退回空");
 
 console.log("mrUrl tests passed");

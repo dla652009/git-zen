@@ -1413,3 +1413,21 @@ Win7 主题下是 Aero caption，其它主题是中性样式（`decorations` 是
       输入框内放行「palette 开着时的 Ctrl+K」，确认框开着时不许唤起
 - [x] 面板内 Esc 自行消费并 `stopPropagation`，避免冒泡到全局分层关闭链连带关掉下层浮层
 - [x] 验证：`npx vue-tsc --noEmit` / `node scripts/check-contract.mjs` / `npx vite build` 全过
+
+## M26 MR / PR 快捷跳转与多条预设
+
+状态栏「远程」右键菜单直达「新建 MR」页；只配源/目标分支，支持一个仓库多条预设。
+
+- [x] `lib/mrUrl.ts` 纯函数 `buildMrUrl`：GitHub / GitLab（含自建与多级 group）/ Gitee /
+      Bitbucket 自动推断新建页，未知主机回落到设置里的 `{src} {dst} {repo}` 模板；
+      分支名按平台规则编码，缺目标分支时能降级就降级、构造不出就返回 null
+- [x] 设置 › 远程：`gz.mrTemplates[repo]` 自定义模板 + `gz.mrPresets[repo]` 预设列表
+      （每行 = 源分支[可空=当前分支] + 目标分支[必填] + 删除；底部「+ 添加预设」）
+- [x] 预设归一收敛到 `normalizeMrPresets`：读取与保存共用一份过滤规则（非数组→空、trim、
+      丢 dst 空行、src 空不存），localStorage 被手改坏也不会把脏数据送进菜单
+- [x] 菜单两态：有预设逐条显示「新建 MR → <目标分支>」，点击时 `src` 空则取当前分支；
+      无预设保留原「新建 MR / Pull Request…」自动推断项。预设项在无 origin 时灰显
+- [x] 写回时机：设置页只在「保存」时统一写回（清空列表 = 删除该仓库的键）；
+      App 在 `refresh()` 与设置关闭时重读，保存后右键菜单立即生效
+- [x] 自检：`src/lib/mrUrl.test.ts` 覆盖四平台、模板、非法输入与预设归一
+- [x] 验证：`pnpm verify` 全绿

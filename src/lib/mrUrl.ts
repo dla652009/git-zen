@@ -3,6 +3,12 @@
 // 输入只有 origin URL、当前分支与上游分支，输出可直接 openUrl 的链接。
 // 认识 GitHub / GitLab / Gitee / Bitbucket；其余平台交给用户在设置里填模板。
 
+/** 用户预设的 MR 快捷项：src 为空 = 点击时取当前分支；dst 必填 */
+export interface MrPreset {
+  src?: string;
+  dst: string;
+}
+
 export interface MrUrlInput {
   /** origin URL，如 https://github.com/o/r.git 或 git@github.com:o/r.git */
   originUrl: string;
@@ -62,6 +68,24 @@ function isBitbucket(host: string) {
 /** base 的路径段：GitLab 多级 group 全保留；其他平台取前两段（owner/repo） */
 function baseSegments(host: string, segments: string[]) {
   return isGitLab(host) ? segments : segments.slice(0, 2);
+}
+
+/**
+ * 收敛 localStorage 里的预设：非数组 → 空，丢掉 dst 为空的行，两端 trim，src 空则不存。
+ * 存储内容可被手改，读取时不能假设形状是对的；保存时也走这里，过滤规则只有一份。
+ */
+export function normalizeMrPresets(raw: unknown): MrPreset[] {
+  if (!Array.isArray(raw)) return [];
+  const out: MrPreset[] = [];
+  for (const it of raw) {
+    if (!it || typeof it !== "object") continue;
+    const rec = it as { src?: unknown; dst?: unknown };
+    const src = typeof rec.src === "string" ? rec.src.trim() : "";
+    const dst = typeof rec.dst === "string" ? rec.dst.trim() : "";
+    if (!dst) continue;
+    out.push(src ? { src, dst } : { dst });
+  }
+  return out;
 }
 
 /**
