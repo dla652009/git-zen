@@ -24,6 +24,7 @@ export const overlayOrder = [
   "branchRename",
   "flowConfirm",
   "flowRun",
+  "flowBatch",
   "settings",
   "fileHistory",
   "reflog",

@@ -52,7 +52,10 @@ export function useWorkflowRun(opts: {
   // 执行确认：解析步骤预览 + 运行时输入当场填；起始分支在执行开始时记录。
   // 每个需要输入的步骤各占一个输入框 —— 早前所有步骤共用同一个值，
   // 「先切到 A、再合并 B」这种流程根本配不出来
-  const wfConfirm = ref<{ wf: Workflow; slots: InputSlot[] } | null>(null);
+  const wfConfirm = ref<{ wf: Workflow; slots: InputSlot[]; targets?: WfBatchTarget[] } | null>(null);
+  // 批次专用：某个仓库失败就停止后面的仓库。默认不勾 —— 一次点击尽量把能做的都做掉，
+  // 个别仓库失败（比如同名分支已存在）不该连累其余的
+  const wfStopOnFail = ref(false);
   const wfInputs = ref<Record<number, string>>({});
   // 每个「新建分支」槽当前选中的前缀。候选来自「个性化 → 分支前缀」——
   // 用户不该在流程里手写前缀，那是设置里配过一次的东西。
@@ -60,14 +63,23 @@ export function useWorkflowRun(opts: {
   const wfPrefixes = ref<Record<number, string>>({});
   function runFlow(wf: Workflow) {
     if (!opts.repo.value || opts.busy.value) return;
+    openConfirm(wf, undefined);
+  }
+  /** 多仓库入口：先选流程，再对选中的仓库逐个执行（确认框里当场填输入） */
+  function runFlowForRepos(wf: Workflow, targets: WfBatchTarget[]) {
+    if (opts.busy.value || !targets.length) return;
+    openConfirm(wf, targets);
+  }
+  function openConfirm(wf: Workflow, targets?: WfBatchTarget[]) {
     const slots = flowInputSlots(wf);
     const configured = parseBranchPrefixes(settings.branchPrefix);
     wfInputs.value = {};
     wfPrefixes.value = {};
+    wfStopOnFail.value = false;
     for (const s of slots) {
       if (s.branch) wfPrefixes.value[s.index] = defaultBranchPrefix(s.branch.prefix, configured);
     }
-    wfConfirm.value = { wf, slots };
+    wfConfirm.value = targets ? { wf, slots, targets } : { wf, slots };
   }
   // 新建分支槽的占位符跟着选中的前缀走：选了 feat/ 就该看到「feat/分支名」
   function slotPlaceholder(s: InputSlot): string {
@@ -82,6 +94,10 @@ export function useWorkflowRun(opts: {
     if (!c) return;
     if (!flowInputsReady()) return;
     wfConfirm.value = null;
+    if (c.targets) {
+      void runFlowBatch(c.wf, c.targets, { ...wfInputs.value }, { ...wfPrefixes.value }, wfStopOnFail.value);
+      return;
+    }
     void executeFlow(c.wf, { ...wfInputs.value }, { ...wfPrefixes.value });
   }
 
@@ -448,6 +464,8 @@ export function useWorkflowRun(opts: {
     wfConfirm,
     wfInputs,
     wfPrefixes,
+    wfStopOnFail,
+    runFlowForRepos,
     wfRun,
     wfRunOpen,
     runFlow,

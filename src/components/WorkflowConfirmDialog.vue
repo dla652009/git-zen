@@ -15,10 +15,13 @@ defineProps<{
   statusBranch?: string;
   prefixOptions: string[];
   slotPlaceholder: (s: InputSlot) => string;
+  /** 多仓库入口：要执行的仓库名（空 = 单仓库，行为与以前一致） */
+  batchNames?: string[];
 }>();
 
 const inputs = defineModel<Record<number, string>>("inputs", { required: true });
 const prefixes = defineModel<Record<number, string>>("prefixes", { required: true });
+const stopOnFail = defineModel<boolean>("stopOnFail", { default: false });
 const emit = defineEmits<{ close: []; confirm: [] }>();
 
 // Enter 提交走 keydown + isComposing：Chromium 里确认候选词那次 keyup 的 isComposing 已回 false
@@ -38,6 +41,24 @@ const imeConfirm = imeGuard(() => emit("confirm"));
     <div class="w-dlg-md surface rounded-lg p-5 pop-in">
       <div id="dlg-wf-confirm-title" class="mb-3 text-base font-semibold">
         执行工作流：{{ confirm.wf.name }}
+      </div>
+      <div v-if="batchNames?.length" class="mb-3 rounded-md border border-border-soft bg-muted/30 px-3 py-2 text-xs">
+        <div class="mb-1 text-muted-foreground">
+          将对 <span class="font-medium text-foreground">{{ batchNames.length }}</span> 个仓库依次执行
+          （串行，一个跑完再跑下一个）：
+        </div>
+        <div class="max-h-24 overflow-auto leading-relaxed text-foreground">
+          {{ batchNames.join("、") }}
+        </div>
+        <label class="mt-2 flex items-center gap-1.5 text-muted-foreground">
+          <input
+            id="wf-stop-on-fail"
+            v-model="stopOnFail"
+            type="checkbox"
+            class="size-3.5 accent-[var(--primary)]"
+          >
+          <span for="wf-stop-on-fail">某个仓库失败就停止后面的仓库</span>
+        </label>
       </div>
       <div v-if="confirm.slots.length" class="mb-2 space-y-1.5">
         <!-- 整行不能再用 <label> 包：<button> 也是 labelable 元素，Select 的触发器会
@@ -78,7 +99,9 @@ const imeConfirm = imeGuard(() => emit("confirm"));
       </ol>
       <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
         顺序执行、任一步失败立即中止。「提交推送」在有改动时自动全部暂存，无改动时跳过；
-        工作区有未提交改动时拉取/合并可能失败或被带入提交。
+        工作区有未提交改动时拉取/合并可能失败或被带入提交。<span v-if="batchNames?.length"
+          >流程里若用到 AI（如生成提交信息），每个仓库各调一次。</span
+        >
       </p>
       <div class="mt-5 flex justify-end gap-2">
         <Button variant="ghost" size="sm" @click="emit('close')">取消</Button>

@@ -66,6 +66,7 @@ import RepoSwitcher from "./components/RepoSwitcher.vue";
 import BranchSwitcher from "./components/BranchSwitcher.vue";
 import WorkflowConfirmDialog from "./components/WorkflowConfirmDialog.vue";
 import WorkflowRunDialog from "./components/WorkflowRunDialog.vue";
+import WorkflowRunBatchDialog from "./components/WorkflowRunBatchDialog.vue";
 import ReflogModal from "./components/ReflogModal.vue";
 import ReposOverviewModal from "./components/ReposOverviewModal.vue";
 import type { RepoOverviewRow } from "./components/ReposOverviewModal.vue";
@@ -1290,15 +1291,40 @@ const {
   wfConfirm,
   wfInputs,
   wfPrefixes,
+  wfStopOnFail,
   wfRun,
   wfRunOpen,
+  wfBatch,
+  wfBatchOpen,
   runFlow,
+  runFlowForRepos,
   flowInputsReady,
   slotPlaceholder,
   confirmFlow,
   closeWfRun,
   retryFlow,
-} = useWorkflowRun({ repo, status, busy, runningAction, refresh });
+  retryBatchRow,
+  closeWfBatch,
+} = useWorkflowRun({ repo, status, busy, runningAction, refresh, onBatchDone: loadRepoRows });
+
+// 「所有仓库」总览里勾选仓库后跑工作流：名字 → Workflow，path → 行里的显示名
+function runWorkflowOnRepos(name: string, paths: string[]) {
+  const wf = workflows.find((w) => w.name === name);
+  if (!wf) return;
+  const targets = paths.map((p) => ({
+    path: p,
+    name: repoRows.value.find((r) => r.path === p)?.name || p,
+  }));
+  if (!targets.length) return;
+  // 先收起总览：确认框与它同为 z-40，且总览在 DOM 里排在后面，留着会被盖住
+  showRepos.value = false;
+  runFlowForRepos(wf, targets);
+}
+function openWorkflowManager() {
+  showRepos.value = false;
+  showSettingsTab.value = "workflow";
+  showSettings.value = true;
+}
 
 // ---- 创建分支：工具栏按钮 → 弹窗（可选前缀，基于当前分支，创建即切换）----
 const prefixes = computed(() => parseBranchPrefixes(settings.branchPrefix));
@@ -1817,6 +1843,8 @@ const overlayLayers: Record<OverlayName, OverlayLayer> = {
   // 这里曾经直接置空 wfRun —— 执行中按 Esc 会让循环里的状态写入抛 TypeError，
   // 整个流程半路无声死掉（「点背景」那条路修过，Esc 这条漏了）。
   flowRun: { open: () => !!wfRun.value, close: () => closeWfRun() },
+  // 批次弹窗同理：执行中 Esc 只收起，不置空 wfBatch
+  flowBatch: { open: () => !!wfBatch.value, close: () => closeWfBatch() },
   settings: { open: () => showSettings.value, close: () => (showSettings.value = false) },
   fileHistory: {
     open: () => !!fileHistoryModal.value,
@@ -2958,11 +2986,13 @@ onUnmounted(() => {
     <WorkflowConfirmDialog
       v-model:inputs="wfInputs"
       v-model:prefixes="wfPrefixes"
+      v-model:stop-on-fail="wfStopOnFail"
       :confirm="wfConfirm"
       :ready="flowInputsReady()"
       :status-branch="status?.branch"
       :prefix-options="prefixes"
       :slot-placeholder="slotPlaceholder"
+      :batch-names="wfConfirm?.targets?.map((t) => t.name)"
       @close="wfConfirm = null"
       @confirm="confirmFlow()"
     />
@@ -2974,6 +3004,17 @@ onUnmounted(() => {
       :busy="busy"
       @close="closeWfRun()"
       @retry="retryFlow()"
+    />
+
+    <!-- 多仓库批次进度：渲染在 WorkflowRunBatchDialog.vue -->
+    <WorkflowRunBatchDialog
+      :batch="wfBatch"
+      :open="wfBatchOpen"
+      :busy="busy"
+      :repo="repo"
+      @close="closeWfBatch()"
+      @retry="retryBatchRow($event)"
+      @switch-to="switchRepo"
     />
 
     <!-- 拖拽仓库进窗口的提示遮罩 -->
@@ -3006,9 +3047,12 @@ onUnmounted(() => {
       v-model:open="showRepos"
       :rows="repoRows"
       :loading="reposLoading"
+      :workflows="workflows.map((w) => w.name)"
       @open-repo="switchRepo"
       @pull-all="pullAllRepos"
       @refresh="loadRepoRows"
+      @run-workflow="runWorkflowOnRepos"
+      @manage-workflows="openWorkflowManager"
     />
 
     <!-- 确认框（删除分支/丢弃/强推/推送预览）：渲染在 ConfirmDialog.vue -->

@@ -1336,3 +1336,17 @@ merge / cherry-pick / revert / rebase / am 先放弃。**刻意不带 `clean -x`
 - [x] 收敛主题清单：移除 One Dark / GitHub Light / GitHub Dark（保留 跟随系统/浅色/深色/
       Catppuccin Latte·Mocha/Windows 7）；`resolvedTheme()` 对已删除的 id 回落到跟随系统，
       旧 localStorage 配置不会落进「没有 token 的空档」；对比度门禁 `EXPECTED_THEMES` 8 → 5
+
+## M22 多仓库工作流（同一流程批量作用于勾选的仓库）
+
+设计见 `docs/DESIGN-WORKFLOW-MULTI-REPO.md`。
+
+- [x] 执行器拆内核：`runSteps(path, wf, run, inputs, prefixes, startBranch, fromIndex, guard)`，
+      不再读 `repo` / `status`；单仓库入口的「执行期间切走仓库即中止」改为 `guard` 注入，行为不变
+- [x] `runFlowBatch`：串行跑多个仓库，每行各记 `startBranch`，失败可继续（默认）或即停
+      （确认框勾选）；`retryBatchRow` 只重跑失败的那一行
+- [x] 批次进度弹窗 `WorkflowRunBatchDialog.vue`：一行一个仓库，正在跑的行自动展开，
+      失败行给「重试」「切到该仓库」；执行期间关窗只是隐藏，流程继续
+- [x] 入口：`所有仓库` 总览加勾选框（默认全不选 + 三态全选）与「运行工作流」下拉；
+      确认框复用同一份，补「将对 N 个仓库执行」与「失败即停」勾选
+- [x] 浮层登记：`overlays.ts` 增 `flowBatch`（Esc 只收起、不置空 `wfBatch`）
