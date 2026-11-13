@@ -2010,16 +2010,9 @@ onUnmounted(() => {
 <template>
   <div class="relative flex h-full flex-col">
     <Toast />
-    <!-- 整页刷新遮罩（点刷新按钮时盖全页，替代仅按钮动画） -->
-    <Transition name="fade">
-      <div
-        v-if="refreshing"
-        class="absolute inset-0 z-20 grid place-items-center bg-background/50 text-sm backdrop-blur-[2px]"
-      >
-        <!-- 只留 loading 图标：文字在这里除了再说明一遍「在刷新」没有别的作用 -->
-        <Spinner :size="20" aria-label="刷新中" />
-      </div>
-    </Transition>
+    <!-- 刷新反馈收敛到按钮本体（图标旋转 + 禁用），不再盖全页遮罩：
+         手动刷新频率高，每次糊半秒全屏反而比慢更难受；fetch 的结果
+         直接体现在 ↓N 徽标与列表内容上，不另加反馈。 -->
     <!-- 自绘标题栏（decorations:false 之后窗口没有系统镶边）：拖动、双击最大化、三键都在这里 -->
     <TitleBar :title="windowTitle" />
     <!-- 窗口镶边（header / 标签栏 / footer）统一用卡片色，工作区回落画布色：
