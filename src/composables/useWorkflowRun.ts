@@ -185,6 +185,9 @@ export function useWorkflowRun(opts: {
     if (opts.busy.value || !opts.repo.value) return;
     // 锁定仓库：多步执行期间用户可能切走（Ctrl+Tab / 关标签都不看 busy）
     const path = opts.repo.value;
+    // 刚切仓库时 status 还是 null，这时取起始分支会拿到空串、被当成「游离 HEAD」报错；
+    // 先拉一次，让「未知」不要伪装成「没有分支」
+    if (!resume && !opts.status.value) await opts.refresh();
     const startBranch = resume?.startBranch ?? opts.status.value?.branch ?? "";
     const fromIndex = resume?.fromIndex ?? 0;
     opts.busy.value = true;
@@ -448,12 +451,17 @@ export function useWorkflowRun(opts: {
    * 重试入口全在看不见的地方，只剩一条数不出是谁挂了的 toast），并报一条带仓库名的 toast。
    * 首跑、单行重试、继续剩余三个入口都走这里 —— 规则只有一套，入口不同不该有不同待遇。
    */
-  function reportBatch(batch: { wf: Workflow; rows: WfBatchRow[] }) {
+  function reportBatch(batch: { wf: Workflow; rows: WfBatchRow[] }, kind: "run" | "retry" | "resume" = "run") {
     const done = batch.rows.filter((r) => r.state === "done").length;
     const failRows = batch.rows.filter((r) => r.state === "fail");
     const skipped = batch.rows.filter((r) => r.state === "skipped").length;
     if (!failRows.length && !skipped) {
-      toast(`「${batch.wf.name}」已在 ${done} 个仓库上执行完成`);
+      // 重试/继续只动了少部分行，不能说成「整批又跑了一遍」
+      toast(
+        kind === "run"
+          ? `「${batch.wf.name}」已在 ${done} 个仓库上执行完成`
+          : `「${batch.wf.name}」补跑完成，${done} 个仓库全部通过`,
+      );
       return;
     }
     wfBatchOpen.value = true;
@@ -522,7 +530,7 @@ export function useWorkflowRun(opts: {
       opts.busy.value = false;
       opts.runningAction.value = "";
     }
-    reportBatch(batch);
+    reportBatch(batch, "resume");
     await afterBatch();
   }
 

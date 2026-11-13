@@ -29,6 +29,10 @@ export function humanize(raw: unknown): { msg: string; detail?: string } {
       /empty string is not a valid pathspec/i,
       "分支名为空：仓库可能处于游离 HEAD（不在任何分支上），先切到一个分支再重试",
     ],
+    [
+      /not currently on a branch/i,
+      "仓库处于游离 HEAD（不在任何分支上），没有分支可推送：先切到一个分支",
+    ],
   ];
   const hit = rules.find(([re]) => re.test(s));
   return hit ? { msg: hit[1], detail: s } : { msg: s };
