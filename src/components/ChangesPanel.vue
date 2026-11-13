@@ -9,7 +9,7 @@ import {
   FileQuestion,
   FileSymlink,
   GitMerge,
-  GitCommitHorizontal,
+  MoreHorizontal,
   RotateCcw,
   Eraser,
   Sparkles,
@@ -79,6 +79,7 @@ watch(
     stashMenuOpen.value = false;
     stashPushOpen.value = false;
     stashPopConfirm.value = null;
+    commitMenuPos.value = null;
     // AI 报错属于上一个仓库的那次尝试，不该跟着新仓库继续挂着
     aiErr.value = "";
     aiHint.value = false;
@@ -95,6 +96,26 @@ function askAmend() {
     },
   });
 }
+
+// 「⋯」菜单：两项都写历史，菜单项带说明比常驻图标更好认（图标看不出是在改历史）
+const commitMenuPos = ref<{ x: number; y: number } | null>(null);
+// amend 要有可并入的东西；根提交没有 HEAD~1，撤销至少要 2 条提交
+const canAmend = computed(
+  () => !props.busy && props.commitCount > 0 && (!!staged.value.length || !!message.value.trim()),
+);
+const canUndoCommit = computed(() => !props.busy && props.commitCount > 1);
+function openCommitMenu(ev: MouseEvent) {
+  const rect = (ev.currentTarget as HTMLElement).getBoundingClientRect();
+  commitMenuPos.value = {
+    // 右对齐到按钮；菜单宽度按 220px 估，贴右边缘时不会溢出
+    x: Math.max(6, rect.right - 220),
+    y: rect.bottom + 4,
+  };
+}
+const commitMenuItems = computed<MenuItem[]>(() => [
+  { label: "追加到上次提交（amend）", disabled: !canAmend.value, fn: askAmend },
+  { label: "撤销上次提交（改动回暂存区）", disabled: !canUndoCommit.value, fn: () => emit("undo") },
+]);
 
 // ---- stash（暂存架）：菜单打开时懒加载列表，收纳/恢复走 App.run() ----
 const stashMenuOpen = ref(false);
@@ -863,41 +884,38 @@ async function genCommitMsg() {
         <Button variant="secondary" size="sm" class="h-5 px-1.5 text-xs" @click="applyPending">覆盖</Button>
         <Button variant="ghost" size="sm" class="h-5 px-1.5 text-xs" @click="pendingMsg = ''">保留原内容</Button>
       </div>
-      <!-- 勾选框与 amend/撤销 icons 同行，省纵向空间；两者改写历史，确认框在 App 侧 -->
       <div class="flex items-center gap-1.5">
         <label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
           <input v-model="pushAfterCommit" type="checkbox" class="accent-[var(--primary)]" />
           提交后推送到远程
         </label>
-        <Tooltip text="追加到上次提交（amend）">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="ml-auto size-8 shrink-0"
-            :disabled="busy || commitCount < 1 || (!staged.length && !message.trim())"
-            aria-label="追加到上次提交"
-            @click="askAmend"
-          >
-            <GitCommitHorizontal class="size-4" />
-          </Button>
-        </Tooltip>
-        <Tooltip text="撤销上次提交">
+      </div>
+      <!-- amend / 撤销上次提交都在改写历史，收进「⋯」菜单：图标常驻时认不出是干什么的，
+           而菜单项能带说明；两者确认框仍在 App 侧 -->
+      <div class="flex items-center gap-2">
+        <Button variant="default" class="flex-1" :disabled="!canCommit" @click="doCommit">
+          <Spinner v-if="busy" :size="14" />
+          {{ busy ? "处理中…" : `提交${staged.length ? ` (${staged.length})` : ""}` }}
+        </Button>
+        <Tooltip text="更多提交操作">
           <Button
             variant="ghost"
             size="icon"
             class="size-8 shrink-0"
-            :disabled="busy || commitCount <= 1"
-            aria-label="撤销上次提交"
-            @click="emit('undo')"
+            aria-label="更多提交操作"
+            @click="openCommitMenu"
           >
-            <RotateCcw class="size-4" />
+            <MoreHorizontal class="size-4" />
           </Button>
         </Tooltip>
       </div>
-      <Button variant="default" class="w-full" :disabled="!canCommit" @click="doCommit">
-        <Spinner v-if="busy" :size="14" />
-        {{ busy ? "处理中…" : `提交${staged.length ? ` (${staged.length})` : ""}` }}
-      </Button>
+      <ContextMenu
+        v-if="commitMenuPos"
+        :x="commitMenuPos.x"
+        :y="commitMenuPos.y"
+        :items="commitMenuItems"
+        @close="commitMenuPos = null"
+      />
     </div>
 
     <!-- stash 下拉菜单：收纳入口 + 记录列表（恢复/恢复并删除/删除） -->
