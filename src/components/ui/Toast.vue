@@ -4,6 +4,7 @@
 // 位置：顶部居中，紧贴选项卡栏下方。原先在底部居中 —— 中间列底部的说明文字与状态栏
 // 让它在视觉上「沉」进背景，很容易错过。顶部是操作发生的方向（Pull/Push/刷新都在顶栏），
 // 视线本来就在那里；且只在出现后的 2.6 秒里占位，不挡常驻控件。
+// 偏移量是「标题栏 32 + 工具条 48 + 选项卡栏 36」，窗口镶边改高度时这里要跟着改。
 //
 // 图标是这次可辨识性的关键：纯文字的胶囊在满屏等宽字体里和正文长得太像，
 // 一个 Check / Info / Warn 让它在任何主题下都能被一眼识别。
@@ -135,7 +136,7 @@ function layerStyle(i: number) {
 <template>
   <div
     ref="boxEl"
-    class="pointer-events-none fixed top-[84px] left-1/2 z-[60] w-max max-w-[min(560px,80vw)] -translate-x-1/2"
+    class="pointer-events-none fixed top-[116px] left-1/2 z-[60] w-max max-w-[min(560px,80vw)] -translate-x-1/2"
     :style="width === null ? undefined : { minWidth: `${width}px` }"
     @mouseenter="onEnter"
     @mouseleave="onLeave"

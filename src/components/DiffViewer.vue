@@ -388,10 +388,13 @@ onUnmounted(() => {
 
 <template>
   <!-- 固定高度，避免加载前后高度跳动 -->
+  <!-- top-8 而不是 inset-0：标题栏(TitleBar)是常驻 z-[90]，全屏 surface h-full 会顶到 y=0 被它盖掉 32px 头部；
+       浮层从标题栏下方开始（标题栏本来就在遮罩之上，视觉无变化）。其余弹窗都是居中盒子，
+       最高点离窗口顶 ≥52px（minHeight 520），不需要同样处理。 -->
   <div
     v-trap
     ref="rootEl"
-    class="fixed inset-0 z-20 flex items-center justify-center bg-scrim"
+    class="fixed inset-x-0 top-8 bottom-0 z-20 flex items-center justify-center bg-scrim"
     role="dialog"
     aria-modal="true"
     aria-labelledby="dlg-diff-title"

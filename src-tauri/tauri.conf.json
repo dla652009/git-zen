@@ -16,7 +16,9 @@
         "width": 1200,
         "height": 760,
         "minWidth": 860,
-        "minHeight": 520
+        "minHeight": 520,
+        "decorations": false,
+        "shadow": true
       }
     ],
     "security": { "csp": null }

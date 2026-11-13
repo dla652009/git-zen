@@ -736,3 +736,51 @@ html[data-theme="win7"] .surface > [id$="-title"] {
   border-top-left-radius: calc(var(--radius-lg) - 1px);
   border-top-right-radius: calc(var(--radius-lg) - 1px);
 }
+
+/* ── 自绘标题栏（Aero caption）───────────────────────────────────────────── */
+/* decorations:false 之后标题栏由 TitleBar.vue 自己画。Win7 的 caption 是浅蓝玻璃：
+   顶部一道白高光、中段最亮、底部压深，配 1px 冷蓝描边；三键是 29×22 的独立小按钮，
+   常态是灰色玻璃、悬停转蓝、关闭键悬停整块转红。 */
+html[data-theme="win7"] [data-titlebar] {
+  height: 30px;
+  color: #24333f;
+  background-image: linear-gradient(180deg, #fbfdfe 0%, #f2f8fc 42%, #e3edf5 100%);
+  border-bottom-color: #b3c4d2;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.95);
+  text-shadow: 0 1px 0 rgb(255 255 255 / 0.8);
+}
+
+html[data-theme="win7"] [data-titlebar] [data-caption-btn] {
+  width: 29px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  color: #22303c;
+  background-image: linear-gradient(180deg, #fbfdfe 0%, #eef3f7 48%, #e0e8ef 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  text-shadow: none;
+}
+
+html[data-theme="win7"] [data-titlebar] [data-caption-btn]:hover {
+  border-color: #3c7fb1;
+  background-image: linear-gradient(180deg, #f5fcff 0%, #e2f3fd 48%, #cce8f8 100%);
+}
+
+html[data-theme="win7"] [data-titlebar] [data-caption-btn]:active {
+  border-color: #2c6a97;
+  background-image: linear-gradient(180deg, #cfe7f5 0%, #bcdcef 100%);
+  box-shadow: inset 0 2px 3px rgb(23 42 58 / 0.22);
+}
+
+html[data-theme="win7"] [data-titlebar] [data-caption-btn="close"]:hover {
+  border-color: #a8251c;
+  color: #ffffff;
+  background-image: linear-gradient(180deg, #f6b4a9 0%, #d94a3c 48%, #b8332a 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5);
+  text-shadow: 0 1px 1px rgb(90 15 8 / 0.45);
+}
+
+html[data-theme="win7"] [data-titlebar] [data-caption-btn="close"]:active {
+  background-image: linear-gradient(180deg, #c0382b 0%, #a8251c 100%);
+  box-shadow: inset 0 2px 3px rgb(60 8 4 / 0.4);
+}

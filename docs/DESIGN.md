@@ -131,7 +131,22 @@ git-zen 的对策：
 - **不用 `oklch()`**：`vite.config.js` 的 `build.target` 是 `safari13`，`oklch()` 需要 Safari 15.4+，
   Tailwind 不会替你做降级；`color-mix()` 可用（Tailwind v4 的 `/opacity` 本身就编译成它）
 
-### 4.6 明确不做的（YAGNI）
+### 4.6 窗口镶边：自绘标题栏（src/components/TitleBar.vue）
+
+- `tauri.conf.json` 的 `decorations: false` + `shadow: true`：去掉系统边框，保留 DWM 投影。
+  无边框窗口的**边缘缩放由 Tauri 原生处理**（2.0 起走 `WM_NCHITTEST`），不需要 JS 补 resize
+- 拖动与双击最大化交给 Tauri 内置的 `data-tauri-drag-region="deep"`，不自己写 mousedown：
+  它已经处理了「点在按钮/链接上不算拖动」「双击切换最大化」「双击时禁止选中文字」
+- 最大化图标靠 `onResized` 回同步（双击、Win+↑、拖到屏幕上沿都不经过本组件的点击），
+  并节流 120ms —— 拖动时 onResized 每帧都来
+- 权限：`core:window:default` 自带 `is-maximized` / `internal-toggle-maximize`，但拖动和三键要
+  另加 `allow-start-dragging` / `allow-minimize` / `allow-toggle-maximize` / `allow-close`
+  （漏了不报编译错，只在运行时静默失效，见 NOTES.md）
+- 标题栏是**全主题共用**的（`decorations` 是窗口级开关）：普通主题用 `bg-card` + `border-b` 的
+  中性样式，只有 `html[data-theme="win7"]` 给它 Aero caption 皮肤（玻璃渐变 + 三键小按钮 + 关闭键转红）
+- 已知让渡：Win11 的 Snap Layout、标题栏右键系统菜单、Aero 的还原态圆角（要透明窗口，会丢系统投影）
+
+### 4.7 明确不做的（YAGNI）
 
 - rebase / cherry-pick 交互 UI → 终端更顺手
 - 冲突解决 UI → 只做报错引导
@@ -169,6 +184,7 @@ git-zen/
 │   ├── shims-vue.d.ts
 │   └── components/
 │       ├── ui/         # shadcn 风格基础组件（Button/Badge/Input/Textarea/Select/Switch/Tooltip/Spinner/Toast/Md/ContextMenu）
+│       ├── TitleBar.vue # 自绘窗口标题栏（decorations:false 之后的唯一窗口镶边）
 │       ├── HistoryGraph.vue / ChangesPanel.vue / DiffViewer.vue
 │       ├── BranchTree.vue / SettingsModal.vue / FileHistoryModal.vue / CommitHeatmap.vue
 ├── src-tauri/

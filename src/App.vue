@@ -70,6 +70,7 @@ import WorkflowRunBatchDialog from "./components/WorkflowRunBatchDialog.vue";
 import ReflogModal from "./components/ReflogModal.vue";
 import ReposOverviewModal from "./components/ReposOverviewModal.vue";
 import type { RepoOverviewRow } from "./components/ReposOverviewModal.vue";
+import TitleBar from "./components/TitleBar.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
@@ -147,12 +148,16 @@ const remoteLink = ref(""); // 用户在设置里自定义的网页链接（留�
 const historyLoading = ref(false);
 
 // 窗口标题显示未推送数
+// 自绘标题栏（TitleBar.vue）与任务栏标题共用同一个字符串，别在两处各拼一遍。
 // core:window:allow-set-title 已由 src-tauri/capabilities/default.json 授权；
 // setTitle 是跨 IPC 的 promise，异常仍需吞掉——标题属非关键路径，不该刷未捕获 rejection
-function updateTitle() {
+const windowTitle = computed(() => {
   const a = status.value?.ahead ?? 0;
+  return a > 0 ? `(↑${a}) Git Zen` : "Git Zen";
+});
+function updateTitle() {
   getCurrentWindow()
-    .setTitle(a > 0 ? `(↑${a}) Git Zen` : "Git Zen")
+    .setTitle(windowTitle.value)
     .catch(() => {});
 }
 watch(status, updateTitle);
@@ -2015,6 +2020,8 @@ onUnmounted(() => {
         <Spinner :size="20" aria-label="刷新中" />
       </div>
     </Transition>
+    <!-- 自绘标题栏（decorations:false 之后窗口没有系统镶边）：拖动、双击最大化、三键都在这里 -->
+    <TitleBar :title="windowTitle" />
     <!-- 窗口镶边（header / 选项卡栏 / footer）统一用卡片色，工作区回落画布色：
          选项卡的「连着下面」才好成立 —— 激活页签跟内容同色，才像真的嵌进去 -->
     <header class="flex items-center gap-2 border-b border-border bg-card px-3 py-2">

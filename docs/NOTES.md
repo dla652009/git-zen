@@ -973,7 +973,8 @@ AI 设置原先在 `save()` 里调 `/models` 验通，验不过就**不关弹窗
 「容易被忽略，展示的也不清楚」。有两条不是审美偏好，是可用性问题：
 
 - **位置跟着注意力走**：Pull / Push / 刷新 / 提交这些动作都在顶栏，做完之后视线还在上面，
-  提示就该出现在那儿（选项卡栏下方 84px，容器 `pointer-events-none`，2.6 秒后消失）。
+  提示就该出现在那儿（选项卡栏下方 116px = 标题栏 32 + 工具条 48 + 选项卡栏 36，
+  容器 `pointer-events-none`，2.6 秒后消失）。
 - **纯文字胶囊在满屏等宽字体里和正文长得太像**，所以必须给图标：success / info / warn
   三档图标色都取自 `--c-add` / `--c-mod` / `--c-conf`（图形令牌，实测对 `--elevated` ≥4.1，
   one-dark 最紧）。**不要**改用 `--diff-*-text` 那类文字令牌 —— 它们只在各自的 diff 底色上达标。
@@ -1225,3 +1226,16 @@ catppuccin-mocha/catppuccin-latte/win7）。删一套主题要动四处，漏一
   `could not read from remote repository` 排在前面就会被判成「认证失败」，而真正的原因是「没有远程」。
   凡是 git 可能连打「根因 + 后果」两行的规则，都要让根因那条排在前面；新加的规则用自检文件钉住顺序
   （`src/lib/errors.test.ts`），否则下一次插入就会悄悄改掉命中结果。
+- **`decorations: false` 之后，窗口控制是「静默失效」型的坑**。拖动和三键都走 Tauri 的窗口权限
+  （`allow-start-dragging` / `allow-minimize` / `allow-toggle-maximize` / `allow-close`），
+  漏授权不报编译错、也不进契约检查，只在运行时点了没反应。反过来 `is-maximized` 和
+  `internal-toggle-maximize` 已经在 `core:window:default` 里，双击最大化不用额外授权。
+  另外**别自己写 mousedown 拖窗口**：Tauri 注入的 `window/scripts/drag.js` 已经用
+  `e.detail === 2` 区分单击拖动/双击最大化，还顺手拦掉了可点元素与文字选中，两套并存会互相吞事件。
+  用它的话注意属性取值：裸写 `data-tauri-drag-region` 只认「点在元素自身」，
+  标题栏里还有子元素（图标、标题文字）就得写 `="deep"`。
+- **无边框窗口的「圆角」是有代价的**。窗口本身是矩形，CSS 圆角必须配 `transparent: true`，
+  而透明窗口在 Windows 上会丢 DWM 投影、拖动时偶发残影。所以标题栏做成不透明矩形 + 1px 内描边
+  （`pointer-events-none fixed inset-0 ring-1 ring-inset`），把 Win7 还原态的圆角让渡掉——
+  最大化时 Win7 本来也是直角。
+- **全屏浮层要从标题栏下方开始（`top-8`）**。标题栏是常驻 z-[90]，任何 `fixed inset-0` 的全屏 surface（如 DiffViewer 的全屏模式 `h-full`）会顶到 y=0 被盖掉 32px 头部；浮层改成 `fixed inset-x-0 top-8 bottom-0`。居中弹窗（最高点离窗口顶 ≥52px，minHeight 520）不受影响，不用跟着改。
