@@ -502,6 +502,47 @@ const repoCrumb = computed(() => {
 const groupCount = (g: string) => repos.value.filter((r) => r.group === g).length;
 const isGroupActive = (g: string) => repos.value.some((r) => r.group === g && r.path === repo.value);
 
+// ---- 切换仓库选项卡的方向性入场动画 ----
+// 方向看标签栏里的可见顺序（与 Ctrl+Tab 同一套取法）：新仓库在旧仓库右边 → 内容从右滑入，
+// 左边则从左滑入；旧仓库不在标签栏（被收进分组 / 首次打开）或顺序未变时只淡入。
+const repoSwitchDir = ref<-1 | 0 | 1>(0);
+// 动画开着时非空：三块区域的 class 由它派生。先置空再在下一帧挂上，是为了让同名
+// animation 重新起播 —— 只改数据不摘类，CSS 认为动画已经跑完，不会再触发。
+// 不重挂载子树（:key 方案）是因为 HistoryGraph 的滚动位置和 ChangesPanel 的内部状态都要保留。
+const repoAnimOn = ref(false);
+const repoVisiblePaths = computed(() =>
+  barOrder.value.filter((x): x is BarRepo => x.kind === "repo").map((x) => x.path),
+);
+const repoAnimClass = computed(() => {
+  if (!repoAnimOn.value) return "";
+  return repoSwitchDir.value > 0
+    ? "repo-in-right"
+    : repoSwitchDir.value < 0
+      ? "repo-in-left"
+      : "repo-in-fade";
+});
+let repoAnimSeq = 0;
+let repoAnimTimer = 0;
+watch(repo, async (next, prev) => {
+  const seq = ++repoAnimSeq;
+  clearTimeout(repoAnimTimer);
+  repoAnimOn.value = false;
+  repoSwitchDir.value = 0;
+  // 关闭最后一个仓库：直接回空态，没有可播的内容
+  if (!next) return;
+  const order = repoVisiblePaths.value;
+  const ni = order.indexOf(next);
+  const oi = prev ? order.indexOf(prev) : -1;
+  repoSwitchDir.value = ni >= 0 && oi >= 0 && ni !== oi ? (ni > oi ? 1 : -1) : 0;
+  await nextTick(); // 等「摘类」这次渲染落到 DOM，再挂回去才能重新触发
+  if (seq !== repoAnimSeq) return;
+  repoAnimOn.value = true;
+  // 170ms 时长 + 最大 60ms stagger，留一点余量后收掉 class，让元素回到无动画的常态
+  repoAnimTimer = window.setTimeout(() => {
+    if (seq === repoAnimSeq) repoAnimOn.value = false;
+  }, 260);
+});
+
 // ---- 拖拽归组：仓库 tab 拖到文件夹上松手 = 收进该分组 ----
 // 拖动期间用 elementFromPoint 命中检测文件夹并高亮；落在文件夹上时 Sortable 做的
 // 中间排序会被 syncBar 修剪掉（仓库已带 group），无需回滚
@@ -2341,6 +2382,7 @@ onUnmounted(() => {
       <aside
         v-show="!leftFold"
         class="shrink-0 overflow-y-auto border-r border-border"
+        :class="[repoAnimOn && !leftFold ? repoAnimClass : '', 'repo-anim-1']"
         :style="{ width: leftW + 'px' }"
       >
         <div class="px-3 pt-3.5 pb-2 text-2xs font-semibold tracking-wide text-muted-foreground">
@@ -2457,7 +2499,7 @@ onUnmounted(() => {
       </div>
 
       <!-- 历史（滚动与虚拟化内聚在 HistoryGraph，App 只接加载更多） -->
-      <section class="flex min-w-0 flex-1 flex-col">
+      <section class="flex min-w-0 flex-1 flex-col" :class="[repoAnimOn ? repoAnimClass : '', 'repo-anim-2']">
         <div class="flex items-center gap-2 border-b border-border px-2.5 py-2">
           <!-- 视图范围：当前分支 / 所有分支 -->
           <Select
@@ -2580,6 +2622,7 @@ onUnmounted(() => {
       <!-- 变更 -->
       <aside
         class="shrink-0 overflow-y-auto border-l border-border"
+        :class="[repoAnimOn ? repoAnimClass : '', 'repo-anim-3']"
         :style="{ width: rightW + 'px' }"
       >
         <ChangesPanel

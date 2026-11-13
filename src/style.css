@@ -665,6 +665,59 @@ body,
   pointer-events: none; /* 退场期间不再响应悬停/点击 */
 }
 
+/* 切换仓库选项卡：左栏 / 历史 / 右栏三块 stagger 入场。
+   用 animation 不用 transition —— 切换后 status、log、branches 是分批到达的，
+   数据更新会反复打断 transition（起止状态不断被重置），动画可能停在半透明；
+   animation 一旦启动就跑完，不受后续 DOM/数据变化影响。
+   fill-mode: both 让 animation-delay 期间先保持 from 状态，否则延迟段按终态渲染、起播时闪一下。 */
+@keyframes repo-in-left {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes repo-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes repo-in-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.repo-in-left {
+  animation: repo-in-left var(--dur-base) var(--ease-out) both;
+}
+.repo-in-right {
+  animation: repo-in-right var(--dur-base) var(--ease-out) both;
+}
+.repo-in-fade {
+  animation: repo-in-fade var(--dur-base) var(--ease-out) both;
+}
+/* 延迟必须写在 shorthand 之后：animation 简写会把 delay 重置为 0 */
+.repo-anim-1 {
+  animation-delay: 0ms;
+}
+.repo-anim-2 {
+  animation-delay: 30ms;
+}
+.repo-anim-3 {
+  animation-delay: 60ms;
+}
+
 /* 侧栏/抽屉类横向入场 */
 @utility slide-in-right {
   transition:
@@ -693,6 +746,12 @@ body,
   ::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+  /* 时长归零后，stagger 的 delay 会让内容先停在透明态几十毫秒，这里一并归零 */
+  .repo-anim-1,
+  .repo-anim-2,
+  .repo-anim-3 {
+    animation-delay: 0s !important;
   }
 }
 
