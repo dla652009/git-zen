@@ -339,6 +339,67 @@
   --highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
 }
 
+/* Windows XP / Luna
+   画布是 Luna 的米银色（3D 对象默认色 #e3e5e9 一带），面板/浮层用更亮的任务面板白，
+   文字沿 Luna 的近黑 #1a1d21。蓝是 XP 的 RGB(10,36,106) 深蓝派生的强调色（直接用
+   原版的 #0a246a 做按钮底/主色时浅色变体全部过不了 4.5:1，强调控件统一改用提亮一档
+   的钢蓝）。控件立体感（渐变 + 1px 描边 + 内高光/内凹）token 表达不了，统一放在
+   文件末尾的「Luna 皮肤」一节；这里只保证「谁高谁低」和 4.5:1 的静态底线。 */
+[data-theme="xp"] {
+  --background: #e3e5e9;
+  --foreground: #1a1d21;
+  --card: #f1f2f4;
+  --elevated: #ffffff;
+  --muted: #d7dae0;
+  --input-bg: #ffffff;
+  --muted-foreground: #575e66;
+  --border: #a8adb8;
+  --primary: #2a4fbd;
+  --primary-foreground: #ffffff;
+  --secondary: #e9ebee;
+  --secondary-foreground: #1a1d21;
+  --destructive: #b3252c;
+  --scrollbar-thumb: #b4bac4;
+  --diff-add-bg: #e2f3e4;
+  --diff-add-text: #15692c;
+  --diff-del-bg: #fbe2e4;
+  --diff-del-text: #a8102a;
+
+  /* 状态语义色（浅色底，全部用深语义色；--c-conf 当文字用必须 ≥4.5:1） */
+  --c-add: #1a7f37;
+  --c-mod: #1a6fb5;
+  --c-del: #b3252c;
+  --c-ren: #5a4cc4;
+  --c-conf: #0b5f77;
+
+  --graph-line: #767c87;
+
+  --badge-default-bg: #dfe2f7;
+  --badge-default-fg: #2b3f9e;
+  --badge-info-bg: #d6e4f3;
+  --badge-info-fg: #1f5a8a;
+  --badge-warning-bg: #d8e6ea;
+  --badge-warning-fg: #0e5f76;
+  --badge-danger-bg: #f4d8da;
+  --badge-danger-fg: #9c272e;
+
+  --btn-danger-bg: #b3252c;
+  --btn-danger-fg: #ffffff;
+  --btn-danger-bg-hover: #961e24;
+
+  --switch-off-bg: #787e88;
+
+  /* 交互叠加走 Luna 蓝：悬停/选中不是「变灰」，而是泛一层淡蓝 */
+  --hover: color-mix(in srgb, #2a4fbd 10%, transparent);
+  --active: color-mix(in srgb, #2a4fbd 18%, transparent);
+  --primary-soft: #dbe4f7;
+
+  --scrim: color-mix(in srgb, #1a2450 32%, transparent);
+  --shadow-key: rgb(20 24 34 / 0.22);
+  --shadow-ambient: rgb(20 24 34 / 0.24);
+  --highlight: inset 0 1px 0 rgb(255 255 255 / 0.9);
+}
+
 /* ============================================================================
    Tailwind 主题注册
    ============================================================================ */
@@ -781,6 +842,225 @@ html[data-theme="win7"] [data-titlebar] [data-caption-btn="close"]:hover {
 }
 
 html[data-theme="win7"] [data-titlebar] [data-caption-btn="close"]:active {
+  background-image: linear-gradient(180deg, #c0382b 0%, #a8251c 100%);
+  box-shadow: inset 0 2px 3px rgb(60 8 4 / 0.4);
+}
+
+/* ============================================================================
+   Windows XP / Luna 皮肤
+   ----------------------------------------------------------------------------
+   配色、层次、对比度都由上面的 [data-theme="xp"] token 块负责；这一节只补
+   token 表达不了的东西：Luna 的 3D 起伏控件（渐变 + 1px 深描边 + 内高光/内凹）、
+   XP 的方角、对话框标题条、窗口镶边的工具条渐变。
+
+   钩子与 Win7 层同一套约定（surface 三兄弟 / data-* / .gz-btn / .gz-field），
+   全部限定在 html[data-theme="xp"] 下，别的主题产物一个字节不变。
+   ============================================================================ */
+
+/* ── 尺度 ───────────────────────────────────────────────────────────────── */
+/* XP 的控件也是方的：圆角 2-3px（仅浮层留 4px 略柔一点） */
+html[data-theme="xp"] {
+  --radius-xs: 2px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-lg: 4px;
+  --dur-fast: 90ms;
+}
+
+/* XP 的键盘焦点同样是控件内部的 1px 虚点框 */
+html[data-theme="xp"] :focus-visible {
+  outline: 1px dotted #1a2450;
+  outline-offset: -3px;
+}
+
+/* ── 滚动条 ─────────────────────────────────────────────────────────────── */
+html[data-theme="xp"] ::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+
+html[data-theme="xp"] ::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 4px;
+  background-color: #b9bfca;
+  background-clip: padding-box;
+}
+
+html[data-theme="xp"] ::-webkit-scrollbar-thumb:hover {
+  background-color: #a5adba;
+}
+
+/* ── 窗口镶边 ───────────────────────────────────────────────────────────── */
+/* 顶部工具条 / 选项卡栏 / 侧栏：Luna 米银的立体渐变，收 1px 下缘线 */
+html[data-theme="xp"] header {
+  background-image: linear-gradient(180deg, #f7f8fa 0%, #e9ebee 55%, #dcdfe4 100%);
+  border-bottom-color: #a8adb8;
+  text-shadow: 0 1px 0 rgb(255 255 255 / 0.75);
+}
+
+html[data-theme="xp"] [data-tab-bar] {
+  background-image: linear-gradient(180deg, #eaecef 0%, #dde0e6 100%);
+  border-bottom-color: #a2a8b3;
+}
+
+html[data-theme="xp"] aside {
+  background-image: linear-gradient(90deg, #eceef1 0%, #e2e5e9 100%);
+}
+
+/* ── 按钮 ───────────────────────────────────────────────────────────────── */
+/* ghost / quiet 保持无皮（悬停底色交给 --hover 的蓝调），其余走 3D 起伏：
+   米银渐变 + 1px 灰描边 + 顶部 1px 白高光，按下去整块内凹 */
+html[data-theme="xp"] .gz-btn:not([data-variant="ghost"]):not([data-variant="quiet"]) {
+  border: 1px solid #8b909b;
+  background-image: linear-gradient(180deg, #fdfdfe 0%, #f2f3f5 48%, #dfe2e6 100%);
+  box-shadow: inset 0 1px 0 #ffffff;
+  text-shadow: 0 1px 0 rgb(255 255 255 / 0.8);
+}
+
+html[data-theme="xp"] .gz-btn:not([data-variant="ghost"]):not([data-variant="quiet"]):hover {
+  border-color: #2a4fbd;
+  background-image: linear-gradient(180deg, #fdfefe 0%, #eff3fc 48%, #dde5f7 100%);
+}
+
+html[data-theme="xp"] .gz-btn:not([data-variant="ghost"]):not([data-variant="quiet"]):active {
+  border-color: #1e3a8f;
+  background-image: linear-gradient(180deg, #d3daf1 0%, #e2e7f6 100%);
+  box-shadow: inset 0 2px 3px rgb(20 24 34 / 0.25);
+}
+
+/* 主按钮 = XP 的「默认按钮」：浅蓝渐变 + 深字 + 深蓝描边。
+   与 Win7 同理不做蓝实心 + 白字：这档浅蓝上白字过不了 4.5:1，
+   而 XP 的默认按钮本来就是深字描蓝边。 */
+html[data-theme="xp"] .gz-btn[data-variant="default"] {
+  border: 1px solid #1e3a8f;
+  background-image: linear-gradient(180deg, #f2f6fe 0%, #dde6fa 45%, #c4d4f5 100%);
+  color: #16255c;
+  box-shadow: inset 0 1px 0 #ffffff, 0 0 3px rgb(42 79 189 / 0.4);
+  text-shadow: 0 1px 0 rgb(255 255 255 / 0.85);
+}
+
+/* 压掉 cva 基础串里的 hover:opacity-90：半透明会让渐变发灰 */
+html[data-theme="xp"] .gz-btn[data-variant="default"]:hover {
+  opacity: 1;
+  border-color: #16255c;
+  background-image: linear-gradient(180deg, #f7faff 0%, #e4ecfc 45%, #cad9f7 100%);
+}
+
+html[data-theme="xp"] .gz-btn[data-variant="default"]:active {
+  background-image: linear-gradient(180deg, #c6d2f2 0%, #dbe4f8 100%);
+  box-shadow: inset 0 2px 3px rgb(20 24 34 / 0.25);
+}
+
+/* 危险按钮保留语义红，只补立体感（顶部高光提到 88% 保住白字 4.5:1） */
+html[data-theme="xp"] .gz-btn[data-variant="destructive"] {
+  border: 1px solid #7c1a1f;
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--btn-danger-bg) 88%, #ffffff) 0%,
+    var(--btn-danger-bg) 52%,
+    var(--btn-danger-bg-hover) 100%
+  );
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.35);
+}
+
+/* ── 输入框 / 下拉 ──────────────────────────────────────────────────────── */
+/* XP 的输入框：白底 + 1px 深描边 + 内凹阴影，聚焦变深蓝边 */
+html[data-theme="xp"] .gz-field {
+  border: 1px solid #8b909b;
+  background-color: #ffffff;
+  box-shadow: inset 0 1px 2px rgb(20 24 34 / 0.15);
+}
+
+html[data-theme="xp"] .gz-field:focus,
+html[data-theme="xp"] .gz-field:focus-visible,
+html[data-theme="xp"] .gz-field:focus-within {
+  outline: none;
+  border-color: #1e3a8f;
+  box-shadow: inset 0 1px 2px rgb(20 24 34 / 0.15), 0 0 0 1px #b8c8ee;
+}
+
+/* ── 表面 ───────────────────────────────────────────────────────────────── */
+/* 弹窗/菜单：白底 + 1px 灰描边 + 又短又实的投影（XP 不做大柔光） */
+html[data-theme="xp"] .surface,
+html[data-theme="xp"] .surface-menu {
+  border: 1px solid #8b909b;
+  box-shadow:
+    0 0 0 1px rgb(255 255 255 / 0.5),
+    0 2px 6px rgb(20 24 34 / 0.2),
+    0 12px 26px -10px rgb(20 24 34 / 0.4);
+}
+
+html[data-theme="xp"] .surface-panel {
+  border-color: #b0b5bf;
+}
+
+/* ── 对话框标题条 ───────────────────────────────────────────────────────── */
+/* Luna 的 caption 是米银渐变 + 1px 分隔线 + 深色标题字。两种结构各一条规则，
+   写法与 Win7 层完全一致（A 型容器自带 <header>；B 型 [id$="-title"] 负边距贴边）。 */
+html[data-theme="xp"] .surface header {
+  background-image: linear-gradient(180deg, #f8f9fb 0%, #eaedf0 55%, #dee1e6 100%);
+  border-bottom-color: #a8adb8;
+  text-shadow: 0 1px 0 rgb(255 255 255 / 0.8);
+}
+
+html[data-theme="xp"] .surface > header {
+  border-top-left-radius: calc(var(--radius-lg) - 1px);
+  border-top-right-radius: calc(var(--radius-lg) - 1px);
+}
+
+html[data-theme="xp"] .surface > [id$="-title"] {
+  /* 负边距沿用的就是容器那圈 p-5，所以标题条能严丝合缝贴满整宽 */
+  margin: -1.25rem -1.25rem 0.75rem;
+  padding: 0.5rem 1.25rem 0.45rem;
+  background-image: linear-gradient(180deg, #f8f9fb 0%, #eaedf0 55%, #dee1e6 100%);
+  border-bottom: 1px solid #a8adb8;
+  border-top-left-radius: calc(var(--radius-lg) - 1px);
+  border-top-right-radius: calc(var(--radius-lg) - 1px);
+}
+
+/* ── 自绘标题栏（Luna caption）──────────────────────────────────────────── */
+/* XP 的标题栏：亮银渐变、顶部一道白高光；三键是 29×22 的小按钮，悬停泛蓝、
+   关闭键悬停整块转红（Luna 的关闭键就是红块白 X，但渐变高光段要压住 4.5:1 的白字）。 */
+html[data-theme="xp"] [data-titlebar] {
+  height: 30px;
+  color: #1a2450;
+  background-image: linear-gradient(180deg, #fcfdfe 0%, #eff2f6 42%, #dfe3e9 100%);
+  border-bottom-color: #a8adb8;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.95);
+  text-shadow: 0 1px 0 rgb(255 255 255 / 0.8);
+}
+
+html[data-theme="xp"] [data-titlebar] [data-caption-btn] {
+  width: 29px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  color: #1a2450;
+  background-image: linear-gradient(180deg, #fcfdfe 0%, #eef1f5 48%, #dee2e8 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  text-shadow: none;
+}
+
+html[data-theme="xp"] [data-titlebar] [data-caption-btn]:hover {
+  border-color: #2a4fbd;
+  background-image: linear-gradient(180deg, #f6f9ff 0%, #e2eafc 48%, #cddaf7 100%);
+}
+
+html[data-theme="xp"] [data-titlebar] [data-caption-btn]:active {
+  border-color: #1e3a8f;
+  background-image: linear-gradient(180deg, #c8d3f1 0%, #dbe3f8 100%);
+  box-shadow: inset 0 2px 3px rgb(20 24 34 / 0.22);
+}
+
+html[data-theme="xp"] [data-titlebar] [data-caption-btn="close"]:hover {
+  border-color: #a8251c;
+  color: #ffffff;
+  background-image: linear-gradient(180deg, #f6b4a9 0%, #d94a3c 48%, #b8332a 100%);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5);
+  text-shadow: 0 1px 1px rgb(90 15 8 / 0.45);
+}
+
+html[data-theme="xp"] [data-titlebar] [data-caption-btn="close"]:active {
   background-image: linear-gradient(180deg, #c0382b 0%, #a8251c 100%);
   box-shadow: inset 0 2px 3px rgb(60 8 4 / 0.4);
 }

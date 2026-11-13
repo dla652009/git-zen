@@ -45,7 +45,7 @@ const contrast = (a: string, b: string): number => {
   const [hi, lo] = [relLum(a), relLum(b)].sort((x, y) => y - x);
   return (hi + 0.05) / (lo + 0.05);
 };
-const WORST_LIGHT_BG = "#eff1f5"; // catppuccin-latte --background
+const WORST_LIGHT_BG = "#e3e5e9"; // xp --background（现 6 套主题里最暗的浅色底）
 const WORST_DARK_BG = "#282c34"; // 已下线的 One Dark 曾用的 --background，留作保守下界
 for (const col of LANE_COLORS) {
   const L = relLum(col);

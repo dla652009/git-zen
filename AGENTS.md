@@ -18,7 +18,7 @@ pnpm tauri dev                                # 开发（首次 Rust 编译 3-5 
 pnpm verify                                   # 一把梭：契约检查 + 对比度检查 + 类型检查 + 8 个前端自检 + 构建
 npx vue-tsc --noEmit                          # 类型检查（pnpm build 内置）
 node scripts/check-contract.mjs               # 契约检查：command 注册 + gitApi↔git.rs 结构体镜像
-node scripts/check-contrast.mjs               # 对比度检查：7 套主题的 WCAG AA（改主题/配色后必跑）
+node scripts/check-contrast.mjs               # 对比度检查：6 套主题的 WCAG AA（改主题/配色后必跑）
 node --experimental-strip-types src/graph.test.ts        # 泳道布局自检（需 Node ≥22.6）
 node --experimental-strip-types src/lib/patch.test.ts    # diff 解析自检
 node --experimental-strip-types src/lib/overlays.test.ts # 浮层优先级自检

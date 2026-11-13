@@ -28,6 +28,8 @@ export const THEMES = [
   { id: "catppuccin-mocha", label: "Catppuccin Mocha" },
   // 全套 Aero 皮肤（配色 + 控件皮），皮肤层在 style.css 末尾
   { id: "win7", label: "Windows 7" },
+  // 全套 Luna 皮肤（配色 + 控件皮），皮肤层在 style.css 末尾
+  { id: "xp", label: "Windows XP" },
 ];
 
 const KEY = "gz.settings";

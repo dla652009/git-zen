@@ -135,7 +135,7 @@ const laneColors = parseLaneColors(readFileSync(GRAPH_TS, "utf8"));
 const fatal = [];
 
 // 解析器先把「解析出来的条目数」断言掉：漏认一个主题块会让整张表静默少一套主题（假绿）
-const EXPECTED_THEMES = 5; // settings.ts THEMES 里除 system 外：dark + light + catppuccin-mocha + catppuccin-latte + win7
+const EXPECTED_THEMES = 6; // settings.ts THEMES 里除 system 外：dark + light + catppuccin-mocha + catppuccin-latte + win7 + xp
 if (themes.size < EXPECTED_THEMES) {
   fatal.push(
     `只解析出 ${themes.size} 套主题（期望 ${EXPECTED_THEMES} 套）：${[...themes.keys()].join(" / ") || "（空）"}\n` +
