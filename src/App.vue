@@ -32,7 +32,7 @@ import {
   PanelRight,
 } from "@lucide/vue";
 import * as api from "./gitApi";
-import { abortAi } from "./ai";
+import { AI_PROMPTS, abortAi, aiComplete, clipForAI, isAbortError } from "./ai";
 import type { Status, LogEntry, Branch, TagEntry, ReflogEntry } from "./gitApi";
 import { parseBranchPrefixes, settings } from "./settings";
 import { workflows } from "./workflowStore";
@@ -63,6 +63,7 @@ import ErrorDialog from "./components/ErrorDialog.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import GroupNameDialog from "./components/GroupNameDialog.vue";
 import AiReviewDialog from "./components/AiReviewDialog.vue";
+import MrPreviewDialog from "./components/MrPreviewDialog.vue";
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue";
 import RepoSwitcher from "./components/RepoSwitcher.vue";
 import CommandPalette from "./components/CommandPalette.vue";
@@ -79,7 +80,14 @@ import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
 import { closeTop, type OverlayLayer, type OverlayName } from "./lib/overlays";
 import { readJsonArray, readJsonObject } from "./lib/safeJson";
-import { buildMrUrl, normalizeMrPresets, type MrPreset } from "./lib/mrUrl";
+import {
+  buildMrUrl,
+  mrPrefillToClipboard,
+  normalizeMrPresets,
+  parseMrDraft,
+  type MrPreset,
+} from "./lib/mrUrl";
+import { readCommitConvention } from "./lib/repoDocs";
 import { imeGuard } from "./lib/imeGuard";
 
 const repo = ref(localStorage.getItem("gz.repo") ?? "");
@@ -216,13 +224,14 @@ const dstBranch = computed(() => {
   const upstream = branchList.value.find((x) => x.current && !x.remote)?.upstream ?? "";
   return upstream.replace(/^[^/]+\//, "");
 });
-const mrUrl = computed(() =>
-  buildMrUrl({
-    originUrl: remoteRaw.value,
-    template: mrTemplate.value,
-    srcBranch: currentBranchName.value,
-    dstBranch: dstBranch.value,
-  }),
+const mrUrl = computed(
+  () =>
+    buildMrUrl({
+      originUrl: remoteRaw.value,
+      template: mrTemplate.value,
+      srcBranch: currentBranchName.value,
+      dstBranch: dstBranch.value,
+    })?.url ?? null,
 );
 const remoteCtx = ref<{ x: number; y: number } | null>(null);
 function openMrUrl(url: string | null) {
@@ -232,19 +241,164 @@ function openMrUrl(url: string | null) {
   }
   toast("未能识别该远程主机，可在设置 › 远程配置 MR 页模板", "info");
 }
+
+// ---- AI 生成 MR 标题/描述（设置 › AI 开关，默认关）----
+// 点击菜单时把仓库与分支快照下来：生成期间用户可能切走选项卡，切走后本次生成作废；
+// 「打开」始终针对发起时的那次 MR，不会被别的仓库状态串味。
+const mrPreviewOpen = ref(false);
+const mrPreviewRepo = ref("");
+const mrPreviewOrigin = ref("");
+const mrPreviewTemplate = ref("");
+const mrPreviewSrc = ref("");
+const mrPreviewDst = ref("");
+const mrPreviewTitle = ref("");
+const mrPreviewBody = ref("");
+const mrPreviewBusy = ref(false);
+const mrPreviewErr = ref("");
+const mrPreviewPrefill = ref(true);
+
+/** AI 是否可用：总开关打开且配置了 Key（本地 Ollama 可留空） */
+function aiReady(): boolean {
+  if (settings.aiEnabled !== "on") return false;
+  return !!(
+    settings.aiBaseUrl.trim() &&
+    (settings.aiApiKey.trim() || settings.aiBaseUrl.includes("localhost"))
+  );
+}
+
+function openMrPreview(src: string, dst: string) {
+  mrPreviewRepo.value = repo.value;
+  mrPreviewOrigin.value = remoteRaw.value;
+  mrPreviewTemplate.value = mrTemplate.value;
+  mrPreviewSrc.value = src;
+  mrPreviewDst.value = dst;
+  mrPreviewTitle.value = "";
+  mrPreviewBody.value = "";
+  mrPreviewBusy.value = false;
+  mrPreviewErr.value = "";
+  mrPreviewPrefill.value =
+    buildMrUrl({
+      originUrl: mrPreviewOrigin.value,
+      template: mrPreviewTemplate.value,
+      srcBranch: src,
+      dstBranch: dst,
+    })?.supportsPrefill ?? true;
+  mrPreviewOpen.value = true;
+  genMrDescription();
+}
+
+async function genMrDescription() {
+  if (mrPreviewBusy.value) return;
+  const path = mrPreviewRepo.value;
+  const src = mrPreviewSrc.value;
+  const dst = mrPreviewDst.value;
+  if (!path || !src || !dst) {
+    mrPreviewErr.value = "缺少源分支或目标分支，无法读取 diff";
+    return;
+  }
+  if (!aiReady()) {
+    mrPreviewErr.value = "AI 未启用或未配置：设置 › AI 开启并填写服务后即可生成";
+    return;
+  }
+  mrPreviewBusy.value = true;
+  mrPreviewErr.value = "";
+  try {
+    const d = await api.diffMr(path, src, dst);
+    // 绑定仓库：diff / log / AI 之间用户可能切走选项卡，三处必须读同一个仓库
+    if (repo.value !== path) {
+      mrPreviewErr.value = "已切换仓库，生成已停止；切回原仓库重试或手动填写";
+      return;
+    }
+    if (!d.trim()) {
+      mrPreviewErr.value = `${src} 相对 ${dst} 没有差异，无法生成`;
+      return;
+    }
+    // 与 AI 生成提交信息一致：近期提交推断风格，仓库规范文档优先
+    const [recentLog, convention] = await Promise.all([
+      api.log(path).then((list) =>
+        list.slice(0, 10).map((c) => c.subject).join("\n"),
+      ),
+      readCommitConvention(path),
+    ]);
+    if (repo.value !== path) {
+      mrPreviewErr.value = "已切换仓库，生成已停止；切回原仓库重试或手动填写";
+      return;
+    }
+    const user = `${
+      convention ? `【仓库贡献规范】\n${convention}\n\n` : ""
+    }【仓库近期提交风格】\n${recentLog || "（无历史提交）"}\n\n【${src} 相对 ${dst} 的 diff】\n${clipForAI(d)}`;
+    const text = await aiComplete(
+      AI_PROMPTS.mrDescription.system(settings.aiCommitLang, convention),
+      user,
+    );
+    if (repo.value !== path) {
+      mrPreviewErr.value = "已切换仓库，生成已停止；切回原仓库重试或手动填写";
+      return;
+    }
+    const draft = parseMrDraft(text);
+    mrPreviewTitle.value = draft.title;
+    mrPreviewBody.value = draft.body;
+  } catch (e) {
+    if (isAbortError(e)) return; // 关弹窗取消，不是失败
+    mrPreviewErr.value = humanize(e).msg;
+  } finally {
+    mrPreviewBusy.value = false;
+  }
+}
+
+function copyMrDraft() {
+  const text = mrPrefillToClipboard(mrPreviewTitle.value, mrPreviewBody.value);
+  if (!text) {
+    toast("标题与描述都是空的", "info");
+    return;
+  }
+  copyText(text);
+  toast("标题与描述已复制");
+}
+
+function confirmMrPreview() {
+  const target = buildMrUrl({
+    originUrl: mrPreviewOrigin.value,
+    template: mrPreviewTemplate.value,
+    srcBranch: mrPreviewSrc.value,
+    dstBranch: mrPreviewDst.value,
+    title: mrPreviewTitle.value,
+    body: mrPreviewBody.value,
+  });
+  if (!target) {
+    toast("未能识别该远程主机，可在设置 › 远程配置 MR 页模板", "info");
+    return;
+  }
+  // 不支持 URL 预填的主机：复制标题正文，打开基础页后由用户粘贴
+  if (!target.supportsPrefill && mrPrefillToClipboard(mrPreviewTitle.value, mrPreviewBody.value)) {
+    copyText(mrPrefillToClipboard(mrPreviewTitle.value, mrPreviewBody.value));
+    toast("标题与描述已复制，粘贴到 MR 页");
+  }
+  openUrl(target.url).catch(() => {});
+  mrPreviewOpen.value = false;
+}
+
 function openMr() {
+  // 开关开且能确定目标分支：走 AI 预览；否则保持原来的直接跳转
+  if (settings.mrAiGen === "on" && mrUrl.value && dstBranch.value) {
+    openMrPreview(currentBranchName.value, dstBranch.value);
+    return;
+  }
   openMrUrl(mrUrl.value);
 }
 // 预设项：只配 src/dst，其余（origin / 模板）与自动推断走同一套构造
 function openMrPreset(p: MrPreset) {
-  openMrUrl(
-    buildMrUrl({
-      originUrl: remoteRaw.value,
-      template: mrTemplate.value,
-      srcBranch: p.src || currentBranchName.value,
-      dstBranch: p.dst,
-    }),
-  );
+  const target = buildMrUrl({
+    originUrl: remoteRaw.value,
+    template: mrTemplate.value,
+    srcBranch: p.src || currentBranchName.value,
+    dstBranch: p.dst,
+  });
+  if (settings.mrAiGen === "on" && target) {
+    openMrPreview(p.src || currentBranchName.value, p.dst);
+    return;
+  }
+  openMrUrl(target?.url ?? null);
 }
 // 状态栏「远程」右键菜单：有预设就逐条列出（dst 已是人话短标签），
 // 没有预设时保留原来那条自动推断项；主页/复制两项始终在。
@@ -2095,6 +2249,10 @@ const overlayLayers: Record<OverlayName, OverlayLayer> = {
   palette: { open: () => showPalette.value, close: () => (showPalette.value = false) },
   error: { open: () => !!error.value, close: () => dismissError() },
   confirm: { open: () => !!confirmState.value, close: () => (confirmState.value = null) },
+  mrPreview: {
+    open: () => mrPreviewOpen.value,
+    close: () => (mrPreviewOpen.value = false),
+  },
   repoSwitcher: { open: () => showSwitcher.value, close: () => (showSwitcher.value = false) },
   branchSwitcher: {
     open: () => showBranchSwitcher.value,
@@ -2142,9 +2300,10 @@ function closeTopOverlay() {
 // 这里统一收口——任何一条关闭路径（Esc / 点遮罩 / 叉 / 关闭按钮）都会走到 flag 变化，
 // 比在 6 个关闭点上各调一次 abortAi() 更不容易漏。取消属于正常操作，不弹错误。
 watch(
-  [reviewOpen, notesOpen, showSettings, () => !!diffState.value],
-  ([r, n, s, d], [pr, pn, ps, pd]) => {
-    if ((pr && !r) || (pn && !n) || (ps && !s) || (pd && !d)) abortAi();
+  [reviewOpen, notesOpen, showSettings, mrPreviewOpen, () => !!diffState.value],
+  ([r, n, s, mp, d], [pr, pn, ps, pmp, pd]) => {
+    if ((pr && !r) || (pn && !n) || (ps && !s) || (pmp && !mp) || (pd && !d))
+      abortAi();
   },
 );
 
@@ -2964,6 +3123,21 @@ onUnmounted(() => {
       @close="fileHistoryModal = null"
     />
     </Transition>
+
+    <!-- 新建 MR 预览（AI 生成标题/描述，可编辑）：渲染在 MrPreviewDialog.vue -->
+    <MrPreviewDialog
+      v-model:open="mrPreviewOpen"
+      v-model:title="mrPreviewTitle"
+      v-model:body="mrPreviewBody"
+      :src="mrPreviewSrc"
+      :dst="mrPreviewDst"
+      :busy="mrPreviewBusy"
+      :err="mrPreviewErr"
+      :supports-prefill="mrPreviewPrefill"
+      @regen="genMrDescription()"
+      @copy="copyMrDraft()"
+      @confirm="confirmMrPreview()"
+    />
 
     <!-- AI Review 报告弹窗：渲染在 AiReviewDialog.vue -->
     <AiReviewDialog

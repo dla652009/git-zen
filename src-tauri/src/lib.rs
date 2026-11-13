@@ -33,6 +33,7 @@ pub fn run() {
             git::git_discard_staged,
             git::git_revert,
             git::git_diff_unpushed,
+            git::git_diff_mr,
             git::git_write_file,
             git::git_remote_url,
             git::git_show_file,

@@ -1267,3 +1267,15 @@ App 刷新/设置关闭时读出并拼进右键菜单。如果「保存时过滤
 做法是把 `normalizeMrPresets(raw: unknown)` 放进纯函数模块 `lib/mrUrl.ts`：非数组→空、
 trim、丢 dst 空行、src 空不存。**读取与保存都调它**，过滤规则只有一处；
 纯函数也让 `mrUrl.test.ts` 能直接钉住（不依赖 localStorage）。
+
+### MR 标题/描述预填：链接与「能不能预填」必须一起返回
+
+各平台支持面不一样：GitHub / GitLab / Gitee 能用 URL 参数预填标题正文，Bitbucket 的新建页
+不接受预填，用户自定义模板也不认识 title/body 占位符。所以 `buildMrUrl` 的返回值是
+`{ url, supportsPrefill }` 而不是单个字符串——**链接总是能打开**，是否退化为「复制到剪贴板」
+只看这个标志，前端不要再按 host 判一次（判两处迟早分叉）。
+
+AI 读的 diff 必须是 `merge-base(dst, src)..src`。直接 `dst..src` 会把目标分支上别人后来的
+提交也算进来，生成的描述与本次 MR 对不上；`git merge-base` 两次调用虽然多一次进程，
+但语义正确。生成链路（diff → log → AI）每一步之后都要校验发起时的仓库快照，
+用户切走选项卡就停止，避免把 A 的 diff 填进 B 的预览框。

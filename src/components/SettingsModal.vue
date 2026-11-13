@@ -409,6 +409,12 @@ const aiOn = computed({
   set: (v: boolean) => (draft.aiEnabled = v ? "on" : "off"),
 });
 
+// 新建 MR 时生成标题/描述（依赖 AI 总开关，关闭时灰显禁用）
+const mrAiGenOn = computed({
+  get: () => draft.mrAiGen === "on",
+  set: (v: boolean) => (draft.mrAiGen = v ? "on" : "off"),
+});
+
 // 热门字体选项（未安装的字体浏览器会自动回退，不会白屏）
 const FONT_OPTIONS = [
   { value: '"Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif', label: "默认（现代系统字体）" },
@@ -526,6 +532,20 @@ const NAV = [
               <div class="mb-4 flex items-center justify-between rounded-md border border-border bg-muted/25 px-3 py-2">
                 <span class="text-xs">启用 AI 功能</span>
                 <Switch v-model="aiOn" />
+              </div>
+              <div
+                :class="[
+                  'mb-4 flex items-center justify-between rounded-md border border-border bg-muted/25 px-3 py-2',
+                  aiOn ? '' : 'pointer-events-none opacity-40',
+                ]"
+              >
+                <div class="min-w-0 pr-3">
+                  <span class="text-xs">生成 MR 标题与描述</span>
+                  <p class="mt-0.5 text-xs text-muted-foreground">
+                    右键「远程」新建 MR 时，先按 merge-base diff 生成标题与描述供预览确认
+                  </p>
+                </div>
+                <Switch v-model="mrAiGenOn" :disabled="!aiOn" />
               </div>
               <div :class="['space-y-3', aiOn ? '' : 'pointer-events-none opacity-40']">
                 <div class="flex items-center gap-3">

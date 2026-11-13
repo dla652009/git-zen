@@ -225,6 +225,27 @@ ${convention}`
 只输出提交信息本身，不要任何解释或 Markdown 标记。提交信息语言：${lang}。`;
     },
   },
+  mrDescription: {
+    // 与 commitMessage 同源：风格与语言从仓库近期提交推断，convention 文档优先。
+    // 输出是「标题 + 空行 + 正文」的纯文本，前端按第一行/其余解析（lib/mrUrl.ts parseMrDraft）。
+    system(lang: string, convention?: string) {
+      return `你是资深工程师。根据「当前分支相对目标分支的 diff」写一条合并请求（MR/PR）的标题与描述。
+
+规则：
+1. 第一行 = 标题：简洁具体、祈使语气、无句号，风格跟随仓库近期提交（不明显时 Conventional Commits: type(scope): 主题）。
+2. 空一行后 = 描述正文：2-5 条要点，讲清「为什么改」与「改了什么」，不逐条复述 diff 文件名；有兼容性/迁移影响必须写。
+3. 只基于 diff 描述真实改动，不臆造。跟随仓库主导语言（近期提交中文则中文）。${
+        convention
+          ? `
+
+【仓库贡献规范（节选）】
+${convention}`
+          : ""
+      }
+
+输出格式：第一行标题，空一行，然后正文。不要 Markdown 标题标记（#）、不要代码块包裹、不要任何解释。标题与描述语言：${lang}。`;
+    },
+  },
   fileEvolution: {
     system: `你是资深工程师。给定一个文件的历史提交时间线与若干次关键改动的 diff 片段，用中文讲清「这个文件为什么长成现在这样」。
 

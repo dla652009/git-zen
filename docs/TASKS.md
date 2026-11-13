@@ -1431,3 +1431,27 @@ Win7 主题下是 Aero caption，其它主题是中性样式（`decorations` 是
       App 在 `refresh()` 与设置关闭时重读，保存后右键菜单立即生效
 - [x] 自检：`src/lib/mrUrl.test.ts` 覆盖四平台、模板、非法输入与预设归一
 - [x] 验证：`pnpm verify` 全绿
+
+## M27 AI 生成 MR 标题与描述
+
+在「远程」右键新建 MR 前，按当前分支相对目标分支的 merge-base diff 生成标题/描述，
+弹预览框确认后可编辑，再带参跳转新建页。
+
+- [x] 后端 `git_diff_mr(repo, src, dst)`：先 `merge-base dst src` 取共同祖先，再
+      `diff ancestor..src`，只包含源分支独有的变更；merge-base 失败带上下文报错。
+      async fn + offload，已注册 `invoke_handler`（check-contract 57 个命令全过）
+- [x] `AI_PROMPTS.mrDescription.system(lang, convention?)`：标题跟随仓库近期提交风格
+      （不明显时 Conventional Commits），正文 2-5 条讲清 why/what；近期提交与
+      CONTRIBUTING 由 App 侧照 `genCommitMsg` 的方式组装
+- [x] `buildMrUrl` 返回 `{ url, supportsPrefill }`：GitHub `title/body`、GitLab
+      `merge_request[title]/[description]`、Gitee `title/body` 支持预填；Bitbucket 与
+      自定义模板不支持（仍返回基础页，前端改为复制标题正文）
+- [x] `parseMrDraft`（标题/正文拆分、剥代码块与 # 标记）与 `mrPrefillToClipboard`
+      收进 `lib/mrUrl.ts`，`mrUrl.test.ts` 全部用例同步新返回结构
+- [x] `components/MrPreviewDialog.vue`：分支只读、标题 Input / 描述 Textarea 可编辑、
+      生成中 Spinner、失败就地「重试」；`overlays.ts` 登记 `mrPreview`（紧随 confirm）
+- [x] 设置 › AI 新增「生成 MR 标题与描述」开关（默认关；AI 总开关关闭时灰显禁用）；
+      开关关时菜单行为与原有直接跳转完全一致
+- [x] 仓库切换守卫：diff / log / AI 三步后都校验发起时仓库快照，切走即停止并提示
+- [x] 验证：`cargo check`、`check-contract`、`mrUrl.test.ts`、`vue-tsc`、
+      `vite build`、`pnpm verify` 全绿

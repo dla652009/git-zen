@@ -687,6 +687,28 @@ pub async fn git_diff_unpushed(repo: String) -> Result<String, String> {
     .await
 }
 
+/// 生成 MR 标题/描述用：源分支相对目标分支的 merge-base diff。
+/// 分两次调用——先 merge-base 拿共同祖先，再 diff ancestor..src，避免把目标分支上
+/// 别人后来的提交也算进本次变更。分支名走参数数组，含 `/` 也无需转义。
+#[tauri::command]
+pub async fn git_diff_mr(repo: String, src: String, dst: String) -> Result<String, String> {
+    offload(move || {
+        check_positional("源分支", &src)?;
+        check_positional("目标分支", &dst)?;
+        let base = run(&repo, &["merge-base", &dst, &src]).map_err(|e| {
+            format!("无法计算 {src} 与 {dst} 的共同祖先（目标分支不存在或没有共同历史）：{e}")
+        })?;
+        // merge-base 正常只输出一行 hash；取首行并校验，拒绝把异常输出拼进 revision
+        let base = base.lines().next().unwrap_or("").trim();
+        if base.is_empty() {
+            return Err(format!("无法计算 {src} 与 {dst} 的共同祖先"));
+        }
+        check_hex(base)?;
+        run(&repo, &["diff", "--no-color", &format!("{base}..{src}")])
+    })
+    .await
+}
+
 /// 放弃未推送的提交：硬重置回上游（未提交的工作区改动一并丢弃，确认框负责明示；
 /// reflog 在 git 默认 gc 期内仍可找回）。ahead>0 才有入口，无上游由 git 报错兜底
 #[tauri::command]

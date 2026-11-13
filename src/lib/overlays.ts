@@ -12,6 +12,7 @@ export const overlayOrder = [
   "palette",
   "error",
   "confirm",
+  "mrPreview",
   "repoSwitcher",
   "branchSwitcher",
   "createBranch",

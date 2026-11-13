@@ -13,6 +13,8 @@ export interface Settings {
   aiModel: string;
   aiCommitLang: string; // AI 生成提交信息的语言：中文 / English
   aiEnabled: string; // "on" / "off"，AI 功能总开关
+  /** 新建 MR 前是否先用 AI 生成标题与描述（开 = 弹预览确认框；关 = 直接跳转） */
+  mrAiGen: "on" | "off";
   /** 变更列表视图：目录树 / 平铺。放在设置里而不是组件内，这样能跨重启保留 */
   changeView: "tree" | "flat";
   /** 推送前先列出这次要推哪些提交。推送是唯一一个「做了就收不回」的日常操作，
@@ -55,6 +57,7 @@ const DEFAULTS: Settings = {
   aiModel: "gpt-4o-mini",
   aiCommitLang: "中文",
   aiEnabled: "on",
+  mrAiGen: "off",
   changeView: "flat",
   pushPreview: true,
 };
@@ -87,6 +90,8 @@ function load(): Settings {
     aiModel: pickStr(saved.aiModel, DEFAULTS.aiModel),
     aiCommitLang: pickStr(saved.aiCommitLang, DEFAULTS.aiCommitLang),
     aiEnabled: pickStr(saved.aiEnabled, DEFAULTS.aiEnabled),
+    // 新功能默认关：老用户升级后行为不变，想要的人在设置里显式打开
+    mrAiGen: saved.mrAiGen === "on" ? "on" : "off",
     // 只认这两个值，其余（历史值、手改的脏值）回退默认值 —— 别在这里写死，
     // 否则改 DEFAULTS 的时候会悄悄不生效
     changeView:

@@ -70,6 +70,9 @@ export const diff = (repo: string, paths: string[], cached: boolean) =>
   invoke<string>("git_diff", { repo, paths, cached });
 export const diffUnpushed = (repo: string) =>
   invoke<string>("git_diff_unpushed", { repo });
+/** MR 标题/描述生成用：src 相对 dst 的 merge-base diff */
+export const diffMr = (repo: string, src: string, dst: string) =>
+  invoke<string>("git_diff_mr", { repo, src, dst });
 export const showFile = (repo: string, hash: string, path: string) =>
   invoke<string>("git_show_file", { repo, hash, path });
 /** 读仓库内文本文件（工作区内容）。文件不存在 / 是二进制时返回 null，不算错误 */
