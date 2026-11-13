@@ -928,3 +928,48 @@ node_modules 挡着（clean 读的是当时还活着的工作区规则），**�
 
 **修复**：收集 `(深度, 规则)` 后按深度升序稳定排序再拼，越深的 `.gitignore` 越靠后（git 的语义）。
 回归：`reset_clean_deep_negation_overrides_shallow_rule`。
+## 工作流清理原语
+
+### 删除远程分支：剥掉 `origin/` 前缀会删错另一个分支
+
+**现象**：远程同时存在 `foo` 与 `origin/foo` 时，步骤填 `origin/foo`，实际输出 `- [deleted] foo`，
+另一个分支被删；用户看到的是「成功」。
+
+**根因**：为了照顾「照抄描述里的 `origin/`」，执行器把名字里的 `origin/` 前缀无条件剥掉。但远程分支
+名本身完全可以是 `origin/foo`，`git push origin --delete origin/foo` 也能精确删掉它 —— 剥前缀等于
+把「用户指的那个」换成「另一个」。
+
+**修复**：名字原样传给 git，不剥前缀；`describeStep` 在名字已带 `origin/` 时不再拼一遍（否则显示
+`origin/origin/foo`）；输入框占位符按原语区分，提示「不带 origin/」；名字以 `origin/` 开头且远程没有它时，
+补一句「要删 `origin/foo` 就填 `foo`」。同时挡掉 `refs/…`、`+…`、`foo:bar` 这类 refspec —— `refs/tags/v1`
+会真的把远程 tag 删掉。
+
+### 删除本地分支：`-D` 大小写不敏感，`status.branch` 直接比较会漏
+
+**现象**：当前分支 `Feature/Case`，步骤填 `feature/case` 时「不能删除当前分支」的拦截失效，
+分支被删、HEAD 变 unborn，紧接着的「提交推送」产出一个 root commit，历史从此断开。
+
+**根因**：Windows 文件系统大小写不敏感，`git branch -D feature/case` 命中的是 `Feature/Case` 的同一个
+ref 文件；而 `status.branch` 给的是原始大小写，`hit.name === st.branch` 为假。
+
+**修复**：先用 `git branch` 列表把名字解析成规范名（精确匹配优先，忽略大小写只在唯一命中时采用），
+再用规范名比对与删除。回归：手动在临时仓库用 `Feature/Case` + `feature/case` 复现。
+
+### 删除分支：起始分支被无条件拒绝，「先切走再删」的合法流程也被拦
+
+**现象**：流程「先 checkout 到别的分支 → 删除起始分支」仍报「这是起始分支，请改成先切走的流程」——
+用户明明已经切走了；文案与判断自相矛盾。
+
+**修复**：只在**后续步骤还依赖起始分支**时才拒绝（存在「切回起始分支」，或某步的分支来源写成
+「起始分支」），并且每步用 `wf.steps.slice(i + 1)` 现算，中途重试也成立；文案改成说明「先删掉那些步骤」。
+`switchBack` 另外先验起始分支是否存在，避免英文 pathspec 与「删除已生效、重试永不自愈」。
+
+### 错误翻译：`branch … not found` / `cannot delete branch` 被别的规则抢先命中
+
+**现象**：分支名本身叫 `conflict`（或含 `403`）时，删不存在的分支被说成「产生合并冲突」「认证失败」；
+删当前分支（git 2.56 的真实文案是 `cannot delete branch 'main' used by worktree at …`）被说成「尚未合并」。
+
+**根因**：`humanize` 的规则是「谁先命中谁说了算」，而这几条规则的顺序是按场景追加的，没按「谁更具体」排。
+
+**修复**：`branch … not found` 提到认证失败与冲突之前，`cannot delete branch` 提到未合并与 worktree 占用之前；
+自检改用 git 2.56 的真实输出样本，并补「分支名叫 conflict / 含 403」两个抢匹配用例（`src/lib/errors.test.ts`）。

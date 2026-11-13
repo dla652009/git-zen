@@ -1318,8 +1318,8 @@ merge / cherry-pick / revert / rebase / am 先放弃。**刻意不带 `clean -x`
 
 ## M21 Windows 7 主题（Aero 皮肤）
 
-给「设置 › 主题」加一套 `win7`，做全套 Aero 皮肤而不只是换配色。窗口装饰仍交给 Tauri 原生
-（不做无边框自绘），皮肤只作用在应用内容区。
+给「设置 › 主题」加一套 `win7`，做全套 Aero 皮肤而不只是换配色。皮肤只作用在应用内容区；
+窗口标题栏后来在 M24 改成自绘（`decorations: false`）。
 
 - [x] token 块 `[data-theme="win7"]`：Win7 浅灰蓝画布 + 白面板 + Aero 蓝的 hover/active/选中
       （`--primary-soft` 换蓝，全站 15 处 `bg-primary-soft` 直接跟着变蓝条），
@@ -1361,11 +1361,13 @@ merge / cherry-pick / revert / rebase / am 先放弃。**刻意不带 `clean -x`
       「跑完删掉 feature/xxx」是固定意图，执行时再问一遍只会点错
 - [x] **本地删除固定 `-D`**（用户拍板）：不带「未合并会拒绝」的软删，语义就是「不管有没有合并都删」
 - [x] **远程删除固定走 `origin`**：多远程仓库极少见；找不到该远程时 git 直接报错，不会静默成功
+- [x] **远程分支名原样传，不剥 `origin/` 前缀**：远程真存在名叫 `origin/foo` 的分支时，剥掉会删掉
+      另一个同名分支；git 自己能精确删 `origin/foo`。输入框占位符按原语区分，提示别带前缀
 - [x] **删当前分支前置拦截**：先把名字用 `git_branches` 解析成「规范名」再比对 `status.branch` ——
       `-D` 在 Windows 上按大小写不敏感命中同一个 ref 文件（`feature/x` 能删掉 `Feature/X`），
       直接字符串比较会漏；漏掉的后果是 HEAD 变 unborn、后续提交变成 root commit 断历史
-- [x] **删起始分支也拦**：删掉 `$起始分支` 会让后面的「切回起始分支」永久失败（删除已生效、
-      重试停在同一步），因此直接拒绝并说明
+- [x] **删起始分支只在后续步骤依赖它时才拦**：后面有「切回起始分支」或某步的分支来源写成
+      「起始分支」才拒绝（那时删了会让后续永久失败）；「先 checkout 切走 → 再删」是合法流程，放行
 - [x] **`switchBack` 先验存在**：起始分支可能被前面的步骤删掉，`checkout` 只会甩英文 pathspec
 - [x] 编辑器：`STEP_ICONS` 加 `Trash2` / `CloudOff`，`KIND_LABELS` 加两项，两者都进 `DANGER_HINTS`
       （强删丢提交、远程删除影响他人）；步骤行与添加表单共用 `newStepName` 输入分支名；
@@ -1373,6 +1375,24 @@ merge / cherry-pick / revert / rebase / am 先放弃。**刻意不带 `clean -x`
 - [x] 错误翻译补规则并修顺序：`does not appear to be a git repository` 提到
       `could not read from remote repository` 之前（否则「没配 origin」被误诊成认证失败）；
       新增 `remote ref does not exist` / `branch '…' not found` / `pathspec … did not match` /
-      `used by worktree` / `cannot delete branch`
+      `used by worktree` / `cannot delete branch`；`branch '…' not found` 提到「认证失败」与
+      「合并冲突」之前（分支名本身可能叫 conflict 或含 403），`cannot delete branch` 提到
+      「未合并」「worktree 占用」之前（git 2.56 的真实文案是 `cannot delete branch … used by worktree`）
 - [x] 自检：`describeStep` 三种情形 + 「删除类不产生运行时输入槽」+ 新增 `src/lib/errors.test.ts`
       钉住上面那组规则的命中顺序（已接进 `pnpm verify`）
+
+## M24 自绘窗口标题栏（Win7 Aero caption）
+
+`decorations: false` 去掉系统边框，标题栏由 `src/components/TitleBar.vue` 自己画：
+Win7 主题下是 Aero caption，其它主题是中性样式（`decorations` 是窗口级开关，只能全局换）。
+
+- [x] `tauri.conf.json`：`decorations: false` + `shadow: true`（保留 DWM 投影）；
+      无边框窗口的边缘缩放由 Tauri 原生处理（2.0 起），不需要 JS 补 resize
+- [x] `capabilities/default.json`：补 `allow-start-dragging` / `allow-minimize` /
+      `allow-toggle-maximize` / `allow-close`（`is-maximized` 与 `internal-toggle-maximize`
+      已在 `core:window:default` 里）
+- [x] `TitleBar.vue`：拖动与双击最大化走 Tauri 内置的 `data-tauri-drag-region="deep"`；
+      三键 + `onResized` 节流 120ms 同步最大化图标；标题与任务栏共用 `App.vue` 的 `windowTitle`
+- [x] Win7 皮肤：30px 玻璃渐变 caption + 29×22 三键（悬停泛蓝、关闭键转红）；
+      普通主题用 `bg-card` + `border-b`；窗口 1px 内描边由组件里的 fixed 覆盖层给
+- [x] 让渡：Win11 Snap Layout、标题栏右键系统菜单、还原态圆角（要透明窗口，会丢投影）

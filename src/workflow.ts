@@ -62,8 +62,12 @@ export function describeStep(s: WorkflowStep, startBranch?: string): string {
       return `切回起始分支${startBranch ? `（${startBranch}）` : ""}`;
     case "deleteBranch":
       return `删除本地分支 ${s.name.trim() || "（未填分支名）"}（强制 -D）`;
-    case "deleteRemoteBranch":
-      return `删除远程分支 origin/${s.name.trim() || "（未填分支名）"}`;
+    case "deleteRemoteBranch": {
+      const name = s.name.trim();
+      // 名字已带 origin/ 就原样显示：拼两遍会写成 origin/origin/foo，看着像删错了对象
+      const full = name.startsWith("origin/") ? name : `origin/${name}`;
+      return `删除远程分支 ${name ? full : "（未填分支名）"}`;
+    }
     case "commitPush":
       return s.msgSource === "ai"
         ? "提交并推送（AI 生成信息，无改动跳过）"

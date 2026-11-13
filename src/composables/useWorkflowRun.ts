@@ -345,7 +345,26 @@ export function useWorkflowRun(opts: {
         // 剥掉会把「另一个同名分支」删掉，而 git 自己完全能精确删 origin/foo。
         const name = step.name.trim();
         if (!name) throw new Error("删除远程分支：分支名不能为空");
-        await api.pushDelete(path, "origin", name);
+        // 只接受分支名本身：refs/tags/v1 这类 refspec 会把远程 tag 删掉，:x / +x / foo:bar
+        // git 自己会拒，但错误是英文，这里先统一挡掉
+        if (/^refs\//.test(name) || name.includes(":") || name.startsWith("+")) {
+          throw new Error(
+            "删除远程分支：填分支名本身即可（如 feat/x），不要写 refs/…、+…、foo:bar 这类 refspec",
+          );
+        }
+        try {
+          await api.pushDelete(path, "origin", name);
+        } catch (e) {
+          // 旧习惯会把 origin/ 前缀一起填进来：报「远程没有这个分支」时补一句怎么改
+          const raw = String(e);
+          if (name.startsWith("origin/") && /remote ref does not exist|unable to delete/i.test(raw)) {
+            const plain = name.slice("origin/".length);
+            throw new Error(
+              `远程上没有「${name}」：这一步填远程上的分支名，不要带 origin/ 前缀 —— 要删 ${name} 就填 ${plain}`,
+            );
+          }
+          throw e;
+        }
         return;
       }
       case "commitPush": {
