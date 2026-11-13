@@ -892,16 +892,16 @@ async function genCommitMsg() {
       </div>
       <!-- amend / 撤销上次提交都在改写历史，收进「⋯」菜单：图标常驻时认不出是干什么的，
            而菜单项能带说明；两者确认框仍在 App 侧 -->
-      <div class="flex items-center gap-2">
-        <Button variant="default" class="flex-1" :disabled="!canCommit" @click="doCommit">
-          <Spinner v-if="busy" :size="14" />
-          {{ busy ? "处理中…" : `提交${staged.length ? ` (${staged.length})` : ""}` }}
-        </Button>
-        <Tooltip text="更多提交操作">
+      <div class="flex items-center gap-1.5">
+        <label class="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+          <input v-model="pushAfterCommit" type="checkbox" class="accent-[var(--primary)]" />
+          提交后推送到远程
+        </label>
+        <Tooltip text="更多提交操作（amend / 撤销上次提交）">
           <Button
             variant="ghost"
             size="icon"
-            class="size-8 shrink-0"
+            class="ml-auto size-8 shrink-0"
             aria-label="更多提交操作"
             @click="openCommitMenu"
           >
@@ -909,6 +909,10 @@ async function genCommitMsg() {
           </Button>
         </Tooltip>
       </div>
+      <Button variant="default" class="w-full" :disabled="!canCommit" @click="doCommit">
+        <Spinner v-if="busy" :size="14" />
+        {{ busy ? "处理中…" : `提交${staged.length ? ` (${staged.length})` : ""}` }}
+      </Button>
       <ContextMenu
         v-if="commitMenuPos"
         :x="commitMenuPos.x"

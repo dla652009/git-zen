@@ -2279,14 +2279,13 @@ onUnmounted(() => {
           <Tooltip text="时间线（reflog：找回被覆盖的提交）">
             <Button
               variant="quiet"
-              size="sm"
-              class="h-7 shrink-0 gap-1 px-2 text-xs"
+              size="icon"
+              class="size-7 shrink-0"
               :disabled="!repo || busy"
               aria-label="时间线"
               @click="openReflog"
             >
               <History class="size-3.5" />
-              时间线
             </Button>
           </Tooltip>
         </div>
