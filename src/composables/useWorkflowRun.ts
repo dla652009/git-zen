@@ -94,7 +94,7 @@ export function useWorkflowRun(opts: {
     if (!c) return;
     if (!flowInputsReady()) return;
     wfConfirm.value = null;
-    if (c.targets) {
+    if (c.targets?.length) {
       void runFlowBatch(c.wf, c.targets, { ...wfInputs.value }, { ...wfPrefixes.value }, wfStopOnFail.value);
       return;
     }
@@ -419,6 +419,18 @@ export function useWorkflowRun(opts: {
           break;
         }
       }
+      // 弹窗可能在跑的时候就被关掉了（长批次很常见），所以结果也给一条 toast
+      const done = batch.rows.filter((r) => r.state === "done").length;
+      const fail = batch.rows.filter((r) => r.state === "fail").length;
+      const skipped = batch.rows.filter((r) => r.state === "skipped").length;
+      if (fail || skipped) {
+        const bits = [`${done} 个成功`];
+        if (fail) bits.push(`${fail} 个失败`);
+        if (skipped) bits.push(`${skipped} 个未执行`);
+        toast(`「${wf.name}」批量执行：${bits.join("，")}`, "warn");
+      } else {
+        toast(`「${wf.name}」已在 ${done} 个仓库上执行完成`);
+      }
     } finally {
       batch.cur = -1;
       batch.done = true;
@@ -426,8 +438,17 @@ export function useWorkflowRun(opts: {
       opts.runningAction.value = "";
     }
     // 当前仓库的行也刷新一次（批次可能就改了它）
-    await opts.refresh();
-    await opts.onBatchDone?.();
+    await afterBatch();
+  }
+
+  // 收尾：刷新当前仓库 + 让总览重取行。失败不该盖掉已经跑完的批次结果
+  async function afterBatch() {
+    try {
+      await opts.refresh();
+      await opts.onBatchDone?.();
+    } catch {
+      /* 收尾失败静默：批次结果已经写在 wfBatch 上了 */
+    }
   }
 
   /** 单个仓库重跑（只重跑它自己，不影响已完成的其它行） */
@@ -441,8 +462,8 @@ export function useWorkflowRun(opts: {
     batch.done = false;
     batch.cur = index;
     try {
-      // 从头重跑：失败可能停在切分支之后，接着跑会改变语义
-      row.startBranch = "";
+      // 从头重跑，但起始分支沿用首轮记录：失败点可能已在切分支之后，
+      // 这时现取会记成「失败现场所在的分支」，$起始分支与「切回起始分支」都会指错
       await runBatchRow(batch.wf, row, 0, batch);
     } finally {
       batch.cur = -1;
@@ -450,8 +471,7 @@ export function useWorkflowRun(opts: {
       opts.busy.value = false;
       opts.runningAction.value = "";
     }
-    await opts.refresh();
-    await opts.onBatchDone?.();
+    await afterBatch();
   }
 
   // 关弹窗：执行中只是隐藏（状态留在 wfBatch 里继续更新），跑完才真正清空

@@ -54,9 +54,9 @@ watch(
     if (row && !expanded.value.includes(row.path)) expanded.value = [...expanded.value, row.path];
   },
 );
-// 换了一个批次就重置展开状态
+// 换了一个批次就重置展开状态（按对象身份，不按流程名 —— 同名流程连跑两次也算新的一批）
 watch(
-  () => props.batch?.wf.name,
+  () => props.batch,
   () => (expanded.value = []),
 );
 
@@ -147,16 +147,18 @@ function stepDone(r: RowView): string {
               </div>
             </button>
             <div class="flex shrink-0 items-center gap-1">
+              <!-- 失败与被「失败即停」跳过的行都能补跑；执行中不给（串行必须一次一个） -->
               <Button
-                v-if="r.state === 'fail' && !busy"
+                v-if="(r.state === 'fail' || r.state === 'skipped') && !busy"
                 variant="quiet"
                 size="sm"
                 @click="emit('retry', i)"
               >
                 重试
               </Button>
+              <!-- 切仓库是导航不是写操作：批次跑着的时候最需要跳过去看失败现场 -->
               <Button
-                v-if="r.path !== repo && !busy"
+                v-if="r.path !== repo"
                 variant="quiet"
                 size="sm"
                 :title="`切换到 ${r.name}`"

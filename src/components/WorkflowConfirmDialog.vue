@@ -57,7 +57,7 @@ const imeConfirm = imeGuard(() => emit("confirm"));
             type="checkbox"
             class="size-3.5 accent-[var(--primary)]"
           >
-          <span for="wf-stop-on-fail">某个仓库失败就停止后面的仓库</span>
+          <span>某个仓库失败就停止后面的仓库</span>
         </label>
       </div>
       <div v-if="confirm.slots.length" class="mb-2 space-y-1.5">

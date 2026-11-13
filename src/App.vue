@@ -1311,6 +1311,11 @@ const {
 function runWorkflowOnRepos(name: string, paths: string[]) {
   const wf = workflows.find((w) => w.name === name);
   if (!wf) return;
+  // 先判忙：否则总览被关掉、什么都没有发生，用户不知道点了没生效
+  if (busy.value) {
+    toast("正在执行其它操作，稍后再运行工作流");
+    return;
+  }
   const targets = paths.map((p) => ({
     path: p,
     name: repoRows.value.find((r) => r.path === p)?.name || p,
@@ -1572,8 +1577,15 @@ function openReposOverview() {
 
 // 顺序拉：并发 pull 在多仓库上是同一条网络与同一把索引锁，串行反而更快也更稳
 async function pullAllRepos() {
+  // 批次/单仓库流程跑着的时候不能再并发 pull —— 会同一批仓库两边同时写
+  if (busy.value) {
+    toast("正在执行工作流，稍后再拉取");
+    return;
+  }
   const targets = repoRows.value.filter((r) => r.behind > 0);
   if (!targets.length) return;
+  busy.value = true;
+  runningAction.value = "pullAll";
   reposLoading.value = true;
   let ok = 0;
   try {
@@ -1587,6 +1599,8 @@ async function pullAllRepos() {
     }
   } finally {
     reposLoading.value = false;
+    busy.value = false;
+    runningAction.value = "";
   }
   await loadRepoRows();
   if (ok) {
@@ -1842,9 +1856,11 @@ const overlayLayers: Record<OverlayName, OverlayLayer> = {
   // 关进度弹窗必须走 closeWfRun()：它带 busy 守卫，执行期间只把弹窗藏起来、不动 wfRun。
   // 这里曾经直接置空 wfRun —— 执行中按 Esc 会让循环里的状态写入抛 TypeError，
   // 整个流程半路无声死掉（「点背景」那条路修过，Esc 这条漏了）。
-  flowRun: { open: () => !!wfRun.value, close: () => closeWfRun() },
+  // open 只看「弹窗是否可见」而不是「状态是否存在」：执行中被关掉之后，状态还要留着
+  // 继续更新，但此时 Esc 不该再命中这一层（否则后面的设置页/总览永远关不掉）
+  flowRun: { open: () => wfRunOpen.value, close: () => closeWfRun() },
   // 批次弹窗同理：执行中 Esc 只收起，不置空 wfBatch
-  flowBatch: { open: () => !!wfBatch.value, close: () => closeWfBatch() },
+  flowBatch: { open: () => wfBatchOpen.value, close: () => closeWfBatch() },
   settings: { open: () => showSettings.value, close: () => (showSettings.value = false) },
   fileHistory: {
     open: () => !!fileHistoryModal.value,
