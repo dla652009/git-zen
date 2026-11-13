@@ -12,12 +12,42 @@ import type { BranchRef, InputSlot, Workflow, WorkflowStep } from "../workflow";
 import { humanize } from "../lib/errors";
 import { toast } from "../components/ui";
 
+/** 单步状态：pending/running/done/skip/fail；失败标红停住保留弹窗，成功自动关 */
+export type WfStepState = { state: "pending" | "running" | "done" | "skip" | "fail"; note: string };
+
+/** 批次里一个仓库的状态。done/fail 与 WfRunState 里的步骤状态并存：
+    整行失败时步骤状态仍保留，用来指出卡在哪一步 */
+export type WfBatchRowState = "pending" | "running" | "done" | "fail" | "skipped";
+
+export interface WfBatchRow extends WfRunState {
+  path: string;
+  name: string;
+  /** 该仓库起始分支，`$起始分支` 与「切回起始分支」都靠它 */
+  startBranch: string;
+  state: WfBatchRowState;
+}
+
+export interface WfBatchTarget {
+  path: string;
+  name: string;
+}
+
+/** 一次执行的进度（单仓库与批次里的单行同一形状） */
+export interface WfRunState {
+  states: WfStepState[];
+  error: string;
+  failIndex: number;
+  repoChanged: boolean;
+}
+
 export function useWorkflowRun(opts: {
   repo: Ref<string>;
   status: Ref<Status | null>;
   busy: Ref<boolean>;
   runningAction: Ref<string>;
   refresh: () => Promise<void>;
+  /** 批次跑完后回调（App 用来重取「所有仓库」总览行；单仓库入口不需要） */
+  onBatchDone?: () => void | Promise<void>;
 }) {
   // 执行确认：解析步骤预览 + 运行时输入当场填；起始分支在执行开始时记录。
   // 每个需要输入的步骤各占一个输入框 —— 早前所有步骤共用同一个值，
@@ -56,7 +86,6 @@ export function useWorkflowRun(opts: {
   }
 
   // 进度：pending/running/done/skip/fail；失败标红停住保留弹窗，成功自动关
-  type WfStepState = { state: "pending" | "running" | "done" | "skip" | "fail"; note: string };
   const wfRun = ref<{
     wf: Workflow;
     start: string;
@@ -75,6 +104,55 @@ export function useWorkflowRun(opts: {
   // 进度弹窗是否可见。执行期间允许把它关掉（多步操作可能跑很久），
   // 状态本身留在 wfRun 里继续更新 —— 早前直接把 wfRun 置空，下一步循环就会读到 null 崩掉
   const wfRunOpen = ref(false);
+
+  /**
+   * 在**指定仓库**上顺序跑流程步骤：不读 opts.repo / opts.status，起点分支由调用方给。
+   * 单仓库入口与「多仓库批次」共用这一份内核 —— 前者靠 guard 拦「执行期间切走仓库」，
+   * 后者传恒 null（批次在启动时就锁定了 path 列表，用户切 tab 不该中止它）。
+   * 返回 false = 有步骤失败（失败下标与文案写在 run 上）。
+   */
+  async function runSteps(
+    path: string,
+    wf: Workflow,
+    run: WfRunState,
+    inputs: Record<number, string>,
+    prefixes: Record<number, string>,
+    startBranch: string,
+    fromIndex: number,
+    guard: () => string | null,
+  ): Promise<boolean> {
+    for (let i = fromIndex; i < wf.steps.length; i++) {
+      const st = run.states[i]!;
+      // 每步开始前校验仓库身份：切走即中止，否则后续步骤会在别的仓库上 commit/push
+      const blocked = guard();
+      if (blocked) {
+        st.state = "fail";
+        run.error = blocked;
+        run.repoChanged = true;
+        return false;
+      }
+      st.state = "running";
+      try {
+        const note = await execStep(
+          path,
+          wf.steps[i]!,
+          inputs[i] ?? "",
+          prefixes[i] ?? "",
+          startBranch,
+          () => guard() === null,
+        );
+        st.note = note ?? "";
+        st.state = note ? "skip" : "done";
+      } catch (e) {
+        st.state = "fail";
+        const h = humanize(String(e));
+        run.error = h.msg + (h.detail ? `\n${h.detail}` : "");
+        run.failIndex = i;
+        return false; // 出错即停：后续保持 pending；merge 冲突正好停在目标分支待处理
+      }
+    }
+    return true;
+  }
 
   // resume：从失败的那一步接着跑。startBranch 必须沿用第一次的 —— 流程可能已经切走了分支，
   // 重新记录会把「切回起始分支」指到错误的目标上
@@ -112,36 +190,9 @@ export function useWorkflowRun(opts: {
     const run = wfRun.value;
     let ok = true;
     try {
-      for (let i = fromIndex; i < wf.steps.length; i++) {
-        const st = run.states[i]!;
-        // 每步开始前校验仓库身份：切走即中止，否则后续步骤会在别的仓库上 commit/push
-        if (opts.repo.value !== path) {
-          st.state = "fail";
-          run.error = "执行期间切换了仓库，工作流已中止";
-          run.repoChanged = true;
-          ok = false;
-          break;
-        }
-        st.state = "running";
-        try {
-          const note = await execStep(
-            path,
-            wf.steps[i]!,
-            inputs[i] ?? "",
-            prefixes[i] ?? "",
-            startBranch,
-          );
-          st.note = note ?? "";
-          st.state = note ? "skip" : "done";
-        } catch (e) {
-          st.state = "fail";
-          const h = humanize(String(e));
-          run.error = h.msg + (h.detail ? `\n${h.detail}` : "");
-          run.failIndex = i;
-          ok = false;
-          break; // 出错即停：后续保持 pending；merge 冲突正好停在目标分支待处理
-        }
-      }
+      ok = await runSteps(path, wf, run, inputs, prefixes, startBranch, fromIndex, () =>
+        opts.repo.value !== path ? "执行期间切换了仓库，工作流已中止" : null,
+      );
       await opts.refresh();
     } finally {
       opts.busy.value = false;
@@ -172,13 +223,16 @@ export function useWorkflowRun(opts: {
   }
 
   // path = 流程启动时锁定的仓库：每步都用它，而不是现读 repo.value，
-  // 这样中途切了仓库也不会把 git 操作落到别的仓库上
+  // 这样中途切了仓库也不会把 git 操作落到别的仓库上。
+  // alive()：这一步跑完（可能等了 30s AI）之后，本次执行是否仍有效 —— 单仓库靠它拦切走，
+  // 批次里恒 true（批次的仓库列表在启动时固定）。
   async function execStep(
     path: string,
     step: WorkflowStep,
     inputBranch: string,
     inputPrefix: string,
     startBranch: string,
+    alive: () => boolean = () => true,
   ): Promise<string | undefined> {
     const refName = (r: BranchRef) =>
       r.mode === "fixed" ? (r.name ?? "") : r.mode === "start" ? startBranch : inputBranch;
@@ -231,8 +285,8 @@ export function useWorkflowRun(opts: {
             `【仓库近期提交风格】\n${recent || "（无历史提交）"}\n\n【暂存区 diff】\n${clipForAI(diff)}`,
           );
         }
-        // AI 生成最长 30s，是最容易被切仓库的窗口：提交前再校验一次仓库身份
-        if (step.msgSource === "ai" && opts.repo.value !== path) {
+        // AI 生成最长 30s，是最容易被切仓库的窗口：提交前再校验一次本次执行是否仍有效
+        if (step.msgSource === "ai" && !alive()) {
           throw new Error("执行期间切换了仓库，工作流已中止");
         }
         if (!msg) throw new Error("提交信息为空");
@@ -241,6 +295,153 @@ export function useWorkflowRun(opts: {
         return;
       }
     }
+  }
+
+  // ---------- 多仓库批次 ----------
+
+  // 批次状态与单仓库的 wfRun 完全独立：两者不会同时跑（共用 busy 锁），
+  // 但共用同一个内核 runSteps。cur 指向「正在跑的仓库」，弹窗用它决定默认展开哪一行
+  const wfBatch = ref<{
+    wf: Workflow;
+    rows: WfBatchRow[];
+    inputs: Record<number, string>;
+    prefixes: Record<number, string>;
+    stopOnFail: boolean;
+    cur: number;
+    done: boolean;
+  } | null>(null);
+  const wfBatchOpen = ref(false);
+
+  function rowOf(t: WfBatchTarget): WfBatchRow {
+    return {
+      path: t.path,
+      name: t.name,
+      startBranch: "",
+      states: [],
+      error: "",
+      failIndex: -1,
+      repoChanged: false,
+      state: "pending",
+    };
+  }
+
+  /** 跑一行；返回是否成功。startBranch 现取（总览里的分支可能已经过时） */
+  async function runBatchRow(wf: Workflow, row: WfBatchRow, fromIndex: number, batch: {
+    inputs: Record<number, string>;
+    prefixes: Record<number, string>;
+  }): Promise<boolean> {
+    row.state = "running";
+    row.error = "";
+    row.failIndex = -1;
+    if (!row.startBranch) {
+      try {
+        row.startBranch = (await api.status(row.path)).branch;
+      } catch (e) {
+        row.state = "fail";
+        row.error = humanize(String(e)).msg;
+        return false;
+      }
+    }
+    // 重试时保留已完成的步骤，其余回到 pending
+    row.states = wf.steps.map((_, i) =>
+      i < fromIndex ? row.states[i] ?? { state: "done" as const, note: "" } : { state: "pending" as const, note: "" },
+    );
+    try {
+      // guard 恒 null：批次启动时就固定了仓库列表，用户切 tab 不该中止它
+      const ok = await runSteps(
+        row.path,
+        wf,
+        row,
+        batch.inputs,
+        batch.prefixes,
+        row.startBranch,
+        fromIndex,
+        () => null,
+      );
+      row.state = ok ? "done" : "fail";
+      return ok;
+    } catch (e) {
+      row.state = "fail";
+      row.error = humanize(String(e)).msg;
+      return false;
+    }
+  }
+
+  /**
+   * 对多个仓库串行执行同一个流程。
+   * 为什么串行：共用一套 git 索引锁与同一条网络，并发只会让失败更难归因；
+   * 「全部拉取」也是这个做法（App.vue 的 pullAllRepos）。
+   */
+  async function runFlowBatch(
+    wf: Workflow,
+    targets: WfBatchTarget[],
+    inputs: Record<number, string>,
+    prefixes: Record<number, string>,
+    stopOnFail: boolean,
+  ) {
+    if (opts.busy.value || !targets.length) return;
+    opts.busy.value = true;
+    opts.runningAction.value = "workflow";
+    wfBatch.value = {
+      wf,
+      rows: targets.map(rowOf),
+      inputs: { ...inputs },
+      prefixes: { ...prefixes },
+      stopOnFail,
+      cur: -1,
+      done: false,
+    };
+    wfBatchOpen.value = true;
+    const batch = wfBatch.value;
+    try {
+      for (let i = 0; i < batch.rows.length; i++) {
+        const row = batch.rows[i]!;
+        batch.cur = i;
+        const ok = await runBatchRow(wf, row, 0, batch);
+        if (!ok && stopOnFail) {
+          for (let j = i + 1; j < batch.rows.length; j++) batch.rows[j]!.state = "skipped";
+          break;
+        }
+      }
+    } finally {
+      batch.cur = -1;
+      batch.done = true;
+      opts.busy.value = false;
+      opts.runningAction.value = "";
+    }
+    // 当前仓库的行也刷新一次（批次可能就改了它）
+    await opts.refresh();
+    await opts.onBatchDone?.();
+  }
+
+  /** 单个仓库重跑（只重跑它自己，不影响已完成的其它行） */
+  async function retryBatchRow(index: number) {
+    const batch = wfBatch.value;
+    if (!batch || opts.busy.value) return;
+    const row = batch.rows[index];
+    if (!row || row.state === "pending" || row.state === "running") return;
+    opts.busy.value = true;
+    opts.runningAction.value = "workflow";
+    batch.done = false;
+    batch.cur = index;
+    try {
+      // 从头重跑：失败可能停在切分支之后，接着跑会改变语义
+      row.startBranch = "";
+      await runBatchRow(batch.wf, row, 0, batch);
+    } finally {
+      batch.cur = -1;
+      batch.done = true;
+      opts.busy.value = false;
+      opts.runningAction.value = "";
+    }
+    await opts.refresh();
+    await opts.onBatchDone?.();
+  }
+
+  // 关弹窗：执行中只是隐藏（状态留在 wfBatch 里继续更新），跑完才真正清空
+  function closeWfBatch() {
+    wfBatchOpen.value = false;
+    if (!opts.busy.value) wfBatch.value = null;
   }
 
   return {
@@ -255,5 +456,10 @@ export function useWorkflowRun(opts: {
     confirmFlow,
     closeWfRun,
     retryFlow,
+    wfBatch,
+    wfBatchOpen,
+    runFlowBatch,
+    retryBatchRow,
+    closeWfBatch,
   };
 }
