@@ -57,6 +57,8 @@ async function testConn() {
 // 仓库网页链接：按仓库存 localStorage（gz.remoteLinks），留空自动推断
 const remoteLink = ref("");
 const originUrl = ref("");
+// MR/PR 新建页模板：另存一个键（gz.mrTemplates），不与网页链接混用，留空自动推断
+const mrTemplate = ref("");
 
 // 用户信息是仓库级 git config，不属于应用设置，单独存取
 const userName = ref("");
@@ -75,6 +77,8 @@ onMounted(async () => {
     readJsonObject<Record<string, string>>("gz.remoteLinks", {})[props.repo] ?? "";
   // 默认填充 origin URL；用户改过则显示自定义值
   remoteLink.value = custom || originUrl.value;
+  mrTemplate.value =
+    readJsonObject<Record<string, string>>("gz.mrTemplates", {})[props.repo] ?? "";
   if (!props.repo) return;
   try {
     const [n, e] = await api.getUser(props.repo);
@@ -105,6 +109,15 @@ function save() {
     else delete links[props.repo];
     localStorage.setItem("gz.remoteLinks", JSON.stringify(links));
     remoteLink.value = link;
+  }
+  // MR 模板同样按仓库写回；清空 = 删除该仓库的键（恢复自动推断）
+  if (props.repo) {
+    const templates = readJsonObject<Record<string, string>>("gz.mrTemplates", {});
+    const tpl = mrTemplate.value.trim();
+    if (tpl) templates[props.repo] = tpl;
+    else delete templates[props.repo];
+    localStorage.setItem("gz.mrTemplates", JSON.stringify(templates));
+    mrTemplate.value = tpl;
   }
   emit("close");
 }
@@ -942,6 +955,17 @@ const NAV = [
               <p class="mt-2 text-xs text-muted-foreground">
                 默认填充 origin URL（{{ originUrl || "未配置" }}），可改为任意网页链接；
                 主页状态栏「远程」按钮会打开它。清空保存则恢复自动推断。
+              </p>
+            </section>
+            <section class="mt-5">
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">MR 新建页 URL 模板</h3>
+              <Input
+                v-model="mrTemplate"
+                placeholder="留空自动推断：{src} 源分支 · {dst} 目标分支 · {repo} 仓库路径"
+              />
+              <p class="mt-2 text-xs text-muted-foreground">
+                识别 GitHub / GitLab / Gitee / Bitbucket 可自动推断；其他平台在此填模板，占位符
+                {src} {dst} {repo}。
               </p>
             </section>
           </template>

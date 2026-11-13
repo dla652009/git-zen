@@ -79,6 +79,7 @@ import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
 import { closeTop, type OverlayLayer, type OverlayName } from "./lib/overlays";
 import { readJsonArray, readJsonObject } from "./lib/safeJson";
+import { buildMrUrl } from "./lib/mrUrl";
 import { imeGuard } from "./lib/imeGuard";
 
 const repo = ref(localStorage.getItem("gz.repo") ?? "");
@@ -148,6 +149,7 @@ const fileHistoryModal = ref<string | null>(null);
 const historyFilePath = ref<string | null>(null);
 const remoteRaw = ref(""); // origin 的 URL（git remote get-url）
 const remoteLink = ref(""); // 用户在设置里自定义的网页链接（留空自动推断）
+const mrTemplate = ref(""); // 用户自定义的 MR/PR 新建页模板（留空自动推断）
 // 历史加载遮罩（切仓库、换历史范围时盖住历史区）
 const historyLoading = ref(false);
 
@@ -201,6 +203,34 @@ const remoteWebUrl = computed(() => {
 });
 function openRemote() {
   if (remoteWebUrl.value) openUrl(remoteWebUrl.value).catch(() => {});
+}
+
+// MR / PR 新建页：源分支 = 当前本地分支，目标分支 = 上游短名剥掉 origin/。
+// upstream 形如 origin/main；没有上游时留空，由 buildMrUrl 按主机决定降级或返回 null。
+const currentBranchName = computed(
+  () =>
+    branchList.value.find((x) => x.current && !x.remote)?.name ?? status.value?.branch ?? "",
+);
+const dstBranch = computed(() => {
+  const upstream = branchList.value.find((x) => x.current && !x.remote)?.upstream ?? "";
+  return upstream.replace(/^[^/]+\//, "");
+});
+const mrUrl = computed(() =>
+  buildMrUrl({
+    originUrl: remoteRaw.value,
+    template: mrTemplate.value,
+    srcBranch: currentBranchName.value,
+    dstBranch: dstBranch.value,
+  }),
+);
+const remoteCtx = ref<{ x: number; y: number } | null>(null);
+function openMr() {
+  const url = mrUrl.value;
+  if (url) {
+    openUrl(url).catch(() => {});
+    return;
+  }
+  toast("未能识别该远程主机，可在设置 › 远程配置 MR 页模板", "info");
 }
 
 const runningAction = ref("");
@@ -950,6 +980,7 @@ function doCloseTab(path: string) {
       historyFilePath.value = null;
       remoteRaw.value = "";
       remoteLink.value = "";
+      mrTemplate.value = "";
     }
   }
 }
@@ -1013,6 +1044,15 @@ type DiffState = { kind: "file"; target: DiffTarget } | { kind: "commit"; target
 const diffState = ref<DiffState | null>(null);
 const showSettings = ref(false);
 const showSettingsTab = ref<string | undefined>(undefined);
+// per-repo 的远程链接 / MR 模板平时在 refresh 里读；设置保存后立刻同步一次，
+// 否则刚配好的模板要等下一次仓库刷新才进右键菜单。
+watch(showSettings, (open) => {
+  if (open || !repo.value) return;
+  remoteLink.value =
+    readJsonObject<Record<string, string>>("gz.remoteLinks", {})[repo.value] ?? "";
+  mrTemplate.value =
+    readJsonObject<Record<string, string>>("gz.mrTemplates", {})[repo.value] ?? "";
+});
 
 // 历史行右键菜单：复制 hash / checkout / revert
 const commitCtx = ref<{ x: number; y: number; c: LogEntry } | null>(null);
@@ -1337,6 +1377,7 @@ const {
   mruPaths,
   remoteRaw,
   remoteLink,
+  mrTemplate,
   cacheGet,
   cachePeek,
   cachePut,
@@ -2927,12 +2968,13 @@ onUnmounted(() => {
       <span class="font-medium text-foreground">{{ status?.branch ?? "—" }}</span>
       <span class="flex-1" />
       <span v-if="status" class="tabular-nums">{{ status.files.length }} 个变更文件</span>
-      <Tooltip v-if="remoteWebUrl" text="打开远程仓库网页">
+      <Tooltip v-if="remoteWebUrl" text="打开远程仓库网页（右键更多）">
         <Button
           variant="ghost"
           size="sm"
           class="h-5 gap-1 px-1.5 text-xs"
           @click="openRemote"
+          @contextmenu.prevent="remoteCtx = { x: $event.clientX, y: $event.clientY }"
         >
         <ExternalLink class="size-3" />
           远程
@@ -2988,6 +3030,21 @@ onUnmounted(() => {
         { label: '删除分组', danger: true, fn: () => askDeleteGroup(folderCtx!.group) },
       ]"
       @close="folderCtx = null"
+    />
+    </Transition>
+
+    <!-- 状态栏「远程」右键菜单：主页 / 新建 MR / 复制 origin -->
+    <Transition name="dlg">
+    <ContextMenu
+      v-if="remoteCtx"
+      :x="remoteCtx.x"
+      :y="remoteCtx.y"
+      :items="[
+        { label: '打开仓库主页', fn: openRemote, disabled: !remoteWebUrl },
+        { label: '新建 MR / Pull Request…', fn: openMr, disabled: !mrUrl },
+        { label: '复制 origin URL', fn: () => copyText(remoteRaw), disabled: !remoteRaw },
+      ]"
+      @close="remoteCtx = null"
     />
     </Transition>
 
