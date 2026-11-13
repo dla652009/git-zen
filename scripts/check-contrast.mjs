@@ -51,7 +51,7 @@ function contrast(fg, bg) {
 // ---------- 解析 src/style.css 的主题块 ----------
 
 // :root 是默认主题（settings.ts 里 id = "dark"），其余按 [data-theme="…"] 取名；
-// light / github-light 共用一块 CSS，所以一个块可能产出多个主题名。
+// 一个 CSS 块可以带多个选择器（如 [data-theme="dark"], [data-theme="catppuccin-mocha"] { … }），所以一个块可能产出多个主题名。
 function parseThemes(css) {
   const text = css.replace(/\/\*[\s\S]*?\*\//g, ""); // 先掐掉注释，避免注释里的 #hex 混进来
   const themes = new Map();
@@ -135,7 +135,7 @@ const laneColors = parseLaneColors(readFileSync(GRAPH_TS, "utf8"));
 const fatal = [];
 
 // 解析器先把「解析出来的条目数」断言掉：漏认一个主题块会让整张表静默少一套主题（假绿）
-const EXPECTED_THEMES = 7; // settings.ts THEMES 里除 system 外：dark + light + github-light + 4 套配色
+const EXPECTED_THEMES = 5; // settings.ts THEMES 里除 system 外：dark + light + catppuccin-mocha + catppuccin-latte + win7
 if (themes.size < EXPECTED_THEMES) {
   fatal.push(
     `只解析出 ${themes.size} 套主题（期望 ${EXPECTED_THEMES} 套）：${[...themes.keys()].join(" / ") || "（空）"}\n` +

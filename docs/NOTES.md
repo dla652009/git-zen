@@ -1154,3 +1154,38 @@ merge / cherry-pick / revert 会被 reset 顺带清掉，但统一走 `detect_op
 - 重置按钮要 `:disabled="busy"`、`confirmOk` 要拦忙态、`run()` 的 `finally` 数**在飞的数量**
   （`inflight`）清零才复位忙碌态 —— 记「谁最后发起」是错的：后发起的先完成会提前解锁，
   双跑照样撞上 `fatal: Cannot lstat` 并停在「未跟踪删了、已跟踪没 reset」的半成品。
+
+## Windows 7 主题：皮肤层只认三种钩子
+
+Win7 主题是目前唯一「token 之外还有一层样式」的主题，那层在 `src/style.css` 末尾，全部限定
+`html[data-theme="win7"]`。之所以不能放宽到不带主题前缀，是因为那层里的渐变、描边、硬投影都是
+按 Aero 的观感手调的，混进别的主题会直接毁掉它们已经调好的层次。
+
+- **钩子只有三种**：自有工具类（`.surface` / `.surface-menu` / `.surface-panel`）、`data-*` 属性
+  （`[data-tab-bar]`、Button 的 `data-variant`）、组件里显式加的 `.gz-btn` / `.gz-field`。
+  不要拿 `bg-secondary` 这类样式类去匹配 —— 那是随手写的 Tailwind，改一次皮肤就静默失效。
+- **主按钮刻意不做「蓝实心 + 白字」**：Win7 的默认按钮本来就是浅蓝玻璃 + 深字；顺带这档浅蓝上
+  白字过不了 4.5:1（`--primary` 白字实测 5.39，但玻璃渐变的高光段不行）。
+- **B 型标题条靠负边距贴边**：14 个对话框的标题是 `.surface.p-5` 里的第一个直接子元素且带
+  `id="dlg-…-title"`，所以 `margin: -1.25rem -1.25rem .75rem` 就能贴满整宽，不需要逐个组件加皮。
+  哪天有人把某处的 `p-5` 改成别的值，那条负边距就得跟着改 —— 宁可漏一处也不要给每个组件加 prop。
+- **两处刻意不处理**：「所有仓库」弹窗的标题包在一行按钮里（强行贴边会把按钮拉进标题条）、
+  分支切换器本来没有标题；`ErrorDialog` 不用 `.surface`（红描边是刻意的）。
+- `check-contrast.mjs` 的 `EXPECTED_THEMES` 是「解析到的主题块数量」下限而不是清单，
+  加主题必须同时改它，否则新主题整块解析失败也是绿的。
+
+## 主题清单收敛：删主题不是只删一行数组
+
+2026-11-13 下线 One Dark / GitHub Light / GitHub Dark，主题从 8 套变 5 套（dark/light/
+catppuccin-mocha/catppuccin-latte/win7）。删一套主题要动四处，漏一处就是静默错：
+
+- `src/settings.ts` 的 `THEMES`（设置面板的列表）
+- `src/style.css` 的 `[data-theme="…"]` 块，以及**共用块的选择器**（`light` 和 `github-light`
+  原先写在同一块里，删名字时要留下另一个）和基础层的 `color-scheme: dark` 选择器列表
+- `scripts/check-contrast.mjs` 的 `EXPECTED_THEMES`（它是「解析到的主题块数」下限，不是清单；
+  改漏了就是假绿）
+- 注释里的「8 套主题」这类描述：`graph.ts` / `graph.test.ts` 的泳道亮度带推导仍按已下线的
+  One Dark #282c34 取保守下界 —— 它曾是暗色背景里最亮的那个，剩下两套暗色都更暗，留着只会更宽松
+
+另外 `resolvedTheme()` 加了兜底：主题下线后旧配置可能还停在已删除的 id 上，认不出就按跟随系统走，
+否则 `dataset.theme` 会落在一个没有任何 token 块的名字上。

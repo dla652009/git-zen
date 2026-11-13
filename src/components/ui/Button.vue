@@ -4,7 +4,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-sm text-sm font-medium transition-[color,background-color,border-color,transform] duration-fast active:scale-[.98] cursor-pointer disabled:pointer-events-none disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1",
+  "gz-btn inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-sm text-sm font-medium transition-[color,background-color,border-color,transform] duration-fast active:scale-[.98] cursor-pointer disabled:pointer-events-none disabled:opacity-45 focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1",
   {
     variants: {
       variant: {
@@ -36,7 +36,7 @@ const props = withDefaults(
 </script>
 
 <template>
-  <button :class="cn(buttonVariants({ variant, size }), props.class)">
+  <button :class="cn(buttonVariants({ variant, size }), props.class)" :data-variant="variant ?? 'secondary'">
     <slot />
   </button>
 </template>

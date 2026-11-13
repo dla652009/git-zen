@@ -26,9 +26,8 @@ export const THEMES = [
   { id: "dark", label: "深色" },
   { id: "catppuccin-latte", label: "Catppuccin Latte" },
   { id: "catppuccin-mocha", label: "Catppuccin Mocha" },
-  { id: "one-dark", label: "One Dark" },
-  { id: "github-light", label: "GitHub Light" },
-  { id: "github-dark", label: "GitHub Dark" },
+  // 全套 Aero 皮肤（配色 + 控件皮），皮肤层在 style.css 末尾
+  { id: "win7", label: "Windows 7" },
 ];
 
 const KEY = "gz.settings";
@@ -132,8 +131,10 @@ const mql = window.matchMedia("(prefers-color-scheme: dark)");
 mql.addEventListener("change", applyTheme);
 
 function resolvedTheme(): string {
-  if (settings.theme !== "system") return settings.theme;
-  return mql.matches ? "dark" : "light";
+  const fallback = mql.matches ? "dark" : "light";
+  // 主题下线后，旧配置里可能还留着已删除的 id：认不出就按跟随系统处理，别让界面落进无 token 的空档
+  if (settings.theme === "system" || !THEMES.some((t) => t.id === settings.theme)) return fallback;
+  return settings.theme;
 }
 
 export function applySettings() {

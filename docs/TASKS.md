@@ -1315,3 +1315,24 @@ merge / cherry-pick / revert / rebase / am 先放弃。**刻意不带 `clean -x`
       merge / rebase / am / cherry-pick / revert 中间态、abort 被拒、一次点击收敛、
       未提交 `.gitignore` 规则仍生效、`.gitignore` 被删掉时 HEAD 规则仍保护 node_modules、
       从子目录打开也能清根、子目录深层 ignored 目录、子模块自己的 `.gitignore` 被删
+
+## M21 Windows 7 主题（Aero 皮肤）
+
+给「设置 › 主题」加一套 `win7`，做全套 Aero 皮肤而不只是换配色。窗口装饰仍交给 Tauri 原生
+（不做无边框自绘），皮肤只作用在应用内容区。
+
+- [x] token 块 `[data-theme="win7"]`：Win7 浅灰蓝画布 + 白面板 + Aero 蓝的 hover/active/选中
+      （`--primary-soft` 换蓝，全站 15 处 `bg-primary-soft` 直接跟着变蓝条），
+      19 个语义 token + 徽标/危险按钮/开关轨道全套，WCAG AA 由 `check-contrast.mjs` 兜底
+- [x] 皮肤层（`src/style.css` 末尾，全部限 `html[data-theme="win7"]`）：2-4px 方角、90ms 动效、
+      控件内 1px 虚点焦点框、11px 滚动条；工具条/选项卡栏/侧栏的 Aero 渐变；
+      按钮立体皮（玻璃渐变 + 1px 描边 + 内高光 + 悬停泛蓝）、主按钮「浅蓝玻璃 + 深字」、
+      输入框白底内凹、弹窗/菜单硬投影
+- [x] 对话框标题条：A 型（容器自带 `<header>`）与 B 型（p-5 容器 + 首个 `[id$="-title"]` 子元素，
+      靠 1.25rem 负边距贴满整宽）两类都覆盖
+- [x] 稳定钩子：`Button.vue` 基础串加 `gz-btn` + `data-variant`（默认值 `secondary`），
+      `Input/Textarea/Select` 加 `gz-field`；只加 class/属性，不动组件逻辑
+- [x] `settings.ts` THEMES 追加一项；`check-contrast.mjs` 的 `EXPECTED_THEMES` 7 → 8
+- [x] 收敛主题清单：移除 One Dark / GitHub Light / GitHub Dark（保留 跟随系统/浅色/深色/
+      Catppuccin Latte·Mocha/Windows 7）；`resolvedTheme()` 对已删除的 id 回落到跟随系统，
+      旧 localStorage 配置不会落进「没有 token 的空档」；对比度门禁 `EXPECTED_THEMES` 8 → 5

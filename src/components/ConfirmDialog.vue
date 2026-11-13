@@ -19,7 +19,7 @@ defineProps<{
   /** 清单下面的一行补充说明（例如「可在设置里关掉」） */
   note?: string;
   /** 本次推送的增删行数。用 diff 的两组色（bg+text）渲染成小胶囊：
-   *  直接拿 --c-add/--c-del 当文字色在 catppuccin-latte(4.18) 与 one-dark(3.73) 上不达 4.5，
+   *  直接拿 --c-add/--c-del 当文字色在 catppuccin-latte(4.18) 上不达 4.5（已下线的 one-dark 3.73 同理），
    *  而 --diff-add-text 对 --diff-add-bg 这组本来就按文字阈值入过门 */
   stats?: { add: number; del: number };
 }>();

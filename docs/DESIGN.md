@@ -94,7 +94,9 @@ git-zen 的对策：
 
 - reactive settings + localStorage（`gz.settings`）持久化
 - SettingsModal 用草稿模式编辑，「保存」才写回；watcher 同时 persist + applySettings（写 DOM：`data-theme`、字体字号）
-- 主题 = CSS 变量集（`[data-theme=...]` 覆盖 token），内置 8 种：跟随系统/浅色/深色/Catppuccin Latte·Mocha/One Dark/GitHub Light·Dark
+- 主题 = CSS 变量集（`[data-theme=...]` 覆盖 token），内置 6 种：跟随系统/浅色/深色/Catppuccin Latte·Mocha/Windows 7
+- Windows 7 是唯一带**皮肤层**的主题：token 之外还有一层 `html[data-theme="win7"]` 规则（`src/style.css` 末尾），
+  负责控件的立体感、方角、虚点焦点框和对话框标题条。别的主题不吃这一层，改它不会波及其它主题
 - diff 配色随主题走，不单独配置
 
 ### 4.5 视觉系统：令牌分层（src/style.css）
@@ -146,7 +148,7 @@ git-zen/
 ├── scripts/
 │   ├── gen-icon.mjs         # 应用图标生成器（纯 node）
 │   ├── check-contract.mjs   # git.rs ↔ lib.rs ↔ gitApi.ts 契约检查（硬性规则 1 / 3）
-│   └── check-contrast.mjs   # 7 套主题的 WCAG 对比度检查
+│   └── check-contrast.mjs   # 5 套主题的 WCAG 对比度检查
 ├── src/
 │   ├── gitApi.ts       # invoke 封装 + 后端返回类型镜像（唯一与后端耦合处）
 │   ├── graph.ts/.test.ts # 泳道布局纯函数 + 自检
