@@ -11,8 +11,9 @@
 // 为什么放在 lib 而不是 App.vue：浮层正在逐个拆成子组件，子组件自带一份实现
 // 迟早会漂移（漏一处就是「组词时回车把弹窗提交了」）；共用一份，改也只改一处。
 export function imeGuard(fn: () => void) {
-  return (e: KeyboardEvent) => {
-    if (e.isComposing) return; // 组词中：Enter/Esc 交给输入法
+  // 事件可省：点击关闭这类没有 KeyboardEvent，按「不在组词」处理
+  return (e?: KeyboardEvent) => {
+    if (e?.isComposing) return; // 组词中：Enter/Esc 交给输入法
     fn();
   };
 }

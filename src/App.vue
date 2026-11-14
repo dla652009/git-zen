@@ -20,7 +20,6 @@ import {
   GitBranch,
   GitBranchPlus,
   Cloud,
-  Download,
   Tag,
   Workflow as WorkflowIcon,
   X,
@@ -75,6 +74,7 @@ import WorkflowRunBatchDialog from "./components/WorkflowRunBatchDialog.vue";
 import ReflogModal from "./components/ReflogModal.vue";
 import ReposOverviewModal from "./components/ReposOverviewModal.vue";
 import type { RepoOverviewRow } from "./components/ReposOverviewModal.vue";
+import OpenRepoDialog from "./components/OpenRepoDialog.vue";
 import TitleBar from "./components/TitleBar.vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { buildNodes } from "./branchTree";
@@ -562,6 +562,17 @@ function deriveRepoName(url: string): string {
 watch(remoteUrlInput, () => {
   if (!cloneNameTouched.value) cloneName.value = deriveRepoName(remoteUrlInput.value);
 });
+
+// 弹窗内的两个入口：先关弹窗，再走原来的打开流程
+function openLocalRepo() {
+  openModal.value = null;
+  openRepo();
+}
+
+function initRepoFromModal() {
+  openModal.value = null;
+  initRepo();
+}
 
 function openRemoteClone() {
   remoteUrlInput.value = "";
@@ -2491,7 +2502,7 @@ const { leftW, rightW, startResize, endResize, clampSidebars } = useSidebarResiz
 // 模板里写 @keydown.enter.prevent="imeDoClone" 这样的裸标识符，
 // 避免内联表达式 imeGuard(fn) 把返回的函数当语句丢掉。
 // 已拆出去的弹窗（新建分支/新建标签/重命名选项卡/重命名分支/分组命名/工作流执行确认）
-// 在各自模块里自带守卫。
+// 在各自模块里自带守卫。OpenRepoDialog 把键盘事件 emit 回来，守卫仍在这两个常量上。
 const imeDoClone = imeGuard(doClone);
 const imeCloseOpenModal = imeGuard(() => {
   openModal.value = null;
@@ -3008,105 +3019,24 @@ onUnmounted(() => {
 
     <!-- 打开仓库：本地 / 从远程克隆 -->
     <Transition name="dlg">
-    <div
+    <OpenRepoDialog
       v-if="openModal"
-      v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      :aria-labelledby="openModal === 'choose' ? 'dlg-open-repo-title' : 'dlg-clone-title'"
-      @click.self="openModal = null"
-    >
-      <div class="w-dlg-lg surface rounded-lg p-5 pop-in">
-        <!-- 选择入口 -->
-        <template v-if="openModal === 'choose'">
-          <div id="dlg-open-repo-title" class="mb-3 text-base font-semibold">打开仓库</div>
-          <div class="grid grid-cols-2 gap-3">
-            <button
-              class="cursor-pointer rounded-md surface-panel p-4 text-left transition-colors duration-fast hover:border-primary/60 hover:bg-primary/5 hover:shadow-elev-2"
-              @click="
-                openModal = null;
-                openRepo();
-              "
-            >
-              <FolderOpen class="mb-1.5 size-5 text-primary" />
-              <span class="block text-sm font-medium">本地目录</span>
-              <span class="mt-0.5 block text-xs text-muted-foreground">选择本机已有的 Git 仓库</span>
-            </button>
-            <button
-              class="cursor-pointer rounded-md surface-panel p-4 text-left transition-colors duration-fast hover:border-primary/60 hover:bg-primary/5 hover:shadow-elev-2"
-              @click="openRemoteClone"
-            >
-              <Download class="mb-1.5 size-5 text-primary" />
-              <span class="block text-sm font-medium">从远程克隆</span>
-              <span class="mt-0.5 block text-xs text-muted-foreground">输入 URL 克隆到本地并打开</span>
-            </button>
-            <!-- 第三个动作横跨整行：三个等宽卡片在 520px 里太挤，而且它本来就比前两个少见 -->
-            <button
-              class="col-span-2 flex cursor-pointer items-center gap-3 rounded-md surface-panel p-4 text-left transition-colors duration-fast hover:border-primary/60 hover:bg-primary/5 hover:shadow-elev-2"
-              @click="
-                openModal = null;
-                initRepo();
-              "
-            >
-              <FolderPlus class="size-5 shrink-0 text-primary" />
-              <span class="min-w-0">
-                <span class="block text-sm font-medium">初始化新仓库</span>
-                <span class="mt-0.5 block text-xs text-muted-foreground">把选中的空目录 git init 后打开</span>
-              </span>
-            </button>
-          </div>
-        </template>
-        <!-- 远程克隆表单 -->
-        <template v-else>
-          <div id="dlg-clone-title" class="mb-3 text-base font-semibold">从远程克隆</div>
-          <Input
-            v-model="remoteUrlInput"
-            v-focus
-            placeholder="远程地址：https://host/user/repo.git 或 git@host:user/repo.git"
-            @keydown.esc="imeCloseOpenModal"
-          />
-          <div class="mt-2 flex items-center gap-2">
-            <Button variant="secondary" size="sm" class="shrink-0" @click="pickCloneParent">
-              选择位置…
-            </Button>
-            <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground" :title="cloneParent">
-              {{ cloneParent || "未选择克隆到哪个目录" }}
-            </span>
-          </div>
-          <Input
-            v-model="cloneName"
-            class="mt-2"
-            placeholder="目录名（输入地址后自动推断，可修改）"
-            @input="cloneNameTouched = true"
-            @keydown.enter.prevent="imeDoClone"
-            @keydown.esc="imeCloseOpenModal"
-          />
-          <div v-if="cloneErr" class="mt-2 text-xs text-destructive">
-            {{ cloneErr }}
-            <details v-if="cloneErrDetail" class="mt-1">
-              <summary class="cursor-pointer text-muted-foreground">详细信息</summary>
-              <pre class="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-xs text-muted-foreground">{{ cloneErrDetail }}</pre>
-            </details>
-          </div>
-          <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
-            将克隆到「位置 / 目录名」，完成后自动打开。认证走系统凭据（credential helper / ssh key）。
-          </p>
-          <div class="mt-5 flex justify-end gap-2">
-            <Button variant="ghost" size="sm" @click="openModal = null">取消</Button>
-            <Button
-              variant="default"
-              size="sm"
-              :disabled="!remoteUrlInput.trim() || !cloneParent || !cloneName.trim() || cloneBusy"
-              @click="doClone"
-            >
-              <Spinner v-if="cloneBusy" :size="14" />
-              {{ cloneBusy ? "克隆中…" : "克隆并打开" }}
-            </Button>
-          </div>
-        </template>
-      </div>
-    </div>
+      :open="openModal"
+      v-model:remote-url-input="remoteUrlInput"
+      v-model:clone-name="cloneName"
+      :clone-parent="cloneParent"
+      :clone-busy="cloneBusy"
+      :clone-err="cloneErr"
+      :clone-err-detail="cloneErrDetail"
+      @close="imeCloseOpenModal"
+      @confirm-clone="imeDoClone"
+      @start-clone="doClone"
+      @pick-parent="pickCloneParent"
+      @choose-local="openLocalRepo()"
+      @remote="openRemoteClone"
+      @init-repo="initRepoFromModal()"
+      @touch-name="cloneNameTouched = true"
+    />
     </Transition>
 
     <!-- 新建标签弹窗（target 为空 = 打在当前 HEAD） -->
