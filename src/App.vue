@@ -8,7 +8,6 @@ import {
   FolderOpen,
   Folder,
   FolderPlus,
-  Plus,
   RefreshCw,
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -24,7 +23,6 @@ import {
   Workflow as WorkflowIcon,
   X,
   ExternalLink,
-  GripVertical,
   History,
   LayoutGrid,
   PanelLeft,
@@ -62,6 +60,7 @@ import BranchRenameDialog from "./components/BranchRenameDialog.vue";
 import ErrorDialog from "./components/ErrorDialog.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import GroupNameDialog from "./components/GroupNameDialog.vue";
+import GroupManagerModal from "./components/GroupManagerModal.vue";
 import AiReviewDialog from "./components/AiReviewDialog.vue";
 import MrPreviewDialog from "./components/MrPreviewDialog.vue";
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue";
@@ -859,6 +858,10 @@ function mgrGroupAtPoint(x: number, y: number): string | null {
   const el = document.elementFromPoint(x, y) as HTMLElement | null;
   return el?.closest<HTMLElement>("[data-mgr-group]")?.dataset.mgrGroup ?? null;
 }
+// 管理弹窗成员行 mousedown：拖拽机在 App，子组件只把原始参数 emit 回来
+function onMgrDragMember(e: MouseEvent, path: string, name: string) {
+  startItemDrag(e, path, name, mgrGroupAtPoint, dropItem);
+}
 // 统一的落点提交：null = 没落在任何能放的地方，什么都不做
 function dropItem(path: string, target: string | null) {
   if (target === null) return;
@@ -984,26 +987,10 @@ function confirmGroupModal() {
   if (m.mode === "create") for (const p of picks) addMember(name, p);
 }
 
-// 分组管理弹窗 + 文件夹下拉
+// 分组管理弹窗（渲染在 GroupManagerModal.vue）+ 文件夹下拉
 const showGroupMgr = ref(false);
-const mgrExpanded = ref("");
 const folderDd = ref<{ x: number; y: number; group: string } | null>(null);
 const folderDdEl = ref<HTMLElement | null>(null);
-// 管理弹窗里的仓库搜索词：过滤「添加仓库」候选（仓库名或路径，大小写不敏感）
-const groupSearch = ref("");
-function matchRepoSearch(r: RepoTab): boolean {
-  const q = groupSearch.value.trim().toLowerCase();
-  if (!q) return true;
-  return r.name.toLowerCase().includes(q) || r.path.toLowerCase().includes(q);
-}
-// 某个分组「添加仓库」列表：排除已在组内 + 没过搜索词
-function mgrCandidates(g: string): RepoTab[] {
-  return repos.value.filter((r) => r.group !== g && matchRepoSearch(r));
-}
-// 关闭弹窗（背板 / X / Esc 都走 showGroupMgr = false）时清空搜索词，下次打开是干净的
-watch(showGroupMgr, (open) => {
-  if (!open) groupSearch.value = "";
-});
 // 文件夹右键菜单：分组的新建/删除原先只能进管理弹窗做，而右键是这类「对象上的操作」
 // 最顺手的入口，也补齐了「文件夹能点开却什么都不带」的空缺
 const folderCtx = ref<{ x: number; y: number; group: string } | null>(null);
@@ -1033,7 +1020,6 @@ function closeGroupMgr() {
 }
 function openGroupMgr() {
   folderDd.value = null;
-  mgrExpanded.value = "";
   showGroupMgr.value = true;
 }
 function toggleFolder(g: string, ev: MouseEvent | KeyboardEvent) {
@@ -1066,7 +1052,6 @@ function askDeleteGroup(g: string) {
     body: `确认删除分组「${g}」？组内 ${groupCount(g)} 个仓库将回到标签栏（不会关闭任何仓库）。`,
     ok: async () => {
       deleteGroup(g);
-      if (mgrExpanded.value === g) mgrExpanded.value = "";
       toast(`已删除分组「${g}」，组内仓库回到标签栏`);
     },
   });
@@ -3368,132 +3353,23 @@ onUnmounted(() => {
     </div>
     </Transition>
 
-    <!-- 分组管理弹窗：新建 / 重命名 / 删除 / 分配仓库 -->
+    <!-- 分组管理弹窗：新建 / 重命名 / 删除 / 分配仓库（渲染在 GroupManagerModal.vue） -->
     <Transition name="dlg">
-    <div
+    <GroupManagerModal
       v-if="showGroupMgr"
-      v-trap
-      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="dlg-group-mgr-title"
-      @click.self="closeGroupMgr"
-    >
-      <div class="flex max-h-[75vh] w-dlg-lg flex-col surface rounded-lg pop-in">
-        <header class="flex shrink-0 items-center gap-2 border-b border-border px-5 py-3">
-          <FolderPlus class="size-4 text-primary" />
-          <span id="dlg-group-mgr-title" class="text-base font-semibold">分组管理</span>
-          <span class="flex-1" />
-          <Button variant="ghost" size="icon" @click="showGroupMgr = false"><X class="size-4" /></Button>
-        </header>
-        <div class="min-h-0 flex-1 overflow-y-auto p-3">
-          <div class="mb-2 flex items-center gap-2">
-            <Button variant="secondary" size="sm" @click="openGroupCreate">
-              <Plus class="size-3.5" /> 新建分组
-            </Button>
-            <div class="relative ml-auto">
-              <Search class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                v-model="groupSearch"
-                class="h-7 w-52 pl-7 text-xs"
-                placeholder="搜索仓库：名称或路径"
-                aria-label="搜索仓库"
-              />
-            </div>
-          </div>
-          <div v-if="!groupList.length" class="py-8 text-center text-xs text-muted-foreground">
-            还没有分组。新建一个，然后把仓库收进去——标签栏会出现一个文件夹，点击可展开仓库列表。
-          </div>
-          <VueDraggable
-            v-model="groupList"
-            :animation="150"
-            :force-fallback="true"
-            fallback-class="opacity-70"
-            handle=".mgr-group-handle"
-            tag="div"
-            @update:model-value="syncGroupBarOrder"
-          >
-            <div
-              v-for="g in groupList"
-              :key="g"
-              :data-mgr-group="g"
-              class="mb-2 rounded-md border transition-colors duration-fast"
-              :class="mgrHighlighted(g) ? 'border-primary/60 bg-primary-soft' : 'border-border'"
-            >
-              <div class="flex items-center gap-2 px-3 py-2">
-                <GripVertical class="mgr-group-handle size-3.5 shrink-0 cursor-grab text-muted-foreground" @click.stop />
-                <button
-                  class="flex flex-1 cursor-pointer items-center gap-1.5 text-left text-base"
-                  @click="mgrExpanded = mgrExpanded === g ? '' : g"
-                >
-                  <ChevronDown
-                    class="size-3 text-muted-foreground transition-transform duration-fast"
-                    :class="mgrExpanded !== g && '-rotate-90'"
-                  />
-                  <Folder class="size-3.5 text-primary" />
-                  <span class="font-medium">{{ g }}</span>
-                  <span class="text-xs text-muted-foreground">{{ groupCount(g) }} 个仓库</span>
-                  <span v-if="isGroupActive(g)" class="size-1.5 rounded-full bg-primary" title="当前打开的仓库在此分组" />
-                </button>
-                <Button variant="ghost" size="sm" class="h-6 px-2 text-xs" @click="openGroupRename(g)">重命名</Button>
-                <Button variant="ghost" size="sm" class="h-6 px-2 text-xs text-destructive" @click="askDeleteGroup(g)">
-                  删除
-                </Button>
-              </div>
-              <!-- 成员编辑：移出 / 添加 -->
-              <div v-if="mgrExpanded === g" class="border-t border-border/60 px-3 py-2">
-                <div
-                  v-for="r in repos.filter((x) => x.group === g)"
-                  :key="r.path"
-                  class="flex cursor-grab items-center gap-2 rounded-sm py-1 text-xs select-none transition-colors duration-fast hover:bg-hover"
-                  title="按住可拖到上面任意分组"
-                  @mousedown="startItemDrag($event, r.path, r.name, mgrGroupAtPoint, dropItem)"
-                >
-                  <span
-                    class="size-1.5 shrink-0 rounded-full"
-                    :class="r.path === repo ? 'bg-primary' : 'bg-border'"
-                  />
-                  <span class="shrink-0 font-medium">{{ r.name }}</span>
-                  <span class="flex-1 truncate text-xs text-muted-foreground">{{ r.path }}</span>
-                  <button
-                    class="cursor-pointer text-muted-foreground transition-colors duration-fast hover:text-destructive"
-                    title="移出分组"
-                    @mousedown.stop
-                    @click="removeMember(r.path)"
-                  >
-                    <X class="size-3" />
-                  </button>
-                </div>
-                <div v-if="!groupCount(g)" class="py-1 text-xs text-muted-foreground">空分组</div>
-                <div class="mt-1 border-t border-border/60 pt-1.5">
-                  <div class="mb-1 text-xs text-muted-foreground">添加仓库（一个仓库只属一个分组）：</div>
-                  <div class="max-h-32 space-y-0.5 overflow-y-auto">
-                    <button
-                      v-for="r in mgrCandidates(g)"
-                      :key="r.path"
-                      class="flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-1.5 py-1 text-left text-xs transition-colors duration-fast hover:bg-hover"
-                      @click="addMember(g, r.path)"
-                    >
-                      <Plus class="size-3 shrink-0 text-primary" />
-                      <span class="truncate">{{ r.name }}</span>
-                      <span class="ml-auto truncate text-xs text-muted-foreground">
-                        {{ r.group ? `来自「${r.group}」` : "未分组" }}
-                      </span>
-                    </button>
-                    <div v-if="!mgrCandidates(g).length" class="px-1.5 py-1 text-xs text-muted-foreground">
-                      没有匹配的仓库
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </VueDraggable>
-        </div>
-        <footer class="shrink-0 border-t border-border px-4 py-2 text-xs text-muted-foreground">
-          分组像书签文件夹：组内仓库不占选项卡，点文件夹下拉打开。移出/删除分组不会关闭任何仓库。
-        </footer>
-      </div>
-    </div>
+      v-model:group-list="groupList"
+      :repos="repos"
+      :current-repo="repo"
+      :highlighted="mgrHighlighted"
+      @groups-change="syncGroupBarOrder"
+      @close="closeGroupMgr"
+      @create="openGroupCreate"
+      @rename="openGroupRename"
+      @delete="askDeleteGroup"
+      @add-member="addMember"
+      @remove-member="removeMember"
+      @drag-member="onMgrDragMember"
+    />
     </Transition>
 
     <!-- 分组命名弹窗（新建 / 重命名共用）：渲染在 GroupNameDialog.vue -->

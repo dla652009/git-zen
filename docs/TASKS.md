@@ -1072,7 +1072,7 @@
 
 底稿行号每批都在变，**派活时一律给 `<!-- 注释 -->` 锚点让队友自己重新定位**，不要沿用上批的行号。
 `src/App.vue` 从 16.2 起步的 2931 行降到 **2808 行**（批 1-4 之后）；
-批 6 抽完后当前 **3659 行**（较批 4 的增长来自同期 M17/M19 新功能）。
+批 6 抽完后 **3659 行**，批 7 抽完当前 **3535 行**（较批 4 的增长来自同期 M17/M19 新功能）。
 
 - [x] 批 1：`CreateBranchDialog` / `CreateTagDialog` / `TabRenameDialog` / `BranchRenameDialog`（提交 `b16cf35`）
 - [x] 批 2：`ErrorDialog` / `ConfirmDialog` / `GroupNameDialog`（提交 `e2d34ee`）
@@ -1080,7 +1080,10 @@
 - [x] 批 4：`RepoSwitcher` / `BranchSwitcher`（提交 `794d424`）
 - [x] 批 5：工作流确认 + 执行进度两弹窗（提交 `d17a50a`）
 - [x] 批 6：`OpenRepoDialog`（打开仓库）（本次工作区改动，未提交，待复核）
-- [ ] 分组管理弹窗 + 分组下拉 —— 与拖拽机器 / `syncBar` 写穿双向耦合，**排在最后**
+- [x] 批 7：`GroupManagerModal`（分组管理弹窗）（本次工作区改动，未提交，待复核）。
+      分组顺序仍留 App（`gz.groups` / `syncBar`），子组件用 `v-model:group-list` 桥接；
+      拖拽机（`startItemDrag` / `mgrGroupAtPoint` / `dropItem`）留 App，成员行只 emit 原始参数
+- [ ] 分组下拉（文件夹成员浮层）→ 子组件 —— 与拖拽机器 / `syncBar` 写穿双向耦合，**排在最后**
 - [ ] 选项卡栏（含分组文件夹）→ `components/RepoBar.vue`
 - [ ] 主棚三栏外壳
 
