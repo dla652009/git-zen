@@ -1068,11 +1068,12 @@
 **每抽一个都要重跑 `pnpm verify`**，其中 `vite build` 那一步不可省：`vue-tsc` 不检查模板结构，
 只有构建能拦住缺结束标签这类错（见 NOTES.md）。
 
-### 16.2 template → 子组件（进行中）
+### 16.2 template → 子组件（批 1-9 完成）
 
 底稿行号每批都在变，**派活时一律给 `<!-- 注释 -->` 锚点让队友自己重新定位**，不要沿用上批的行号。
 `src/App.vue` 从 16.2 起步的 2931 行降到 **2808 行**（批 1-4 之后）；
-批 6 抽完后 **3659 行**，批 8（选项卡栏）抽完当前 **3462 行**（较批 4 的增长来自同期 M17/M19 新功能）。
+批 6 抽完后 **3659 行**，批 8（选项卡栏）抽完 **3462 行**（较批 4 的增长来自同期 M17/M19 新功能），
+收尾批（分组下拉）抽完当前 **3420 行**。
 
 - [x] 批 1：`CreateBranchDialog` / `CreateTagDialog` / `TabRenameDialog` / `BranchRenameDialog`（提交 `b16cf35`）
 - [x] 批 2：`ErrorDialog` / `ConfirmDialog` / `GroupNameDialog`（提交 `e2d34ee`）
@@ -1083,7 +1084,11 @@
 - [x] 批 7：`GroupManagerModal`（分组管理弹窗）（本次工作区改动，未提交，待复核）。
       分组顺序仍留 App（`gz.groups` / `syncBar`），子组件用 `v-model:group-list` 桥接；
       拖拽机（`startItemDrag` / `mgrGroupAtPoint` / `dropItem`）留 App，成员行只 emit 原始参数
-- [ ] 分组下拉（文件夹成员浮层）→ 子组件 —— 与拖拽机器 / `syncBar` 写穿双向耦合，**排在最后**
+- [x] 批 9（收尾）：`FolderDropdown`（分组下拉 / 文件夹成员浮层）（本次工作区改动，未提交，待复核；`pnpm verify` 通过）。
+      `folderDd` 仍是 App 的 overlay 状态（`overlayLayers.folderDd` 不动），子组件用 `:dd` + `@close` / `@close-force`
+      桥接两种关闭语义（左键背板走 `closeFolderDd` 的拖拽守卫，右键直接置 null）；成员列表由子组件按
+      `repos + dd.group` 自算；拖拽机（`startItemDrag` / `folderAtPoint` / `dropItem`）留 App，成员行只 emit
+      原始参数；打开后 `scrollIntoView` 当前仓库的逻辑随 `[data-folder-active]` 一起搬进子组件（`watch(dd)` + `nextTick`）
 - [x] 批 8：`RepoBar`（选项卡栏，含分组文件夹）（本次工作区改动，未提交，待复核；`pnpm verify` 通过）。
       `barOrder` 用 `v-model:bar-order` 桥接（持久化仍由 App 的 deep watch 负责）；
       `groupCount` / `isGroupActive` / `folderHighlighted` 走函数 prop；`@move` 也走函数 prop

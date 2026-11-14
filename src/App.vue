@@ -59,6 +59,7 @@ import ErrorDialog from "./components/ErrorDialog.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import GroupNameDialog from "./components/GroupNameDialog.vue";
 import GroupManagerModal from "./components/GroupManagerModal.vue";
+import FolderDropdown from "./components/FolderDropdown.vue";
 import RepoBar from "./components/RepoBar.vue";
 import AiReviewDialog from "./components/AiReviewDialog.vue";
 import MrPreviewDialog from "./components/MrPreviewDialog.vue";
@@ -860,6 +861,10 @@ function mgrGroupAtPoint(x: number, y: number): string | null {
 function onMgrDragMember(e: MouseEvent, path: string, name: string) {
   startItemDrag(e, path, name, mgrGroupAtPoint, dropItem);
 }
+// 文件夹下拉成员行 mousedown：同样只做参数桥接
+function onFolderDragMember(e: MouseEvent, path: string, name: string) {
+  startItemDrag(e, path, name, folderAtPoint, dropItem);
+}
 // 统一的落点提交：null = 没落在任何能放的地方，什么都不做
 function dropItem(path: string, target: string | null) {
   if (target === null) return;
@@ -988,7 +993,6 @@ function confirmGroupModal() {
 // 分组管理弹窗（渲染在 GroupManagerModal.vue）+ 文件夹下拉
 const showGroupMgr = ref(false);
 const folderDd = ref<{ x: number; y: number; group: string } | null>(null);
-const folderDdEl = ref<HTMLElement | null>(null);
 // 文件夹右键菜单：分组的新建/删除原先只能进管理弹窗做，而右键是这类「对象上的操作」
 // 最顺手的入口，也补齐了「文件夹能点开却什么都不带」的空缺
 const folderCtx = ref<{ x: number; y: number; group: string } | null>(null);
@@ -1031,14 +1035,8 @@ function toggleFolder(g: string, ev: MouseEvent | KeyboardEvent) {
     y: rect.bottom + 4,
     group: g,
   };
-  // 分组一多，下拉里哪一行是当前仓库就不好找了：打开后把它滚进视野
-  nextTick(() => {
-    folderDdEl.value?.querySelector('[data-folder-active="1"]')?.scrollIntoView({ block: "nearest" });
-  });
+  // 打开后滚当前仓库进视野的逻辑在 FolderDropdown 内（nextTick + watch(dd)）
 }
-const folderMembers = computed(() =>
-  folderDd.value ? repos.value.filter((r) => r.group === folderDd.value!.group) : [],
-);
 function openFromFolder(path: string) {
   folderDd.value = null;
   switchRepo(path);
@@ -3224,60 +3222,20 @@ onUnmounted(() => {
       {{ itemDrag.name }}
     </div>
 
-    <!-- 分组文件夹下拉：成员仓库列表，点击激活 -->
+    <!-- 分组文件夹下拉：成员仓库列表，点击激活（渲染在 FolderDropdown.vue） -->
     <Transition name="dlg">
-    <div v-if="folderDd" class="fixed inset-0 z-40" @click="closeFolderDd" @contextmenu.prevent="folderDd = null">
-      <div
-        ref="folderDdEl"
-        class="fixed max-h-[60vh] w-[260px] overflow-y-auto surface-menu rounded-sm py-1 pop-in"
-        :style="{ left: folderDd.x + 'px', top: folderDd.y + 'px' }"
-      >
-        <div class="px-3 pt-3 pb-1.5 text-2xs font-semibold tracking-wide text-muted-foreground tabular-nums">
-          {{ folderDd.group }} · {{ folderMembers.length }} 个仓库
-        </div>
-        <div
-          v-for="r in folderMembers"
-          :key="r.path"
-          :data-folder-active="r.path === repo ? '1' : undefined"
-          class="group/member flex items-center gap-1 transition-colors duration-fast hover:bg-hover"
-          :class="r.path === repo && 'bg-primary-soft text-primary'"
-        >
-          <button
-            class="flex min-w-0 flex-1 cursor-grab items-center gap-2 px-3 py-1.5 text-left text-xs select-none"
-            :title="`${r.path} · 按住可拖到标签栏移出分组，或拖到别的文件夹换组`"
-            @mousedown="startItemDrag($event, r.path, r.name, folderAtPoint, dropItem)"
-            @click.stop="onMemberClick(r.path)"
-          >
-            <span
-              class="size-1.5 shrink-0 rounded-full"
-              :class="r.path === repo ? 'bg-primary' : 'bg-border'"
-            />
-            <span class="truncate">{{ r.name }}</span>
-          </button>
-          <Tooltip text="移出分组">
-            <button
-              class="mr-1 shrink-0 cursor-pointer text-muted-foreground opacity-0 transition-opacity duration-fast group-hover/member:opacity-100 hover:text-destructive"
-              aria-label="移出分组"
-              @mousedown.stop
-              @click.stop="removeMember(r.path)"
-            >
-              <X class="size-3" />
-            </button>
-          </Tooltip>
-        </div>
-        <div v-if="!folderMembers.length" class="px-3 py-2 text-xs text-muted-foreground">
-          空分组 · 用标签栏右侧的「管理分组」添加仓库
-        </div>
-        <div class="mt-1 border-t border-border/60 pt-1">
-          <button
-            class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors duration-fast hover:bg-hover"
-            @click.stop="openGroupMgr"
-          >
-            管理分组…
-          </button>
-        </div>
-      </div>
-    </div>
+    <FolderDropdown
+      v-if="folderDd"
+      :dd="folderDd"
+      :repos="repos"
+      :current-repo="repo"
+      @close="closeFolderDd"
+      @close-force="folderDd = null"
+      @open-mgr="openGroupMgr"
+      @member-activate="onMemberClick"
+      @remove-member="removeMember"
+      @drag-member="onFolderDragMember"
+    />
     </Transition>
 
     <!-- 分组管理弹窗：新建 / 重命名 / 删除 / 分配仓库（渲染在 GroupManagerModal.vue） -->
