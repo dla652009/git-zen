@@ -1072,7 +1072,7 @@
 
 底稿行号每批都在变，**派活时一律给 `<!-- 注释 -->` 锚点让队友自己重新定位**，不要沿用上批的行号。
 `src/App.vue` 从 16.2 起步的 2931 行降到 **2808 行**（批 1-4 之后）；
-批 6 抽完后 **3659 行**，批 7 抽完当前 **3535 行**（较批 4 的增长来自同期 M17/M19 新功能）。
+批 6 抽完后 **3659 行**，批 8（选项卡栏）抽完当前 **3462 行**（较批 4 的增长来自同期 M17/M19 新功能）。
 
 - [x] 批 1：`CreateBranchDialog` / `CreateTagDialog` / `TabRenameDialog` / `BranchRenameDialog`（提交 `b16cf35`）
 - [x] 批 2：`ErrorDialog` / `ConfirmDialog` / `GroupNameDialog`（提交 `e2d34ee`）
@@ -1084,7 +1084,11 @@
       分组顺序仍留 App（`gz.groups` / `syncBar`），子组件用 `v-model:group-list` 桥接；
       拖拽机（`startItemDrag` / `mgrGroupAtPoint` / `dropItem`）留 App，成员行只 emit 原始参数
 - [ ] 分组下拉（文件夹成员浮层）→ 子组件 —— 与拖拽机器 / `syncBar` 写穿双向耦合，**排在最后**
-- [ ] 选项卡栏（含分组文件夹）→ `components/RepoBar.vue`
+- [x] 批 8：`RepoBar`（选项卡栏，含分组文件夹）（本次工作区改动，未提交，待复核；`pnpm verify` 通过）。
+      `barOrder` 用 `v-model:bar-order` 桥接（持久化仍由 App 的 deep watch 负责）；
+      `groupCount` / `isGroupActive` / `folderHighlighted` 走函数 prop；`@move` 也走函数 prop
+      （`@move="(evt) => props.onBarMove(evt)"`），返回值直达 Sortable，保留「悬停文件夹时禁止换位」的守卫；
+      拖拽命中判定（`onBarStart` / `onBarEnd` / `dragPointer` / `dragOverGroup`）留 App
 - [ ] 主棚三栏外壳
 
 **每批的硬约束（三批下来没变过）**：`overlayLayers` / `overlayOrder` / `closeTopOverlay` / `onGlobalKeydown`

@@ -6,8 +6,6 @@ import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   FolderOpen,
-  Folder,
-  FolderPlus,
   RefreshCw,
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -61,6 +59,7 @@ import ErrorDialog from "./components/ErrorDialog.vue";
 import ConfirmDialog from "./components/ConfirmDialog.vue";
 import GroupNameDialog from "./components/GroupNameDialog.vue";
 import GroupManagerModal from "./components/GroupManagerModal.vue";
+import RepoBar from "./components/RepoBar.vue";
 import AiReviewDialog from "./components/AiReviewDialog.vue";
 import MrPreviewDialog from "./components/MrPreviewDialog.vue";
 import ReleaseNotesDialog from "./components/ReleaseNotesDialog.vue";
@@ -75,7 +74,6 @@ import ReposOverviewModal from "./components/ReposOverviewModal.vue";
 import type { RepoOverviewRow } from "./components/ReposOverviewModal.vue";
 import OpenRepoDialog from "./components/OpenRepoDialog.vue";
 import TitleBar from "./components/TitleBar.vue";
-import { VueDraggable } from "vue-draggable-plus";
 import { buildNodes } from "./branchTree";
 import type { BNode } from "./branchTree";
 import { closeTop, type OverlayLayer, type OverlayName } from "./lib/overlays";
@@ -1180,6 +1178,10 @@ const tabRenameOpen = computed({
   },
 });
 const tabCtx = ref<{ x: number; y: number; path: string } | null>(null);
+// 选项卡右键菜单的锚点：坐标由 MouseEvent 提供，菜单本身仍在 App 渲染
+function openTabCtx(e: MouseEvent, path: string) {
+  tabCtx.value = { x: e.clientX, y: e.clientY, path };
+}
 
 function openRenameModal() {
   const r = repoByPath.value.get(tabCtx.value!.path);
@@ -2613,101 +2615,26 @@ onUnmounted(() => {
       </Tooltip>
     </header>
 
-    <!-- 仓库标签栏：文件夹（分组）+ 未分组仓库，可拖动排序；最右侧按钮打开分组管理 -->
-    <div data-tab-bar class="flex items-end border-b border-border bg-card">
-      <VueDraggable
-        v-model="barOrder"
-        :animation="150"
-        :force-fallback="true"
-        fallback-class="opacity-70"
-        tag="div"
-        class="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto px-2"
-        @start="onBarStart"
-        @move="onBarMove"
-        @end="onBarEnd"
-      >
-        <template
-          v-for="item in barOrder"
-          :key="item.kind === 'group' ? `group:${item.name}` : `repo:${item.path}`"
-        >
-          <!-- 分组文件夹：点击弹出成员下拉，激活仓库在组内时高亮；拖仓库到此处松手可归组 -->
-          <div
-            v-if="item.kind === 'group'"
-            data-group-folder
-            :data-group-folder-name="item.name"
-            tabindex="0"
-            role="button"
-            aria-haspopup="menu"
-            :aria-expanded="folderDd?.group === item.name"
-            class="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors duration-fast select-none outline-none focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
-            :class="[
-              folderHighlighted(item.name)
-                ? 'border-primary/60 bg-primary/10 text-primary ring-1 ring-primary/40'
-                : isGroupActive(item.name)
-                  ? 'border-border bg-background font-medium text-foreground'
-                  : 'border-transparent text-muted-foreground transition-colors duration-fast hover:bg-hover',
-            ]"
-            :title="`分组「${item.name}」· ${groupCount(item.name)} 个仓库 · 点击展开；拖仓库到此处可收进分组，右键可重命名/删除`"
-            @click.stop="toggleFolder(item.name, $event)"
-            @keydown.enter.prevent="toggleFolder(item.name, $event)"
-            @keydown.space.prevent="toggleFolder(item.name, $event)"
-            @contextmenu.prevent.stop="openFolderCtx($event, item.name)"
-          >
-            <Folder
-              class="size-3.5 shrink-0"
-              :class="folderHighlighted(item.name) || isGroupActive(item.name) ? 'text-primary' : 'opacity-70'"
-            />
-            <!-- 分组名长起来会挤爆标签栏：截断 + 成员数，让每个文件夹的宽度可预期 -->
-            <span class="max-w-[140px] truncate">{{ item.name }}</span>
-            <span class="text-2xs text-muted-foreground">{{ groupCount(item.name) }}</span>
-            <ChevronDown class="size-3 opacity-50" />
-          </div>
-          <!-- 仓库选项卡 -->
-          <div
-            v-else
-            :data-repo-path="item.path"
-            class="group/tab flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors duration-fast select-none"
-            :class="[
-              item.path === repo
-                ? 'border-border bg-background font-medium text-foreground'
-                : 'border-transparent text-muted-foreground transition-colors duration-fast hover:bg-hover',
-            ]"
-            @click="switchRepo(item.path)"
-            @contextmenu.prevent="tabCtx = { x: $event.clientX, y: $event.clientY, path: item.path }"
-          >
-            <span
-              class="size-1.5 shrink-0 rounded-full"
-              :class="item.path === repo ? 'bg-primary' : 'bg-border group-hover/tab:bg-muted-foreground'"
-            />
-            <Tooltip :text="item.path">
-              <span class="max-w-[120px] truncate">{{ repoByPath.get(item.path)?.name }}</span>
-            </Tooltip>
-            <X
-              class="size-3 opacity-0 transition-opacity duration-fast group-hover/tab:opacity-60 hover:!opacity-100 hover:text-destructive"
-              aria-label="关闭仓库选项卡"
-              @mousedown.stop
-              @click.stop="askCloseTab(item.path)"
-            />
-          </div>
-        </template>
-      </VueDraggable>
-      <Tooltip text="所有仓库总览">
-        <Button
-          variant="ghost"
-          size="icon"
-          class="mr-1 mb-0.5 h-6 w-6 shrink-0"
-          aria-label="所有仓库总览"
-          @click="openReposOverview"
-        >
-          <LayoutGrid class="size-4" />
-        </Button>
-      </Tooltip>
-      <Tooltip text="管理分组">
-        <Button variant="ghost" size="icon" class="mr-1 mb-0.5 h-6 w-6 shrink-0" @click="openGroupMgr">
-          <FolderPlus class="size-4" />
-        </Button>
-      </Tooltip>
-    </div>
+    <!-- 仓库标签栏：文件夹（分组）+ 未分组仓库，可拖动排序；最右侧按钮打开分组管理（渲染在 RepoBar.vue） -->
+    <RepoBar
+      v-model:bar-order="barOrder"
+      :current-repo="repo"
+      :repo-by-path="repoByPath"
+      :open-folder="folderDd?.group ?? ''"
+      :group-count="groupCount"
+      :is-group-active="isGroupActive"
+      :folder-highlighted="folderHighlighted"
+      :on-bar-move="onBarMove"
+      @switch-repo="switchRepo"
+      @close-tab="askCloseTab"
+      @folder-toggle="toggleFolder"
+      @folder-menu="openFolderCtx"
+      @tab-menu="openTabCtx"
+      @open-overview="openReposOverview"
+      @open-group-mgr="openGroupMgr"
+      @bar-start="onBarStart"
+      @bar-end="onBarEnd"
+    />
 
     <div class="flex min-h-0 flex-1">
       <!-- 分支侧栏（可拖宽 / 双击把手折叠） -->

@@ -193,6 +193,14 @@ item.kind 直接报 null TypeError。
 "无位移"复位分支；自己的数据变更推迟到 nextTick 等落子流程结束；数据源侧再用
 syncBar 过滤脏值兜底。三个都做才稳，只做其一都会偶发复现。
 
+⚠️ **`<VueDraggable @move="fn">` 的返回值能到达 Sortable，别按「emit 会吞返回值」误判**
+（vue-draggable-plus 0.6.1 + Vue 3.5 源码核对）：组件把 `move` 声明进 emits 的同时，也把
+`onMove` 声明进了 props，Vue 因此把监听器放进 `props` 而不是 attrs；库内部 `toRefs(props)`
+后按 `{ ...emit 代理, ...props }` 合并 Sortable options，props 覆盖掉 emit 代理，Sortable
+拿到的是原始监听器，返回值（`false` 阻止换位）直接生效。拆 RepoBar 时 `@move` 必须用
+**函数 prop + 包装函数**透传（`@move="(evt) => props.onBarMove(evt)"`）：若改成 `emit('bar-move')`
+让 App 监听，第二层 emit 才会丢返回值。只有监听器没作为 prop 传入时才会落到 emit 代理。
+
 ### for-each-ref 的 format 不支持 %x1f，pretty format 支持
 
 同一台 git（2.47）：`git log --pretty=format:%x1f` 会输出真实的 0x1F 控制字节
