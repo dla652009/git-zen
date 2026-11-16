@@ -21,6 +21,10 @@ export interface Settings {
    *  与 changeView 同理放设置里，跨重启保留；两者互相独立 —— 变更列表想平铺、
    *  分支想分层是常见组合，不该被同一个开关绑住 */
   branchView: "tree" | "flat";
+  /** 所有仓库总览的视图：按分组 / 平铺。
+   *  分组时顺序与选项卡一致（选项卡的分组是用户亲手排的，总览照抄才不违和）；
+   *  平铺时按未分组在前、组名排序列出全部仓库 */
+  repoView: "group" | "flat";
   /** 推送前先列出这次要推哪些提交。推送是唯一一个「做了就收不回」的日常操作，
    *  也是工具栏上唯一没有确认的按钮；嫌烦可在 设置 › 个性化 关掉 */
   pushPreview: boolean;
@@ -64,6 +68,7 @@ const DEFAULTS: Settings = {
   mrAiGen: "off",
   changeView: "flat",
   branchView: "tree",
+  repoView: "group",
   pushPreview: true,
 };
 
@@ -107,6 +112,10 @@ function load(): Settings {
       saved.branchView === "flat" || saved.branchView === "tree"
         ? saved.branchView
         : DEFAULTS.branchView,
+    repoView:
+      saved.repoView === "flat" || saved.repoView === "group"
+        ? saved.repoView
+        : DEFAULTS.repoView,
     // 缺省即开：老用户的 localStorage 里没有这个键，不该因此少掉预览
     pushPreview: saved.pushPreview !== false,
   };

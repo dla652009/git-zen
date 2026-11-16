@@ -1941,6 +1941,8 @@ async function loadRepoRows() {
         return {
           path: r.path,
           name: r.name,
+          // group 只在总览里用来分组展示；未分组时留空
+          group: r.group,
           branch: s?.branch ?? "",
           ahead: s?.ahead ?? 0,
           behind: s?.behind ?? 0,
@@ -3418,6 +3420,9 @@ onUnmounted(() => {
       :rows="repoRows"
       :loading="reposLoading"
       :workflows="workflows.map((w) => w.name)"
+      :group-order="groupList"
+      :view="settings.repoView"
+      @set-view="(v: 'group' | 'flat') => (settings.repoView = v)"
       @open-repo="switchRepo"
       @pull-all="pullAllRepos"
       @refresh="loadRepoRows"
