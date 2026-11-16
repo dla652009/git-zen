@@ -60,9 +60,14 @@ function onDocClick(e: MouseEvent) {
   if (rootEl.value?.contains(t) || panelEl.value?.contains(t)) return;
   open.value = false;
 }
-// 滚动或缩放时锚点会移动：直接收起最省心（与 Tooltip 一致）
-function onScrollOrResize() {
-  if (open.value) open.value = false;
+// 页面滚动或缩放时锚点会移动：收起面板最省心（与 Tooltip 一致）。
+// 但**面板自身内部的滚动不算** —— 它 max-h-56 + overflow-y-auto，选项多时要能滚着看。
+// capture 监听会先于冒泡拿到面板里的 scroll 事件，所以这里按事件源排除。
+function onScrollOrResize(e?: Event) {
+  if (!open.value) return;
+  const t = e?.target as Node | null;
+  if (t && panelEl.value?.contains(t)) return; // 面板内部滚动：不关
+  open.value = false;
 }
 function onKey(e: KeyboardEvent) {
   if (e.key === "Escape" && open.value) {
@@ -116,7 +121,7 @@ const current = () => props.options.find((o) => o.value === model.value);
       <div
         v-if="open"
         ref="panelEl"
-        class="pop-in surface-menu fixed z-[60] max-h-56 overflow-y-auto rounded-sm py-1"
+        class="pop-in surface-menu fixed z-[60] max-h-56 overflow-y-auto overscroll-contain rounded-sm py-1"
         :style="{ left: pos.left + 'px', top: pos.top + 'px', minWidth: pos.width + 'px' }"
         role="listbox"
         @keydown="onKey"
