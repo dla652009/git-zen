@@ -3140,24 +3140,37 @@ onUnmounted(() => {
     <footer class="flex h-8 shrink-0 items-center gap-3 border-t border-border bg-card px-3 text-xs text-muted-foreground">
       <span class="font-medium text-foreground">{{ status?.branch ?? "—" }}</span>
       <span class="flex-1" />
-      <span class="tabular-nums" :class="!status && 'invisible'">
+      <span
+        class="tabular-nums transition-opacity duration-base"
+        :class="status ? 'opacity-100' : 'opacity-0'"
+        :aria-hidden="!status"
+      >
         {{ status ? `${status.files.length} 个变更文件` : "0 个变更文件" }}
       </span>
-      <!-- 不可见而不是不渲染：占住同样的宽度，远程信息到达时不会挤动前面的元素 -->
-      <Tooltip :text="remoteWebUrl ? '打开远程仓库网页（右键更多）' : '正在读取远程信息…'">
-        <Button
-          variant="ghost"
-          size="sm"
-          class="h-5 gap-1 px-1.5 text-xs"
-          :class="!remoteWebUrl && 'invisible'"
-          :disabled="!remoteWebUrl"
-          @click="openRemote"
-          @contextmenu.prevent="remoteCtx = { x: $event.clientX, y: $event.clientY }"
-        >
-        <ExternalLink class="size-3" />
-        远程
-        </Button>
-      </Tooltip>
+      <!-- 不用 v-if 是为了不撑高底栏（见上）；淡入而不是突然 visible：
+           远程信息是异步到的，硬切一帧就显得突兀。
+           过渡包在外层 span 上，避免和 Button 自带的 transition-colors 抢同一属性
+           （两者的声明顺序由产物 CSS 决定，不可控）。 -->
+      <span
+        class="transition-opacity duration-base"
+        :class="remoteWebUrl ? 'opacity-100' : 'opacity-0'"
+        :aria-hidden="!remoteWebUrl"
+      >
+        <Tooltip :text="remoteWebUrl ? '打开远程仓库网页（右键更多）' : '正在读取远程信息…'">
+          <Button
+            variant="ghost"
+            size="sm"
+            class="h-5 gap-1 px-1.5 text-xs"
+            :disabled="!remoteWebUrl"
+            :tabindex="remoteWebUrl ? undefined : -1"
+            @click="openRemote"
+            @contextmenu.prevent="remoteCtx = { x: $event.clientX, y: $event.clientY }"
+          >
+          <ExternalLink class="size-3" />
+          远程
+          </Button>
+        </Tooltip>
+      </span>
       <Badge v-if="currentBranchNoUpstream" variant="warning" class="cursor-default">
         当前分支尚未推送到远程
       </Badge>
