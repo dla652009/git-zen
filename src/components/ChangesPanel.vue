@@ -503,7 +503,7 @@ async function genCommitMsg() {
          主操作做成实心按钮压在最下 —— 之前三样挤在一行，文字被按钮压得折行。 -->
     <div
       v-if="opInfo"
-      class="mx-3 mt-3 overflow-hidden rounded-md border"
+      class="mx-3 mt-3 shrink-0 overflow-hidden rounded-md border"
       :style="bannerStyle(opInfo.left ? 'var(--c-mod)' : 'var(--c-add)')"
     >
       <div class="flex items-center gap-1.5 px-2.5 pt-2">
@@ -544,7 +544,7 @@ async function genCommitMsg() {
     <!-- 冲突态横幅：没有 op 状态时（例如外部操作留下的冲突）兜底给「放弃合并」出口 -->
     <div
       v-if="!opInfo && conflictFiles.length"
-      class="mx-3 mt-3 overflow-hidden rounded-md border"
+      class="mx-3 mt-3 shrink-0 overflow-hidden rounded-md border"
       :style="bannerStyle('var(--c-mod)')"
     >
       <div class="flex items-center gap-1.5 px-2.5 pt-2">
@@ -567,7 +567,7 @@ async function genCommitMsg() {
     <!-- 过滤框：树解决了「文件去哪了」，剩下的问题是「文件在哪」—— 几十个文件在两个列表里
          各滚一遍太慢。放在面板顶部而不是「未暂存」标题行，因为一个词要同时过滤两个列表，
          而那两个标题行都已经挤满了（标签 + 徽标 + 两个按钮）。 -->
-    <div v-if="staged.length + unstaged.length" class="mx-3 mt-2 flex items-center gap-1.5">
+    <div v-if="staged.length + unstaged.length" class="mx-3 mt-2 flex shrink-0 items-center gap-1.5">
       <div class="relative flex-1">
         <Search
         class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
@@ -617,7 +617,7 @@ async function genCommitMsg() {
     </div>
 
     <!-- 已暂存 -->
-    <div class="flex items-center gap-2 px-3 pt-3 pb-1.5">
+    <div class="flex shrink-0 items-center gap-2 px-3 pt-3 pb-1.5">
       <span class="text-2xs font-semibold tracking-wide text-muted-foreground">已暂存</span>
       <Badge v-if="staged.length" variant="default">{{ staged.length }}</Badge>
       <!-- 全部取消暂存 -->
@@ -726,7 +726,7 @@ async function genCommitMsg() {
     </TransitionGroup>
 
     <!-- 未暂存 -->
-    <div class="mt-2 flex items-center gap-2 border-t border-border px-3 pt-3 pb-1.5">
+    <div class="mt-2 flex shrink-0 items-center gap-2 border-t border-border px-3 pt-3 pb-1.5">
       <span class="text-2xs font-semibold tracking-wide text-muted-foreground">未暂存</span>
       <Badge v-if="unstaged.length" variant="danger">{{ unstaged.length }}</Badge>
       <Button
