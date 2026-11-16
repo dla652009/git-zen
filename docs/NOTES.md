@@ -1413,3 +1413,22 @@ basis=0 的列表吸收不了任何收缩 —— 压缩全落在 `basis: auto` �
 
 判据：`flex-1` + `overflow-y-auto` 的滚动区，其兄弟固定行一律 `shrink-0`。
 实测同构布局：不加 36px / 加了 93px（同样内容量）。
+
+## 提交行三段争宽度的优先级
+
+历史行是 `flex` 一行三段：主题 / refs 徽标 / 作者·时间。原先只给主题
+`flex-1 truncate`，结果长远程分支名（`origin/feat/unify-deduction-failure-handling`）
+把主题挤到几十像素甚至 0。
+
+三条约束缺一不可：
+1. **`min-w-0`**：`whitespace-nowrap` 的徽标默认 `min-width: auto` = 自身内容宽，
+   不给 `min-w-0` 它永远不会收缩。
+2. **refs 区 `max-w-[45%]`**：只给 `flex-1` 不够 —— 主题会吃掉「剩余」，但 refs
+   仍按内容宽优先分配。实测 420px 行宽下：无上限 refs=228/主题=93，
+   有了上限 refs=183/主题=139。
+3. **作者列 `shrink-0` + `max-w-[9.5rem]`**：固定窄列，不参与争夺。
+
+配套瘦身：
+- 远程分支徽标去掉 `origin/`（蓝色徽标已是远程的视觉编码），全名留在 tooltip。
+- 最多显示 2 枚 refs，其余折成 `+N`，tooltip 里列全。
+- 日期 `5 days ago` → `5d`（`month` 用 `mo` 与 `minute` 区分）。

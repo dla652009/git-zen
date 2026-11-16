@@ -324,6 +324,42 @@ function refVariant(ref: string): "default" | "muted" | "info" | "warning" {
   return "default";
 }
 
+// ── refs 徽标：一行宽度有限，得把「远程分支的完整名字」压短 ──
+// 同屏最多摆 2 枚，其余折成「+N」，否则一条挂了很多 ref 的提交会把主题挤没。
+const REFS_SHOWN = 2;
+
+/** 显示的短名：远程分支去掉 origin/（蓝色徽标已经表示远程），标签去掉 tag: */
+function refLabel(ref: string): string {
+  if (ref === "HEAD") return "HEAD";
+  if (ref.startsWith("tag: ")) return ref.slice(5);
+  return ref.startsWith("origin/") ? ref.slice(7) : ref;
+}
+
+/** tooltip 给全名：短名把 origin/ 去掉后，光看徽标分不出本地还是远程的同名分支 */
+function refTitle(ref: string): string {
+  if (ref === "HEAD") return "HEAD（当前检出）";
+  if (ref.startsWith("tag: ")) return `标签 ${ref.slice(5)}`;
+  return ref.startsWith("origin/") ? `远程分支 ${ref}` : `本地分支 ${ref}`;
+}
+
+/** 折起来的那些 refs，tooltip 里一次列全 */
+function restRefs(c: LogEntry): string {
+  return c.refs
+    .slice(REFS_SHOWN)
+    .map((r) => refTitle(r))
+    .join("\n");
+}
+
+/** 「5 days ago」→「5d」。右栏窄，中文「天」也占两字宽，用字母最省 */
+function shortDate(d: string): string {
+  const m = d.match(/^(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago$/i);
+  if (!m) return d.replace(/\s+ago$/i, "");
+  const unit = m[2][0].toLowerCase(); // s / m / h / d / w / m / y
+  // minute 与 month 都是 m：分钟更常见，月份用 mo 区分
+  const suffix = m[2].toLowerCase() === "month" ? "mo" : unit;
+  return `${m[1]}${suffix}`;
+}
+
 // 搜索命中高亮：把主题按命中位置切段渲染（不区分大小写）
 const hitSegments = computed(() => {
   const q = (props.filter ?? "").trim().toLowerCase();
@@ -400,18 +436,34 @@ const hitSegments = computed(() => {
         @click="onRowClick(c, $event)"
         @contextmenu.prevent="emit('commitMenu', { x: $event.clientX, y: $event.clientY, c })"
       >
-        <span class="flex-1 truncate" :title="tip(c)">
+        <!-- 一行三段争宽度：主题 / refs / 作者·时间。优先级从高到低，
+             主题保底 min-w-0 flex-1，refs 可收缩（min-w-0 才破得开 auto 最小尺寸，
+             否则 nowrap 的徽标永远撑满自己的内容宽），作者列固定窄列不参与争夺。 -->
+        <span class="min-w-0 flex-1 truncate" :title="tip(c)">
           <template v-if="hitSegments" v-for="(seg, si) in hitSegments(c.subject)" :key="si"
             ><mark v-if="seg.hit" class="rounded-sm bg-primary/30 px-0.5 text-foreground">{{ seg.text }}</mark
             ><template v-else>{{ seg.text }}</template></template
           >
           <template v-else>{{ c.subject }}</template>
         </span>
-        <Badge v-for="r in c.refs" :key="r" :variant="refVariant(r)">{{ r.replace(/^tag: /, "") }}</Badge>
+        <!-- refs 区：最多 2 枚，其余折成「+N」；整体可收缩，单枚再兜一层 truncate -->
+        <span v-if="c.refs.length" class="flex min-w-0 max-w-[45%] shrink items-center gap-1">
+          <Badge
+            v-for="r in c.refs.slice(0, REFS_SHOWN)"
+            :key="r"
+            :variant="refVariant(r)"
+            class="min-w-0 shrink overflow-hidden"
+            :title="refTitle(r)"
+            ><span class="truncate">{{ refLabel(r) }}</span></Badge
+          >
+          <Badge v-if="c.refs.length > REFS_SHOWN" variant="muted" class="shrink-0" :title="restRefs(c)"
+            >+{{ c.refs.length - REFS_SHOWN }}</Badge
+          >
+        </span>
         <span
-          class="max-w-[38%] shrink-0 truncate text-sm text-muted-foreground tabular-nums"
+          class="max-w-[9.5rem] shrink-0 truncate text-sm text-muted-foreground tabular-nums"
           :title="`${c.author} · ${c.date}`"
-          >{{ c.author }} · {{ c.date }}</span
+          >{{ c.author }} · {{ shortDate(c.date) }}</span
         >
       </div>
     </div>
