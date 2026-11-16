@@ -1432,3 +1432,20 @@ basis=0 的列表吸收不了任何收缩 —— 压缩全落在 `basis: auto` �
 - 远程分支徽标去掉 `origin/`（蓝色徽标已是远程的视觉编码），全名留在 tooltip。
 - 最多显示 2 枚 refs，其余折成 `+N`，tooltip 里列全。
 - 日期 `5 days ago` → `5d`（`month` 用 `mo` 与 `minute` 区分）。
+
+## 新建 MR 的入口与语义（定稿）
+
+入口只有一处：**分支右键菜单 → 新建 MR / Pull Request…**
+- 源分支 = 当前检出的分支
+- 目标分支 = 被右键的那个分支（远程分支剥掉 `origin/` 前缀）
+
+右键当前分支自己时禁用（等于合到自己）。没有 origin 时也禁用。
+
+随之删掉的三层配置面（都是为「入口在状态栏、目标分支需要猜」而存在的）：
+1. 状态栏「远程」右键里的 MR 项 —— 那里拿不到目标分支，只能猜 upstream
+2. MR 预设（`gz.mrPresets`）—— 目标分支现在由右键动作直接指定，不需要预设多套
+3. MR URL 模板（`gz.mrTemplates`）—— 只支持 GitHub / GitLab / Gitee / Bitbucket，
+   其余主机直接给「暂不支持」提示
+
+`buildMrUrl` 因此收敛：`dstBranch` 由可选变必填，`template` 参数删除，
+所有平台分支里 `dst &&` 的降级判断一并去掉。

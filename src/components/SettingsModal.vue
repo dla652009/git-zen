@@ -18,7 +18,6 @@ import {
 import * as api from "../gitApi";
 import { aiVerify, isAbortError } from "../ai";
 import { readJsonObject } from "../lib/safeJson";
-import { normalizeMrPresets } from "../lib/mrUrl";
 import { humanizeMsg } from "../lib/errors";
 import { workflows } from "../workflowStore";
 import { newFlowId, type BranchRef, type Workflow, type WorkflowStep } from "../workflow";
@@ -58,12 +57,6 @@ async function testConn() {
 // 仓库网页链接：按仓库存 localStorage（gz.remoteLinks），留空自动推断
 const remoteLink = ref("");
 const originUrl = ref("");
-// MR/PR 新建页模板：另存一个键（gz.mrTemplates），不与网页链接混用，留空自动推断
-const mrTemplate = ref("");
-// MR 预设（gz.mrPresets[repo]）：每行长这样 { src, dst }，src 空 = 点击时取当前分支。
-// 草稿里两个字段都保持 string，方便直接 v-model（存储侧由 normalizeMrPresets 归一）。
-type PresetDraft = { src: string; dst: string };
-const mrPresets = ref<PresetDraft[]>([]);
 
 // 用户信息是仓库级 git config，不属于应用设置，单独存取
 const userName = ref("");
@@ -82,11 +75,6 @@ onMounted(async () => {
     readJsonObject<Record<string, string>>("gz.remoteLinks", {})[props.repo] ?? "";
   // 默认填充 origin URL；用户改过则显示自定义值
   remoteLink.value = custom || originUrl.value;
-  mrTemplate.value =
-    readJsonObject<Record<string, string>>("gz.mrTemplates", {})[props.repo] ?? "";
-  mrPresets.value = normalizeMrPresets(
-    readJsonObject<Record<string, unknown>>("gz.mrPresets", {})[props.repo],
-  ).map((p) => ({ src: p.src ?? "", dst: p.dst }));
   if (!props.repo) return;
   try {
     const [n, e] = await api.getUser(props.repo);
@@ -117,24 +105,6 @@ function save() {
     else delete links[props.repo];
     localStorage.setItem("gz.remoteLinks", JSON.stringify(links));
     remoteLink.value = link;
-  }
-  // MR 模板同样按仓库写回；清空 = 删除该仓库的键（恢复自动推断）
-  if (props.repo) {
-    const templates = readJsonObject<Record<string, string>>("gz.mrTemplates", {});
-    const tpl = mrTemplate.value.trim();
-    if (tpl) templates[props.repo] = tpl;
-    else delete templates[props.repo];
-    localStorage.setItem("gz.mrTemplates", JSON.stringify(templates));
-    mrTemplate.value = tpl;
-  }
-  // MR 预设同样按仓库写回；dst 为空的行静默丢弃，清空列表 = 删除该仓库的键
-  if (props.repo) {
-    const presets = readJsonObject<Record<string, unknown>>("gz.mrPresets", {});
-    const list = normalizeMrPresets(mrPresets.value);
-    if (list.length) presets[props.repo] = list;
-    else delete presets[props.repo];
-    localStorage.setItem("gz.mrPresets", JSON.stringify(presets));
-    mrPresets.value = list.map((p) => ({ src: p.src ?? "", dst: p.dst }));
   }
   emit("close");
 }
@@ -995,51 +965,10 @@ const NAV = [
               </p>
             </section>
             <section class="mt-5">
-              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">MR 新建页 URL 模板</h3>
-              <Input
-                v-model="mrTemplate"
-                placeholder="留空自动推断：{src} 源分支 · {dst} 目标分支 · {repo} 仓库路径"
-              />
-              <p class="mt-2 text-xs text-muted-foreground">
-                识别 GitHub / GitLab / Gitee / Bitbucket 可自动推断；其他平台在此填模板，占位符
-                {src} {dst} {repo}。
-              </p>
-            </section>
-            <section class="mt-5">
-              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">MR 预设（可多个）</h3>
-              <div class="space-y-1.5">
-                <div v-for="(p, i) in mrPresets" :key="i" class="flex items-center gap-1.5">
-                  <Input
-                    v-model="p.src"
-                    class="h-8 min-w-0 flex-1 text-xs"
-                    placeholder="源分支（默认当前分支）"
-                  />
-                  <Input
-                    v-model="p.dst"
-                    class="h-8 min-w-0 flex-1 text-xs"
-                    placeholder="目标分支（必填）"
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    class="h-8 shrink-0 px-2"
-                    title="删除这条预设"
-                    @click="mrPresets.splice(i, 1)"
-                  >
-                    <X class="size-3.5" />
-                  </Button>
-                </div>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                class="mt-1.5 h-7 gap-1 px-2 text-xs text-muted-foreground"
-                @click="mrPresets.push({ src: '', dst: '' })"
-              >
-                <Plus class="size-3.5" /> 添加预设
-              </Button>
-              <p class="mt-2 text-xs text-muted-foreground">
-                状态栏「远程」右键菜单会为每条预设列一项；源分支留空则用当前分支。目标分支为空的行保存时丢弃。
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">新建 MR</h3>
+              <p class="text-xs leading-relaxed text-muted-foreground">
+                入口在分支右键菜单：源分支 = 当前分支，目标分支 = 被右键的那个分支。
+                支持 GitHub / GitLab / Gitee / Bitbucket。
               </p>
             </section>
           </template>

@@ -84,9 +84,7 @@ import { readJsonArray, readJsonObject } from "./lib/safeJson";
 import {
   buildMrUrl,
   mrPrefillToClipboard,
-  normalizeMrPresets,
   parseMrDraft,
-  type MrPreset,
 } from "./lib/mrUrl";
 import { readCommitConvention } from "./lib/repoDocs";
 import { imeGuard } from "./lib/imeGuard";
@@ -158,8 +156,7 @@ const fileHistoryModal = ref<string | null>(null);
 const historyFilePath = ref<string | null>(null);
 const remoteRaw = ref(""); // origin 的 URL（git remote get-url）
 const remoteLink = ref(""); // 用户在设置里自定义的网页链接（留空自动推断）
-const mrTemplate = ref(""); // 用户自定义的 MR/PR 新建页模板（留空自动推断）
-const mrPresets = ref<MrPreset[]>([]); // 用户配置的多条 MR 预设（设置 › 远程）
+
 // 历史加载遮罩（切仓库、换历史范围时盖住历史区）
 const historyLoading = ref(false);
 
@@ -215,32 +212,47 @@ function openRemote() {
   if (remoteWebUrl.value) openUrl(remoteWebUrl.value).catch(() => {});
 }
 
-// MR / PR 新建页：源分支 = 当前本地分支，目标分支 = 上游短名剥掉 origin/。
-// upstream 形如 origin/main；没有上游时留空，由 buildMrUrl 按主机决定降级或返回 null。
+// MR / PR 新建页：源分支 = 当前本地分支，目标分支 = 右键点中的那个分支。
+// 入口只有一处（分支右键菜单），所以两个分支都在点击时确定，不再推断 upstream。
 const currentBranchName = computed(
   () =>
     branchList.value.find((x) => x.current && !x.remote)?.name ?? status.value?.branch ?? "",
 );
-const dstBranch = computed(() => {
-  const upstream = branchList.value.find((x) => x.current && !x.remote)?.upstream ?? "";
-  return upstream.replace(/^[^/]+\//, "");
-});
-const mrUrl = computed(
-  () =>
+const remoteCtx = ref<{ x: number; y: number } | null>(null);
+
+/** 目标分支的短名：远程分支要剥掉 `origin/` 前缀，平台那边只认分支名 */
+function branchShortName(b: Branch): string {
+  return b.remote ? b.name.replace(/^[^/]+\//, "") : b.name;
+}
+
+/** 给某个分支构造 MR 链接；null = 当前主机不认识（GitHub/GitLab/Gitee/Bitbucket 之外） */
+function mrUrlFor(target: Branch): string | null {
+  return (
     buildMrUrl({
       originUrl: remoteRaw.value,
-      template: mrTemplate.value,
       srcBranch: currentBranchName.value,
-      dstBranch: dstBranch.value,
-    })?.url ?? null,
-);
-const remoteCtx = ref<{ x: number; y: number } | null>(null);
-function openMrUrl(url: string | null) {
-  if (url) {
-    openUrl(url).catch(() => {});
+      dstBranch: branchShortName(target),
+    })?.url ?? null
+  );
+}
+
+/**
+ * 从分支右键菜单发起 MR。
+ * 目标分支就是被右键的那个；源分支是当前分支，所以右键当前分支时没有意义（菜单里已禁用）。
+ */
+function openMrTo(target: Branch) {
+  const dst = branchShortName(target);
+  if (!currentBranchName.value || !dst) return;
+  if (settings.mrAiGen === "on") {
+    openMrPreview(currentBranchName.value, dst);
     return;
   }
-  toast("未能识别该远程主机，可在设置 › 远程配置 MR 页模板", "info");
+  const url = mrUrlFor(target);
+  if (!url) {
+    toast("未能识别该远程主机，暂不支持从分支菜单新建 MR", "info");
+    return;
+  }
+  openUrl(url).catch(() => {});
 }
 
 // ---- AI 生成 MR 标题/描述（设置 › AI 开关，默认关）----
@@ -249,7 +261,6 @@ function openMrUrl(url: string | null) {
 const mrPreviewOpen = ref(false);
 const mrPreviewRepo = ref("");
 const mrPreviewOrigin = ref("");
-const mrPreviewTemplate = ref("");
 const mrPreviewSrc = ref("");
 const mrPreviewDst = ref("");
 const mrPreviewTitle = ref("");
@@ -270,7 +281,6 @@ function aiReady(): boolean {
 function openMrPreview(src: string, dst: string) {
   mrPreviewRepo.value = repo.value;
   mrPreviewOrigin.value = remoteRaw.value;
-  mrPreviewTemplate.value = mrTemplate.value;
   mrPreviewSrc.value = src;
   mrPreviewDst.value = dst;
   mrPreviewTitle.value = "";
@@ -280,7 +290,6 @@ function openMrPreview(src: string, dst: string) {
   mrPreviewPrefill.value =
     buildMrUrl({
       originUrl: mrPreviewOrigin.value,
-      template: mrPreviewTemplate.value,
       srcBranch: src,
       dstBranch: dst,
     })?.supportsPrefill ?? true;
@@ -355,14 +364,13 @@ function copyMrDraft() {
 function confirmMrPreview() {
   const target = buildMrUrl({
     originUrl: mrPreviewOrigin.value,
-    template: mrPreviewTemplate.value,
     srcBranch: mrPreviewSrc.value,
     dstBranch: mrPreviewDst.value,
     title: mrPreviewTitle.value,
     body: mrPreviewBody.value,
   });
   if (!target) {
-    toast("未能识别该远程主机，可在设置 › 远程配置 MR 页模板", "info");
+    toast("未能识别该远程主机，暂不支持新建 MR", "info");
     return;
   }
   // 不支持 URL 预填的主机：复制标题正文，打开基础页后由用户粘贴
@@ -374,44 +382,11 @@ function confirmMrPreview() {
   mrPreviewOpen.value = false;
 }
 
-function openMr() {
-  // 开关开且能确定目标分支：走 AI 预览；否则保持原来的直接跳转
-  if (settings.mrAiGen === "on" && mrUrl.value && dstBranch.value) {
-    openMrPreview(currentBranchName.value, dstBranch.value);
-    return;
-  }
-  openMrUrl(mrUrl.value);
-}
-// 预设项：只配 src/dst，其余（origin / 模板）与自动推断走同一套构造
-function openMrPreset(p: MrPreset) {
-  const target = buildMrUrl({
-    originUrl: remoteRaw.value,
-    template: mrTemplate.value,
-    srcBranch: p.src || currentBranchName.value,
-    dstBranch: p.dst,
-  });
-  if (settings.mrAiGen === "on" && target) {
-    openMrPreview(p.src || currentBranchName.value, p.dst);
-    return;
-  }
-  openMrUrl(target?.url ?? null);
-}
-// 状态栏「远程」右键菜单：有预设就逐条列出（dst 已是人话短标签），
-// 没有预设时保留原来那条自动推断项；主页/复制两项始终在。
-const remoteMenuItems = computed<MenuItem[]>(() => {
-  const items: MenuItem[] = [
-    { label: "打开仓库主页", fn: openRemote, disabled: !remoteWebUrl.value },
-  ];
-  if (mrPresets.value.length) {
-    for (const p of mrPresets.value) {
-      items.push({ label: `新建 MR → ${p.dst}`, fn: () => openMrPreset(p), disabled: !remoteRaw.value });
-    }
-  } else {
-    items.push({ label: "新建 MR / Pull Request…", fn: openMr, disabled: !mrUrl.value });
-  }
-  items.push({ label: "复制 origin URL", fn: () => copyText(remoteRaw.value), disabled: !remoteRaw.value });
-  return items;
-});
+// 状态栏「远程」右键菜单：只剩主页与复制。新建 MR 挪到了分支右键（目标分支要明确指定）。
+const remoteMenuItems = computed<MenuItem[]>(() => [
+  { label: "打开仓库主页", fn: openRemote, disabled: !remoteWebUrl.value },
+  { label: "复制 origin URL", fn: () => copyText(remoteRaw.value), disabled: !remoteRaw.value },
+]);
 
 const runningAction = ref("");
 
@@ -1176,8 +1151,6 @@ function doCloseTab(path: string) {
       historyFilePath.value = null;
       remoteRaw.value = "";
       remoteLink.value = "";
-      mrTemplate.value = "";
-      mrPresets.value = [];
     }
   }
 }
@@ -1246,16 +1219,11 @@ const diffState = ref<DiffState | null>(null);
 const showSettings = ref(false);
 const showSettingsTab = ref<string | undefined>(undefined);
 // per-repo 的远程链接 / MR 模板平时在 refresh 里读；设置保存后立刻同步一次，
-// 否则刚配好的模板要等下一次仓库刷新才进右键菜单。
+// 否则刚配好的链接要等下一次仓库刷新才生效。
 watch(showSettings, (open) => {
   if (open || !repo.value) return;
   remoteLink.value =
     readJsonObject<Record<string, string>>("gz.remoteLinks", {})[repo.value] ?? "";
-  mrTemplate.value =
-    readJsonObject<Record<string, string>>("gz.mrTemplates", {})[repo.value] ?? "";
-  mrPresets.value = normalizeMrPresets(
-    readJsonObject<Record<string, unknown>>("gz.mrPresets", {})[repo.value],
-  );
 });
 
 // 历史行右键菜单：复制 hash / checkout / revert
@@ -1510,10 +1478,19 @@ function pushTag(name: string) {
 
 const branchMenu = ref<{ x: number; y: number; b: Branch } | null>(null);
 function branchMenuItems(b: Branch): MenuItem[] {
+  // 新建 MR：源 = 当前分支，目标 = 右键的这个分支。
+  // 右键当前分支自己没意义（合到自己），禁用；也没有远程仓库时构造不出链接。
+  const mrItem: MenuItem = {
+    label: "新建 MR / Pull Request…",
+    disabled: b.current || !remoteRaw.value || !currentBranchName.value,
+    fn: () => openMrTo(b),
+  };
   if (b.remote) {
     const full = fullName(b);
     return [
       { label: "复制分支名", fn: () => copyText(full) },
+      { separator: true, label: "" },
+      mrItem,
       { separator: true, label: "" },
       { label: "删除远程分支", danger: true, fn: () => askDelete(b) },
     ];
@@ -1525,6 +1502,7 @@ function branchMenuItems(b: Branch): MenuItem[] {
     { separator: true, label: "" },
     { label: "合并到当前分支", disabled: cur, fn: () => askMerge(b) },
     { label: "把当前分支合并到该分支", disabled: cur, fn: () => askMergeInto(b) },
+    mrItem,
     { separator: true, label: "" },
     { label: "删除（未合并会拒绝）", danger: true, fn: () => askDelete(b) },
     {
@@ -1681,8 +1659,6 @@ const {
   mruPaths,
   remoteRaw,
   remoteLink,
-  mrTemplate,
-  mrPresets,
   cacheGet,
   cachePeek,
   cachePut,

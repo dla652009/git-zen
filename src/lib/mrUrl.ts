@@ -1,23 +1,18 @@
 // MR / PR 新建页链接推断（纯函数，无 DOM / Tauri 依赖，便于 node 自检）。
 //
-// 输入只有 origin URL、当前分支与上游分支，输出可直接 openUrl 的链接。
-// 认识 GitHub / GitLab / Gitee / Bitbucket；其余平台交给用户在设置里填模板。
-
-/** 用户预设的 MR 快捷项：src 为空 = 点击时取当前分支；dst 必填 */
-export interface MrPreset {
-  src?: string;
-  dst: string;
-}
+// 输入只有 origin URL、源分支与目标分支，输出可直接 openUrl 的链接。
+// 认识 GitHub / GitLab / Gitee / Bitbucket；其余平台构造不出链接（没有自定义模板兜底了）。
+//
+// 入口固定在分支右键菜单：源分支 = 当前分支，目标分支 = 被右键的那个，两边都明确，
+// 所以不再需要「选分支」「多套预设」「URL 模板」这些配置面。
 
 export interface MrUrlInput {
   /** origin URL，如 https://github.com/o/r.git 或 git@github.com:o/r.git */
   originUrl: string;
-  /** 用户自定义模板（设置页），占位符 {src} {dst} {repo}；空 = 自动推断 */
-  template?: string;
-  /** 当前分支（MR 源分支） */
+  /** 源分支：当前检出的分支 */
   srcBranch: string;
-  /** 目标分支（upstream 短名剥掉 origin/），空 = 当前分支无上游 */
-  dstBranch?: string;
+  /** 目标分支：被右键的那个分支（必填） */
+  dstBranch: string;
   /** AI 生成的标题 / 描述：主机支持时才拼进 URL */
   title?: string;
   body?: string;
@@ -80,24 +75,6 @@ function baseSegments(host: string, segments: string[]) {
   return isGitLab(host) ? segments : segments.slice(0, 2);
 }
 
-/**
- * 收敛 localStorage 里的预设：非数组 → 空，丢掉 dst 为空的行，两端 trim，src 空则不存。
- * 存储内容可被手改，读取时不能假设形状是对的；保存时也走这里，过滤规则只有一份。
- */
-export function normalizeMrPresets(raw: unknown): MrPreset[] {
-  if (!Array.isArray(raw)) return [];
-  const out: MrPreset[] = [];
-  for (const it of raw) {
-    if (!it || typeof it !== "object") continue;
-    const rec = it as { src?: unknown; dst?: unknown };
-    const src = typeof rec.src === "string" ? rec.src.trim() : "";
-    const dst = typeof rec.dst === "string" ? rec.dst.trim() : "";
-    if (!dst) continue;
-    out.push(src ? { src, dst } : { dst });
-  }
-  return out;
-}
-
 /** 查询串值编码：统一 %20，避免 + 在个别平台被当成字面加号 */
 function qv(v: string) {
   return encodeURIComponent(v);
@@ -105,13 +82,14 @@ function qv(v: string) {
 
 /**
  * 构造 MR / PR 新建页链接。
- * 返回 null = 无法构造（origin 无法解析 / 主机不认识 / 缺源分支 / 模板需要 {dst} 但没有上游）。
- * supportsPrefill=false 的主机（Bitbucket / 自定义模板）仍返回基础页面，由前端改为复制标题正文。
+ * 返回 null = 无法构造（origin 无法解析 / 主机不认识 / 缺源或目标分支）。
+ * supportsPrefill=false 的主机（Bitbucket）仍返回基础页面，由前端改为复制标题正文。
  */
 export function buildMrUrl(input: MrUrlInput): MrUrlResult | null {
   const src = input.srcBranch.trim();
-  const dst = (input.dstBranch ?? "").trim();
-  if (!src) return null;
+  const dst = input.dstBranch.trim();
+  // 两端都必须有：入口是「右键某个分支」，没有目标分支的链接没有意义
+  if (!src || !dst) return null;
 
   const origin = parseOrigin(input.originUrl);
   if (!origin) return null;
@@ -121,31 +99,15 @@ export function buildMrUrl(input: MrUrlInput): MrUrlResult | null {
 
   const basePath = baseSegments(origin.host, segments).join("/");
   const base = `https://${origin.host}/${basePath}`;
-  const repo = basePath;
   const title = (input.title ?? "").trim();
   const body = (input.body ?? "").trim();
 
-  // 自定义模板优先：纯文本替换，不做任何修补——缺 {dst} 是用户配置问题，直接判不可用。
-  // 模板是用户手写的，不认识 title/body 占位符，因此不支持预填
-  const template = (input.template ?? "").trim();
-  if (template) {
-    if (!dst && template.includes("{dst}")) return null;
-    return {
-      url: template
-        .replace(/\{src\}/g, src)
-        .replace(/\{dst\}/g, dst)
-        .replace(/\{repo\}/g, repo),
-      supportsPrefill: false,
-    };
-  }
-
   if (isGitHub(origin.host)) {
-    const path = dst ? `${base}/compare/${dst}...${src}` : `${base}/compare/${src}`;
     const extra = [title && `title=${qv(title)}`, body && `body=${qv(body)}`]
       .filter(Boolean)
       .join("&");
     return {
-      url: `${path}?expand=1${extra ? `&${extra}` : ""}`,
+      url: `${base}/compare/${dst}...${src}?expand=1${extra ? `&${extra}` : ""}`,
       supportsPrefill: true,
     };
   }
@@ -154,7 +116,7 @@ export function buildMrUrl(input: MrUrlInput): MrUrlResult | null {
     // 键名保持字面量（[] 不编码）——已有链接形态不变
     const parts = [
       `merge_request[source_branch]=${qv(src)}`,
-      dst && `merge_request[target_branch]=${qv(dst)}`,
+      `merge_request[target_branch]=${qv(dst)}`,
       title && `merge_request[title]=${qv(title)}`,
       body && `merge_request[description]=${qv(body)}`,
     ].filter(Boolean);
@@ -164,8 +126,7 @@ export function buildMrUrl(input: MrUrlInput): MrUrlResult | null {
     };
   }
   if (isGitee(origin.host)) {
-    // Gitee 的 compare 必须两端都有分支，没有上游就没有可跳转的页面；标题/描述保守支持
-    if (!dst) return null;
+    // Gitee 的 compare 必须两端都有分支；标题/描述保守支持
     const extra = [title && `title=${qv(title)}`, body && `body=${qv(body)}`]
       .filter(Boolean)
       .join("&");
@@ -176,12 +137,10 @@ export function buildMrUrl(input: MrUrlInput): MrUrlResult | null {
   }
   if (isBitbucket(origin.host)) {
     // Bitbucket 新建页不接受预填参数，仍返回基础页，由前端复制标题正文
-    return dst
-      ? {
-          url: `${base}/pull-requests/new?source=${qv(src)}&dest=${qv(dst)}`,
-          supportsPrefill: false,
-        }
-      : null;
+    return {
+      url: `${base}/pull-requests/new?source=${qv(src)}&dest=${qv(dst)}`,
+      supportsPrefill: false,
+    };
   }
   return null;
 }

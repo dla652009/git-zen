@@ -1,36 +1,34 @@
 // mrUrl.ts 自检：node --experimental-strip-types src/lib/mrUrl.test.ts
 //
-// 这里守的是「菜单里点新建 MR 会打开哪个页面」：主机识别错、分支参数拼错，
+// 这里守的是「分支右键菜单里点新建 MR 会打开哪个页面」：主机识别错、分支参数拼错，
 // 用户看到的是 404 或被平台拒绝的表单，而不会报错——只能靠这组断言兜住。
 // buildMrUrl 返回 { url, supportsPrefill }：后者决定标题/描述走 URL 预填还是剪贴板。
+//
+// 两端分支都必填（入口固定为「右键某分支 → 目标是它」），所以不再有无 dst 的降级路径。
 import assert from "node:assert";
-import {
-  buildMrUrl,
-  mrPrefillToClipboard,
-  normalizeMrPresets,
-  parseMrDraft,
-} from "./mrUrl.ts";
+import { buildMrUrl, mrPrefillToClipboard, parseMrDraft } from "./mrUrl.ts";
 
-const build = (originUrl: string, srcBranch: string, dstBranch?: string, template?: string) =>
-  buildMrUrl({ originUrl, srcBranch, dstBranch, template });
-const url = (originUrl: string, srcBranch: string, dstBranch?: string, template?: string) =>
-  build(originUrl, srcBranch, dstBranch, template)?.url ?? null;
+const build = (originUrl: string, srcBranch: string, dstBranch: string) =>
+  buildMrUrl({ originUrl, srcBranch, dstBranch });
+const url = (originUrl: string, srcBranch: string, dstBranch: string) =>
+  build(originUrl, srcBranch, dstBranch)?.url ?? null;
 
 // ---- GitHub：https / scp 两种 origin，.git 后缀都要剥掉 ----
 assert.equal(
   url("https://github.com/acme/app.git", "feature/login", "main"),
   "https://github.com/acme/app/compare/main...feature/login?expand=1",
-  "GitHub https + dst",
+  "GitHub https",
 );
 assert.equal(
   url("git@github.com:acme/app.git", "fix", "dev"),
   "https://github.com/acme/app/compare/dev...fix?expand=1",
-  "GitHub scp + dst",
+  "GitHub scp",
 );
+// 方向固定：目标在前、源在后（compare/<dst>...<src>），反了会打开「反向」对比页
 assert.equal(
-  url("https://github.com/acme/app", "fix"),
-  "https://github.com/acme/app/compare/fix?expand=1",
-  "GitHub 无 dst：只预填源分支",
+  url("https://github.com/acme/app", "feature/x", "develop"),
+  "https://github.com/acme/app/compare/develop...feature/x?expand=1",
+  "GitHub 方向：dst...src",
 );
 
 // ---- GitHub 标题/描述预填：expand=1 之后追加，值编码 ----
@@ -53,27 +51,12 @@ assert.deepEqual(
 assert.equal(
   url("https://gitlab.com/group/app.git", "feat", "main"),
   "https://gitlab.com/group/app/-/merge_requests/new?merge_request[source_branch]=feat&merge_request[target_branch]=main",
-  "GitLab.com + dst",
+  "GitLab.com",
 );
 assert.equal(
   url("git@gitlab.mycompany.com:team/sub/app.git", "fix/x", "main"),
   "https://gitlab.mycompany.com/team/sub/app/-/merge_requests/new?merge_request[source_branch]=fix%2Fx&merge_request[target_branch]=main",
   "自建 GitLab + 多级 group + 分支斜杠编码",
-);
-assert.equal(
-  url("https://gitlab.com/group/app", "feat"),
-  "https://gitlab.com/group/app/-/merge_requests/new?merge_request[source_branch]=feat",
-  "GitLab 无 dst：不带 target 参数",
-);
-assert.equal(
-  url(
-    "https://gitlab.com/group/app",
-    "feat",
-    "main",
-    undefined,
-  ),
-  "https://gitlab.com/group/app/-/merge_requests/new?merge_request[source_branch]=feat&merge_request[target_branch]=main",
-  "GitLab 基础链接形态不变",
 );
 assert.equal(
   buildMrUrl({
@@ -87,13 +70,12 @@ assert.equal(
   "GitLab 预填 merge_request[title]/[description]",
 );
 
-// ---- Gitee：compare 必须两端都有分支 ----
+// ---- Gitee：compare 两端都带 ----
 assert.deepEqual(
   build("https://gitee.com/acme/app.git", "feat", "main"),
   { url: "https://gitee.com/acme/app/compare/feat...main", supportsPrefill: true },
-  "Gitee + dst",
+  "Gitee",
 );
-assert.equal(url("https://gitee.com/acme/app.git", "feat"), null, "Gitee 无 dst 返回 null");
 assert.equal(
   buildMrUrl({
     originUrl: "https://gitee.com/acme/app.git",
@@ -113,7 +95,7 @@ assert.deepEqual(
     url: "https://bitbucket.org/acme/app/pull-requests/new?source=feat%2Fx&dest=main",
     supportsPrefill: false,
   },
-  "Bitbucket + dst 且不支持预填",
+  "Bitbucket 且不支持预填",
 );
 assert.equal(
   buildMrUrl({
@@ -126,41 +108,12 @@ assert.equal(
   "https://bitbucket.org/acme/app/pull-requests/new?source=feat%2Fx&dest=main",
   "Bitbucket 忽略 title/body",
 );
-assert.equal(
-  url("https://bitbucket.org/acme/app.git", "feat"),
-  null,
-  "Bitbucket 无 dst 返回 null",
-);
-
-// ---- 自定义模板：{src} {dst} {repo} 直接替换，不支持预填 ----
-assert.deepEqual(
-  build(
-    "https://git.example.com/acme/app.git",
-    "feat",
-    "main",
-    "https://git.example.com/{repo}/merge/new?from={src}&to={dst}",
-  ),
-  {
-    url: "https://git.example.com/acme/app/merge/new?from=feat&to=main",
-    supportsPrefill: false,
-  },
-  "模板替换（未知主机也能用）",
-);
-assert.equal(
-  build("https://git.example.com/acme/app.git", "feat", "", "https://x/{repo}?src={src}&dst={dst}"),
-  null,
-  "模板含 {dst} 但无上游：返回 null，不做空串修补",
-);
-assert.equal(
-  url("https://git.example.com/acme/app.git", "feat", "", "https://x/{repo}/merge?src={src}"),
-  "https://x/acme/app/merge?src=feat",
-  "模板不含 {dst} 时无上游也能用",
-);
 
 // ---- 无法构造的输入 ----
 assert.equal(build("https://git.example.com/acme/app.git", "feat", "main"), null, "不认识的 host");
 assert.equal(build("", "feat", "main"), null, "origin 为空");
 assert.equal(build("https://github.com/acme/app.git", "", "main"), null, "源分支为空");
+assert.equal(build("https://github.com/acme/app.git", "feat", ""), null, "目标分支为空");
 
 // ---- AI 输出解析：第一行标题 / 其余正文 ----
 assert.deepEqual(
@@ -179,21 +132,5 @@ assert.deepEqual(parseMrDraft("只有标题"), { title: "只有标题", body: ""
 // ---- 剪贴板文本：标题 + 空行 + 正文 ----
 assert.equal(mrPrefillToClipboard("标题", "正文"), "标题\n\n正文", "标题空行正文");
 assert.equal(mrPrefillToClipboard(" 标题 ", "  "), "标题", "正文为空时只有标题");
-
-// ---- 预设收敛：脏数据不当成合法预设，dst 空的行扔掉 ----
-assert.deepEqual(
-  normalizeMrPresets([
-    { src: " feature/x ", dst: " main " },
-    { src: "", dst: "develop" },
-    { dst: "  " },
-    { src: "feat" },
-    null,
-    "junk",
-  ]),
-  [{ src: "feature/x", dst: "main" }, { dst: "develop" }],
-  "预设 trim、丢空 dst、src 空则不存",
-);
-assert.deepEqual(normalizeMrPresets({ dst: "main" }), [], "非数组退回空");
-assert.deepEqual(normalizeMrPresets(null), [], "null 退回空");
 
 console.log("mrUrl tests passed");

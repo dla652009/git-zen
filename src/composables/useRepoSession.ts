@@ -7,7 +7,7 @@ import type { Ref } from "vue";
 import * as api from "../gitApi";
 import type { Branch, LogEntry, Status, TagEntry } from "../gitApi";
 import { readJsonObject } from "../lib/safeJson";
-import { normalizeMrPresets, type MrPreset } from "../lib/mrUrl";
+
 import type { RepoCache } from "./useRepoCache";
 
 export function useRepoSession(opts: {
@@ -25,8 +25,6 @@ export function useRepoSession(opts: {
   mruPaths: Ref<string[]>;
   remoteRaw: Ref<string>;
   remoteLink: Ref<string>;
-  mrTemplate: Ref<string>;
-  mrPresets: Ref<MrPreset[]>;
   cacheGet: (path: string) => RepoCache | null;
   cachePeek: (path: string) => RepoCache | undefined;
   cachePut: (path: string, data: RepoCache) => void;
@@ -47,8 +45,6 @@ export function useRepoSession(opts: {
     mruPaths,
     remoteRaw,
     remoteLink,
-    mrTemplate,
-    mrPresets,
     cacheGet,
     cachePeek,
     cachePut,
@@ -99,10 +95,6 @@ export function useRepoSession(opts: {
       if (repo.value !== path || seq !== refreshSeq) return;
     }
     remoteLink.value = readJsonObject<Record<string, string>>("gz.remoteLinks", {})[path] ?? "";
-    mrTemplate.value = readJsonObject<Record<string, string>>("gz.mrTemplates", {})[path] ?? "";
-    mrPresets.value = normalizeMrPresets(
-      readJsonObject<Record<string, unknown>>("gz.mrPresets", {})[path],
-    );
     try {
       const [s, l, b, tg, o] = await Promise.all([
         api.status(path),
@@ -197,8 +189,6 @@ export function useRepoSession(opts: {
     historyFilePath.value = null;
     remoteRaw.value = "";
     remoteLink.value = "";
-    mrTemplate.value = "";
-    mrPresets.value = [];
 
     // LRU 命中：秒开缓存快照，后台静默刷新轻量数据
     const cached = cacheGet(path);
