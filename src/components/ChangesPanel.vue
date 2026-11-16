@@ -314,6 +314,25 @@ function label(f: StatusFile): string {
 // 否则只能自己去终端 merge --abort（这是唯一会把用户踢出应用的高频场景）
 const conflictFiles = computed(() => (props.status?.files ?? []).filter(isUnmerged));
 
+// 横幅配色：语义色混进卡片底色，得到「同色系淡底 + 同色系边框」。
+// 为什么不写成 Tailwind 的 bg-[var(--c-mod)]/10：那个类会先被编译成
+// `background-color: var(--c-mod)`（全不透明！），再在 @supports 里覆盖成 color-mix。
+// 一旦 @supports 判定不通过，横幅就变成一整块实心蓝，字全糊在里面 —— 之前那个
+// 「蓝色空框」就是这么来的。这里用内联样式，两条声明各自独立回退：
+// 先给 --muted（灰底，任何引擎都能读），浏览器支持 color-mix 时再覆盖成彩色底。
+function bannerStyle(color: string) {
+  const style: Record<string, string> = {
+    borderColor: "var(--border-soft)",
+    backgroundColor: "var(--muted)",
+    borderLeft: `2px solid ${color}`,
+  };
+  if (typeof CSS !== "undefined" && CSS.supports?.("background-color", "color-mix(in srgb, red 10%, blue)")) {
+    style.backgroundColor = `color-mix(in srgb, ${color} 12%, var(--card))`;
+    style.borderColor = `color-mix(in srgb, ${color} 30%, var(--border-soft))`;
+  }
+  return style;
+}
+
 // 进行中的多步操作：冲突态不只是 merge，cherry-pick / revert 也会停在半路。
 // 把「还差几个文件」「能不能收尾」直接说清楚，用户不用回终端猜下一步。
 const opInfo = computed(() => {
@@ -484,12 +503,8 @@ async function genCommitMsg() {
          主操作做成实心按钮压在最下 —— 之前三样挤在一行，文字被按钮压得折行。 -->
     <div
       v-if="opInfo"
-      class="mx-3 mt-3 overflow-hidden rounded-md border-l-2"
-      :class="
-        opInfo.left
-          ? 'border-l-[var(--c-mod)] border-y border-r border-[var(--c-mod)]/25 bg-[var(--c-mod)]/10'
-          : 'border-l-[var(--c-add)] border-y border-r border-[var(--c-add)]/25 bg-[var(--c-add)]/10'
-      "
+      class="mx-3 mt-3 overflow-hidden rounded-md border"
+      :style="bannerStyle(opInfo.left ? 'var(--c-mod)' : 'var(--c-add)')"
     >
       <div class="flex items-center gap-1.5 px-2.5 pt-2">
         <GitMerge
@@ -529,7 +544,8 @@ async function genCommitMsg() {
     <!-- 冲突态横幅：没有 op 状态时（例如外部操作留下的冲突）兜底给「放弃合并」出口 -->
     <div
       v-if="!opInfo && conflictFiles.length"
-      class="mx-3 mt-3 overflow-hidden rounded-md border-l-2 border-l-[var(--c-mod)] border-y border-r border-[var(--c-mod)]/25 bg-[var(--c-mod)]/10"
+      class="mx-3 mt-3 overflow-hidden rounded-md border"
+      :style="bannerStyle('var(--c-mod)')"
     >
       <div class="flex items-center gap-1.5 px-2.5 pt-2">
         <GitMerge class="size-3.5 shrink-0 text-[var(--c-mod)]" />
