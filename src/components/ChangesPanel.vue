@@ -281,6 +281,35 @@ const unstagedRows = computed(() =>
   })
 );
 
+// 批量暂存：逐个 add 而不是一次全传。
+// 一次全传时 git 遇到任何一个读不了的文件（Windows 保留名 CON/AUX/NUL……、
+// 刚被别的程序删掉的、权限不足的）就会整批失败——其余正常的文件一个都没暂存上，
+// 用户还得自己找出是哪个坏。逐个跑则坏文件只影响它自己。
+async function stageAll(files: string[]) {
+  const failed: { path: string; msg: string }[] = [];
+  let ok = 0;
+  for (const path of files) {
+    try {
+      await api.stage(props.repo, [path]);
+      ok += 1;
+    } catch (e) {
+      failed.push({ path, msg: humanizeMsg(e) });
+    }
+  }
+  if (!failed.length) {
+    toast(`已暂存 ${ok} 个文件`);
+    return;
+  }
+  // 失败提示带上具体文件名：只说「3 个文件失败」用户还是不知道去改哪个
+  const worst = failed[0];
+  toast(
+    ok
+      ? `已暂存 ${ok} 个，${failed.length} 个失败：${tailName(worst.path)} — ${worst.msg}`
+      : `${tailName(worst.path)} — ${worst.msg}`,
+    "warn",
+  );
+}
+
 // 目录行的暂存/取消暂存：git 的 pathspec 本来就认目录，把目录当路径传进去就会展开整棵子树
 function stageDir(row: FileRow) {
   emit("action", async () => {
@@ -734,12 +763,7 @@ async function genCommitMsg() {
         variant="ghost"
         size="sm"
         class="ml-auto h-6 px-2 text-xs"
-        @click="
-          emit('action', async () => {
-            await api.stage(repo, unstaged.map((f) => filePath(f)));
-            toast(`已暂存 ${unstaged.length} 个文件`);
-          })
-        "
+        @click="emit('action', () => stageAll(unstaged.map((f) => filePath(f))))"
       >
         全部暂存
       </Button>

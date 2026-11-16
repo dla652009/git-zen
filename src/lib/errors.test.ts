@@ -32,6 +32,24 @@ assert(humanize("error: Cannot delete branch 'x' checked out at 'D:/a'").msg.inc
 assert(humanize("error: branch 'conflict' not found").msg.includes("分支不存在"), "分支名含 conflict");
 assert(humanize("error: branch 'x403y' not found").msg.includes("分支不存在"), "分支名含 403");
 
+// Windows 保留设备名：git 读不出来必然 ENOENT，必须给能照着做的提示而不是原始 stderr。
+// 真实报错形如：
+//   error: open("CON"): No such file or directory
+//   error: unable to index file 'CON'
+//   fatal: adding files failed
+const reserved = humanize(
+  `error: open("CON"): No such file or directory
+error: unable to index file 'CON'
+fatal: adding files failed`,
+);
+assert(reserved.msg.includes("保留设备名"), "Windows 保留名给出人话解释");
+assert(reserved.detail?.includes("unable to index file"), "保留原始 stderr");
+// 带扩展名同样是保留名（CON.txt 在 Win32 层一样被重定向到设备）
+assert(humanize(`error: open("src/CON.txt"): No such file or directory`).msg.includes("保留设备名"), "CON.txt 也命中");
+assert(humanize(`error: open("NUL"): No such file or directory`).msg.includes("保留设备名"), "NUL 命中");
+// 其它原因导致的 index 失败不能被误判成保留名
+assert(humanize("error: unable to index file 'a.txt'").msg.includes("保留设备名") === false, "普通 index 失败不误判");
+
 // 兜底：不认识的原样给出，并剥掉 Error: 前缀（组件里 String(new Error(...)) 很常见）
 assert(humanizeMsg(new Error("磁盘已满")) === "磁盘已满", "剥 Error: 前缀");
 assert(humanize("some unknown git failure").msg === "some unknown git failure", "未知错误原文");

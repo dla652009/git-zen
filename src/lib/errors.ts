@@ -5,7 +5,9 @@ export function humanize(raw: unknown): { msg: string; detail?: string } {
   // 剥掉 `String(new Error("x"))` 带出来的 "Error: " 前缀——兜底分支直接展示 msg，
   // 不剥的话用户会看到「Error: 磁盘已满」。命中规则时 detail 仍保留原始 stderr。
   const s = String(raw).replace(/^Error: /, "");
-  const rules: [RegExp, string][] = [
+  // 第三个元素是可选的附加谓词：有些规则要「两个条件同时成立」才成立（比如
+  // 「读文件失败」+「坏的是 Windows 保留名」），用一条正则写会又长又易错。
+  const rules: [RegExp, string, ((s: string) => boolean)?][] = [
     [/has no upstream|no tracking information/i, "当前分支没有上游，先在终端执行一次：git push -u origin <分支名>"],
     // 只说「先 Pull 再 Push」会把人引去把远程旧提交合回来、造出多余的合并提交；
     // amend / 撤销提交之后本来就该用 force-with-lease 覆盖自己那一条，两条路都给出来
@@ -44,8 +46,21 @@ export function humanize(raw: unknown): { msg: string; detail?: string } {
       /not currently on a branch/i,
       "仓库处于游离 HEAD（不在任何分支上），没有分支可推送：先切到一个分支",
     ],
+    // Windows 保留设备名（CON / PRN / AUX / NUL / COM1-9 / LPT1-9，含带扩展名的 CON.txt）：
+    // 这类文件在资源管理器里看得见，但任何程序都打不开（在 Win32 层被重定向到设备），
+    // 于是 git 读它必然 ENOENT。这不是 git 的 bug，也不是本应用的问题，只能改名或删除。
+    //
+    // 规则表是「正则 → 文案」的一对一形式，两个条件同时成立很难用一条正则表达清楚；
+    // 所以这里用两个前后脚的正则拼接：先匹配「读不了文件」，再在同一个字符串里
+    // 找「保留名处在路径末段」（前面是行首/引号/斜杠/反斜杠，后面是引号/斜杠/空白/行尾）。
+    [
+      /(?:unable to index file|No such file or directory)/i,
+      "这个文件名是 Windows 的保留设备名（CON / PRN / AUX / NUL / COM1-9 / LPT1-9），Git 无法读取和暂存。请在资源管理器里把它改名（例如 CON.txt → con-data.txt），或直接删除",
+      (s) =>
+        /(?:^|[\\/"'])(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.[^\\/"'\s]*)?(?:[\\/"'\s]|$)/i.test(s),
+    ],
   ];
-  const hit = rules.find(([re]) => re.test(s));
+  const hit = rules.find(([re, , also]) => re.test(s) && (!also || also(s)));
   return hit ? { msg: hit[1], detail: s } : { msg: s };
 }
 

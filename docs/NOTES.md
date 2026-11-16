@@ -1449,3 +1449,25 @@ basis=0 的列表吸收不了任何收缩 —— 压缩全落在 `basis: auto` �
 
 `buildMrUrl` 因此收敛：`dstBranch` 由可选变必填，`template` 参数删除，
 所有平台分支里 `dst &&` 的降级判断一并去掉。
+
+## Windows 保留设备名文件无法被 git 暂存
+
+`CON` / `PRN` / `AUX` / `NUL` / `COM1-9` / `LPT1-9`（含带扩展名的 `CON.txt`）在资源管理器里
+看得见、能双击打开，但 Win32 层会把它们重定向到设备，任何程序都读不到内容。
+git 试图写入索引时必然 ENOENT：
+
+```
+error: open("CON"): No such file or directory
+error: unable to index file 'CON'
+fatal: adding files failed
+```
+
+这类文件**不可能**被 git 管理，只能改名或删除。两个配套处理：
+
+1. **错误本地化**（`lib/errors.ts`）：命中「读不了文件 + 路径末段是保留名」时给中文可执行建议
+   （改名或删除），而不是甩原始 stderr。
+   规则表新增可选的第三个元素（附加谓词）——「两个条件同时成立」用一条正则写会又长又易错。
+2. **批量暂存改为逐个 `git add`**：一次全传时，任何一个坏文件都会让整批失败，
+   正常的文件一个都进不去。逐个跑则坏文件只影响自己，失败的在 toast 里点名。
+
+diff 面板对这个文件显示空内容，是因为读不出来——不是 diff 计算的 bug。
