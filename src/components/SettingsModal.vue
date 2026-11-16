@@ -225,6 +225,10 @@ const newStepMsgSource = ref<"ai" | "fixed">("ai");
 const newStepMessage = ref("");
 const newStepPrefix = ref("");
 const newStepLabel = ref("");
+// 「新建分支」写死名字：填了就不在运行时要输入
+const newStepBranchName = ref("");
+// 删除类步骤：目标本来就不在时跳过而不是失败
+const newStepSkipIfMissing = ref(false);
 const addStepErr = ref("");
 // 与执行期同一判据：refspec 会删到别的命名空间（如远程 tag），编辑时就不让存
 function isRefspec(name: string): boolean {
@@ -255,7 +259,16 @@ function addStep(w: Workflow) {
 }
 // 开始补配置就把提示收起来
 watch(
-  [newStepKind, newStepMode, newStepName, newStepMsgSource, newStepMessage, newStepLabel],
+  [
+    newStepKind,
+    newStepMode,
+    newStepName,
+    newStepMsgSource,
+    newStepMessage,
+    newStepLabel,
+    newStepBranchName,
+    newStepSkipIfMissing,
+  ],
   () => (addStepErr.value = ""),
 );
 function buildDraftStep(): WorkflowStep | null {
@@ -279,7 +292,11 @@ function buildDraftStep(): WorkflowStep | null {
     case "switchBack":
       return { kind: "switchBack" };
     case "createBranch":
-      return { kind: "createBranch", prefix: newStepPrefix.value.trim() || undefined };
+      return {
+        kind: "createBranch",
+        prefix: newStepPrefix.value.trim() || undefined,
+        name: newStepBranchName.value.trim() || undefined,
+      };
     case "commitPush": {
       const message = newStepMessage.value.trim();
       if (newStepMsgSource.value === "fixed" && !message) return null;
@@ -288,12 +305,12 @@ function buildDraftStep(): WorkflowStep | null {
     // 清理类：名字写死在流程里（「跑完就删掉 feature/xxx」是固定意图，不适合运行时再问）
     case "deleteBranch": {
       const name = newStepName.value.trim();
-      return name ? { kind: "deleteBranch", name } : null;
+      return name ? { kind: "deleteBranch", name, skipIfMissing: newStepSkipIfMissing.value } : null;
     }
     case "deleteRemoteBranch": {
       const name = newStepName.value.trim();
       if (!name || isRefspec(name)) return null;
-      return { kind: "deleteRemoteBranch", name };
+      return { kind: "deleteRemoteBranch", name, skipIfMissing: newStepSkipIfMissing.value };
     }
   }
 }
@@ -845,24 +862,44 @@ const NAV = [
                             />
                             <span v-else class="min-w-0 flex-1 text-xs text-muted-foreground">执行时由 AI 读取暂存区 diff 生成</span>
                           </template>
-                          <Input
-                            v-else-if="s.kind === 'createBranch'"
-                            :model-value="s.prefix ?? ''"
-                            class="h-7 min-w-0 flex-1 text-xs"
-                            placeholder="默认前缀（可选，如 feat/）；执行时可改"
-                            @update:model-value="(v: string | number) => (s.prefix = String(v) || undefined)"
-                          />
-                          <Input
-                            v-else-if="s.kind === 'deleteBranch' || s.kind === 'deleteRemoteBranch'"
-                            :model-value="s.name"
-                            class="h-7 min-w-0 flex-1 text-xs"
-                            :placeholder="
-                              s.kind === 'deleteRemoteBranch'
-                                ? '远程上的分支名（不带 origin/）'
-                                : '要删除的本地分支名'
-                            "
-                            @update:model-value="(v: string | number) => (s.name = String(v))"
-                          />
+                          <template v-else-if="s.kind === 'createBranch'">
+                            <Input
+                              :model-value="s.name ?? ''"
+                              class="h-7 min-w-0 flex-1 text-xs"
+                              placeholder="固定分支名（留空 = 运行时输入）"
+                              @update:model-value="(v: string | number) => (s.name = String(v) || undefined)"
+                            />
+                            <Input
+                              :model-value="s.prefix ?? ''"
+                              class="h-7 w-28 shrink-0 text-xs"
+                              placeholder="前缀"
+                              @update:model-value="(v: string | number) => (s.prefix = String(v) || undefined)"
+                            />
+                          </template>
+                          <template v-else-if="s.kind === 'deleteBranch' || s.kind === 'deleteRemoteBranch'">
+                            <Input
+                              :model-value="s.name"
+                              class="h-7 min-w-0 flex-1 text-xs"
+                              :placeholder="
+                                s.kind === 'deleteRemoteBranch'
+                                  ? '远程上的分支名（不带 origin/）'
+                                  : '要删除的本地分支名'
+                              "
+                              @update:model-value="(v: string | number) => (s.name = String(v))"
+                            />
+                            <label class="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-muted-foreground">
+                              <input
+                                type="checkbox"
+                                class="accent-[var(--primary)]"
+                                :checked="!!s.skipIfMissing"
+                                @change="
+                                  (e: Event) =>
+                                    (s.skipIfMissing = (e.target as HTMLInputElement).checked)
+                                "
+                              />
+                              不存在时跳过
+                            </label>
+                          </template>
                           <span
                             v-else
                             class="min-w-0 flex-1 text-xs text-muted-foreground"
@@ -926,22 +963,33 @@ const NAV = [
                           placeholder="固定提交信息"
                         />
                       </template>
-                      <Input
-                        v-else-if="newStepKind === 'createBranch'"
-                        v-model="newStepPrefix"
-                        class="h-8 min-w-0 flex-1 text-xs"
-                        placeholder="默认前缀（可选，如 feat/）"
-                      />
-                      <Input
-                        v-else-if="newStepKind === 'deleteBranch' || newStepKind === 'deleteRemoteBranch'"
-                        v-model="newStepName"
-                        class="h-8 min-w-0 flex-1 text-xs"
-                        :placeholder="
-                          newStepKind === 'deleteRemoteBranch'
-                            ? '远程上的分支名（不带 origin/）'
-                            : '要删除的本地分支名'
-                        "
-                      />
+                      <template v-else-if="newStepKind === 'createBranch'">
+                        <Input
+                          v-model="newStepBranchName"
+                          class="h-8 min-w-0 flex-1 text-xs"
+                          placeholder="固定分支名（留空 = 运行时输入）"
+                        />
+                        <Input
+                          v-model="newStepPrefix"
+                          class="h-8 w-32 shrink-0 text-xs"
+                          placeholder="前缀，如 feat/"
+                        />
+                      </template>
+                      <template v-else-if="newStepKind === 'deleteBranch' || newStepKind === 'deleteRemoteBranch'">
+                        <Input
+                          v-model="newStepName"
+                          class="h-8 min-w-0 flex-1 text-xs"
+                          :placeholder="
+                            newStepKind === 'deleteRemoteBranch'
+                              ? '远程上的分支名（不带 origin/）'
+                              : '要删除的本地分支名'
+                          "
+                        />
+                        <label class="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-muted-foreground">
+                          <input v-model="newStepSkipIfMissing" type="checkbox" class="accent-[var(--primary)]" />
+                          不存在时跳过
+                        </label>
+                      </template>
                       <Button variant="default" size="sm" class="ml-auto h-8 shrink-0" @click="addStep(w)">
                         <Plus class="size-3.5" /> 添加
                       </Button>

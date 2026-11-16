@@ -20,11 +20,15 @@ export type WorkflowStep =
   | { kind: "commitPush"; msgSource: "ai" | "fixed"; message?: string }
   | { kind: "push" } // 推送当前分支（发布类流程在 merge 之后需要独立推送）
   | { kind: "merge"; ref: BranchRef } // 合并目标到当前分支；冲突即失败停留
-  | { kind: "createBranch"; prefix?: string } // 分支名运行时输入
-  // 清理类原语：名字在编辑流程时写死（「跑完删掉 feature/xxx」是固定意图），强制 -D
-  | { kind: "deleteBranch"; name: string }
+  // 分支名可以写死（建发版、环境类固定名字的分支），也可以运行时输入。
+  // 写死时不再弹输入框 —— 每次跑都要手打同一个名字纯属浪费。
+  | { kind: "createBranch"; prefix?: string; name?: string }
+  // 清理类原语：名字在编辑流程时写死（「跑完删掉 feature/xxx」是固定意图），强制 -D。
+  // skipIfMissing：分支本来就不在时跳过而不是失败 —— 清理步骤常常是「有就删」的意图，
+  // 第一次跑已经删掉了、重跑或换个仓库再跑时不该卡住整条流程。
+  | { kind: "deleteBranch"; name: string; skipIfMissing?: boolean }
   // 远程删除固定走 origin：多远程的仓库极少见，需要时先手动 fetch 确认
-  | { kind: "deleteRemoteBranch"; name: string }
+  | { kind: "deleteRemoteBranch"; name: string; skipIfMissing?: boolean }
   | { kind: "switchBack" };
 
 export interface Workflow {
@@ -56,8 +60,11 @@ export function describeStep(s: WorkflowStep, startBranch?: string): string {
       return "推送当前分支";
     case "merge":
       return `合并 ${refLabel(s.ref)} 到当前分支`;
-    case "createBranch":
+    case "createBranch": {
+      const fixed = s.name?.trim();
+      if (fixed) return `新建分支 ${s.prefix?.trim() ? s.prefix.trim() + fixed : fixed}`;
       return `新建分支（运行时输入名称${s.prefix ? `，默认前缀 ${s.prefix}` : ""}）`;
+    }
     case "switchBack":
       return `切回起始分支${startBranch ? `（${startBranch}）` : ""}`;
     case "deleteBranch":
@@ -97,6 +104,9 @@ export function flowInputSlots(wf: Workflow): InputSlot[] {
   wf.steps.forEach((s, index) => {
     const at = `第 ${index + 1} 步`;
     if (s.kind === "createBranch") {
+      // 名字写死就不再占输入槽：确认弹窗里少一个空白输入框，
+      // 也避免用户以为「这里能改名字」—— 改名字要去编辑流程
+      if (s.name?.trim()) return;
       const prefix = s.prefix?.trim() ?? "";
       slots.push({ index, label: `${at} 新建分支名`, placeholder: `${prefix}分支名`, branch: { prefix } });
     } else if ((s.kind === "checkout" || s.kind === "merge") && s.ref.mode === "ask") {

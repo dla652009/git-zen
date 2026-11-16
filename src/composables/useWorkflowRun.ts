@@ -292,11 +292,15 @@ export function useWorkflowRun(opts: {
         await api.merge(path, refName(step.ref)); // 冲突 → 报错停留，后续步骤不执行
         return;
       case "createBranch": {
-        // 前缀用确认弹窗里当场选的那个（候选来自「个性化 → 分支前缀」），
-        // 步骤里写的 prefix 只作为下拉的初始选中项 —— 用户不必每次手写前缀。
+        // 名字写死时直接用（输入槽已经不生成，inputBranch 是空串）；
+        // 否则用确认弹窗里当场填的 + 当场选的前缀。
         // 名字已含前缀时不重复加：完全可能有人直接把全名粘进来
-        let name = inputBranch;
-        const p = inputPrefix.trim();
+        const fixed = step.name?.trim();
+        let name = fixed || inputBranch;
+        if (!name) throw new Error("新建分支：分支名为空（流程里没写死名字，也没在确认框里填写）");
+        // 写死名字时，步骤里配的 prefix 视为分支名的一部分（describeStep 也这么展示），
+        // 所以只在「运行时输入」的分支上补前缀，免得固定名被加两遍前缀
+        const p = fixed ? "" : inputPrefix.trim();
         if (p && !name.startsWith(p)) name = p + name;
         await api.branchCreate(path, name);
         return;
@@ -324,7 +328,11 @@ export function useWorkflowRun(opts: {
         const exact = local.find((b) => b.name === name);
         const ci = local.filter((b) => b.name.toLowerCase() === name.toLowerCase());
         const hit = exact ?? (ci.length === 1 ? ci[0] : undefined);
-        if (!hit) throw new Error(`分支「${name}」不存在：检查名字拼写（大小写也要一致）`);
+        if (!hit) {
+          // 「有就删」的清理步骤：分支本来就不在，跳过而不是卡住整条流程
+          if (step.skipIfMissing) return `分支「${name}」不存在，跳过`;
+          throw new Error(`分支「${name}」不存在：检查名字拼写（大小写也要一致）`);
+        }
         const st = await api.status(path);
         if (hit.name === st.branch) {
           throw new Error(
@@ -355,14 +363,17 @@ export function useWorkflowRun(opts: {
         try {
           await api.pushDelete(path, "origin", name);
         } catch (e) {
-          // 旧习惯会把 origin/ 前缀一起填进来：报「远程没有这个分支」时补一句怎么改
           const raw = String(e);
-          if (name.startsWith("origin/") && /remote ref does not exist|unable to delete/i.test(raw)) {
+          const missing = /remote ref does not exist|unable to delete/i.test(raw);
+          // 旧习惯会把 origin/ 前缀一起填进来：报「远程没有这个分支」时补一句怎么改。
+          // 这条提示比「跳过」有用得多——名字写错了却静默跳过，用户会以为删成功了
+          if (name.startsWith("origin/") && missing) {
             const plain = name.slice("origin/".length);
             throw new Error(
               `远程上没有「${name}」：这一步填远程上的分支名，不要带 origin/ 前缀 —— 要删 ${name} 就填 ${plain}`,
             );
           }
+          if (missing && step.skipIfMissing) return `远程分支「${name}」不存在，跳过`;
           throw e;
         }
         return;

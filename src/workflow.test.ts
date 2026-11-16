@@ -33,6 +33,15 @@ assert(
   d({ kind: "createBranch", prefix: "feat/" }).includes("前缀 feat/"),
   "createBranch 前缀",
 );
+// 写死名字时直接展示完整分支名，不再说「运行时输入」——否则用户以为还要填
+assert(
+  d({ kind: "createBranch", name: "release-1.2" }) === "新建分支 release-1.2",
+  "createBranch 固定名",
+);
+assert(
+  d({ kind: "createBranch", prefix: "hotfix/", name: "1.2" }) === "新建分支 hotfix/1.2",
+  "createBranch 固定名带前缀",
+);
 assert(d({ kind: "switchBack" }, "feat/a") === "切回起始分支（feat/a）", "switchBack");
 assert(
   d({ kind: "commitPush", msgSource: "fixed", message: "x" }).includes("固定信息：x"),
@@ -107,6 +116,15 @@ assert(
     ],
   }).length === 0,
   "删除类步骤不产生运行时输入槽",
+);
+// 新建分支写死名字时不产生输入槽：确认弹窗里不该为它留一个空输入框
+assert(
+  flowInputSlots({
+    id: "x",
+    name: "x",
+    steps: [{ kind: "createBranch", name: "release-1.2" }],
+  }).length === 0,
+  "新建分支有固定名时不产生输入槽",
 );
 
 // defaultBranchPrefix：步骤里配的优先于设置里的第一个，都没有才是「无前缀」
