@@ -1326,3 +1326,21 @@ AI 读的 diff 必须是 `merge-base(dst, src)..src`。直接 `dst..src` 会把�
 Alma 的 shell 环境里带着 `CI=1`，tauri-cli 会把它透传给 NSIS 构建参数（`--ci 1`），
 而 CLI 只认 `true/false` → 直接报 `invalid value '1' for '--ci'`。**本地发版构建必须
 `CI=false pnpm tauri build` 覆盖掉**。同样的问题未来可能影响任何读 CI 变量的构建工具。
+
+## 点选项卡「没反应」的排查：historyLoading 竞态泄漏
+
+用户报告「有时候点击选项卡没反应」。排查路径与结论：
+
+- **真 bug（已修）**：`activate()` 无缓存路径先把 `historyLoading=true` 再 `await nextTick`，
+  若这期间用户又切到另一个仓库且后者走 LRU 秒开路径（提前 return），旧 activate 被
+  seq 作废，它的 `finally` 因 `seq !== activateSeq` 不复位遮罩，而新 activate 也没人开
+  —— 历史区被遮罩永久盖住，看起来像「应用卡死」。修法：activate 入口统一先
+  `historyLoading=false`，让每次激活自己决定是否再开；这一处复位同时覆盖了
+  App 的 historyMode watcher 的同类泄漏面。
+- **排除项**（防以后重查）：Sortable 全局 click 吞噬标志只对 touch 拖拽生效（桌面鼠标
+  不触发）；`dragJustEnded` 守卫只拦分组下拉/管理弹窗的成员行点击，不拦选项卡；
+  批次弹窗收尾三路径（reportBatch 全成功早退 / 有失败重开 / closeWfBatch）都不会让
+  `wfBatchOpen` 残留 true；浮层栈 v-if 与 z 层无覆盖标签栏的残留。
+- **观感项**：点当前已激活的选项卡，`switchRepo` 静默早退（`path===repo`）——这是合理
+  行为，但在 activate 数据未到时反复点击会让人以为「点了没反应」。若要更明确的反馈，
+  可给选项卡加「切换中」状态，未做（避免过度设计）。

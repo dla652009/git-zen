@@ -177,6 +177,11 @@ export function useRepoSession(opts: {
   let activateSeq = 0;
   async function activate(path: string) {
     const seq = ++activateSeq;
+    // 先复位遮罩再进分支：上一次 activate 若在 await 期间被新切换作废，
+    // 它的 finally 因 seq 不匹配不会关遮罩 —— 旧的 true 就漏在这里，
+    // 而新 activate 若走 LRU 秒开路径（提前 return）也没人关 → 历史区被遮罩永久盖住。
+    // 每次入口统一置 false，让「这一次激活」自己决定要不要再开。
+    historyLoading.value = false;
     repo.value = path;
     localStorage.setItem("gz.repo", path);
     filter.value = "";
