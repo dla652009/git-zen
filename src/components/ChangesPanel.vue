@@ -447,7 +447,7 @@ async function genCommitMsg() {
   }
   aiBusy.value = true;
   aiErr.value = "";
-  // 绑定仓库：diff / log / AI 之间用户可能切走选项卡，三处必须读同一个仓库
+  // 绑定仓库：diff / AI 之间用户可能切走选项卡，必须读同一个仓库
   const repo = props.repo;
   try {
     const d = await api.diff(
@@ -455,16 +455,12 @@ async function genCommitMsg() {
       staged.value.map((f) => filePath(f)),
       true
     );
-    // 取最近提交推断本仓库的信息风格（SKILL.md：优先跟随既有惯例）
-    const recentLog = (await api.log(repo))
-      .slice(0, 10)
-      .map((c) => c.subject)
-      .join("\n");
-    // 仓库自己写明的规范比「从历史里猜」权威：有 CONTRIBUTING 就一起给模型
+    // 不再取近期提交推断风格：统一规范由提示词固定（Conventional Commits），
+    // 历史里的不规范提交不该被学过来。仓库自己写明的规范仍优先。
     const convention = await readCommitConvention(repo);
     const user = `${
       convention ? `【仓库贡献规范】\n${convention}\n\n` : ""
-    }【仓库近期提交风格】\n${recentLog || "（无历史提交）"}\n\n【暂存区 diff】\n${clipForAI(d)}`;
+    }【暂存区 diff】\n${clipForAI(d)}`;
     const text = await aiComplete(
       AI_PROMPTS.commitMessage.system(settings.aiCommitLang, convention),
       user,

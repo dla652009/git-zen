@@ -121,11 +121,19 @@ git_push 先普通 push，失败且 stderr 含 no upstream/no tracking informati
 `push -u origin <分支>`。分支名由前端从 status.branch 传入。Branch.upstream 为空串
 即"远程还没有这个分支"，状态栏据此常驻提示。
 
-### AI 生成提交信息遵循 git-commit-message 规范
+### AI 生成提交信息用统一规范（不跟仓库历史风格）
 
-提示词已吸收 src/ai/skills/git-commit-message/SKILL.md：跟随仓库近期提交风格优先、
-否则 Conventional Commits、祈使语气无尾句号、跟随仓库主导语言、只基于 diff 不臆造。
-实现上 genCommitMsg 会把最近 10 条 subject 拼进 user prompt 作风格参考。
+**现行行为（2026-11-16 起）**：固定 Conventional Commits 格式 + 祈使语气无尾句号 +
+显式设置的语言，仓库自己写明的规范（CONTRIBUTING.md 等，由 `lib/repoDocs.ts` 探测
+7 个候选路径、取前 6KB）优先级最高。
+
+**为什么不再「跟随仓库近期提交风格」**：历史推断本质是照着色子学 —— 仓库里本来就
+有不规范的提交（中文英文混着、无 type、带句号）时会被带偏，输出不可预期。
+统一规范让每次结果格式一致，代价是失去「贴合老仓库习惯」这一点，仓库想改风格
+时写 CONTRIBUTING.md 覆盖更直接。
+
+配套改动：`genCommitMsg`（ChangesPanel）、MR 生成（App.vue）、工作流的「提交推送」
+步骤（useWorkflowRun）三处都不再拉 `api.log` 取近期 subject。
 
 ### computed setter 背后的存储必须响应式
 

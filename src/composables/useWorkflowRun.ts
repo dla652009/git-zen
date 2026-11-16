@@ -375,14 +375,11 @@ export function useWorkflowRun(opts: {
         let msg = step.msgSource === "fixed" ? (step.message ?? "").trim() : "";
         if (step.msgSource === "ai") {
           const diff = await api.diff(path, ["."], true);
-          const recent = (await api.log(path))
-            .slice(0, 10)
-            .map((c) => c.subject)
-            .join("\n");
+          // 统一规范由提示词固定，不再取近期提交推断风格
           // 生成失败 = 步骤中止（可重跑），不用固定文本兜底
           msg = await aiComplete(
             AI_PROMPTS.commitMessage.system(settings.aiCommitLang),
-            `【仓库近期提交风格】\n${recent || "（无历史提交）"}\n\n【暂存区 diff】\n${clipForAI(diff)}`,
+            `【暂存区 diff】\n${clipForAI(diff)}`,
           );
         }
         // AI 生成最长 30s，是最容易被切仓库的窗口：提交前再校验一次本次执行是否仍有效

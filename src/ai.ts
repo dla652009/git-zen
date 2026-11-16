@@ -197,25 +197,25 @@ export async function aiVerify(baseUrl: string, apiKey: string): Promise<void> {
 // 功能点提示词集中在这
 export const AI_PROMPTS = {
   commitMessage: {
-    // 提交信息规范：跟随仓库既有风格，风格不明显时用 Conventional Commits；祈使语气、无尾句号、
-    // 不硬凑 type/scope、跟随仓库主导语言；只基于 diff 本身，不臆造行为。
-    // convention 是仓库自己写明的规范（CONTRIBUTING.md 等）：它比「从历史提交里猜」更权威。
+    // 统一规范：Conventional Commits + 祈使语气 + 无尾句号，不跟仓库历史风格走。
+    // 历史风格推断的毛病是「照着色子学」，仓库里本来就有不规范的提交时会被带偏；
+    // 固定规范让输出可预期，仓库自己写明的规范（CONTRIBUTING.md 等）仍可覆盖。
+    // 只基于 diff 本身，不臆造行为。
     system(lang: string, convention?: string) {
       return `你是资深工程师。根据给定的暂存区 diff 写一条 Git 提交信息。
 
 规则：
-1. 优先参考「仓库近期提交」的风格惯例；风格不明显时采用 Conventional Commits：type(scope): 主题。
-2. type 反映意图：feat/fix/refactor/docs/test/build/ci/perf/chore。项目不用就不用，不硬凑 scope。
+1. 一律采用 Conventional Commits 格式：type(scope): 主题。type 必填，scope 可选。
+2. type 取值：feat / fix / refactor / docs / test / build / ci / perf / chore，按改动意图选一个。
 3. 主题祈使语气、简洁具体，不加句号；避免空泛描述（如“更新代码”）和与变更无关的实现细节。
 4. 多部分变更可在空一行后附 1-3 条要点正文，只在主题讲不清关键背景/兼容性影响时才写。
-5. 跟随仓库主导语言（若近期提交主要是中文则用中文，英文则用英文）。
-6. 只基于 diff 描述真实行为，不要臆造变更未实现的内容。${
+5. 只基于 diff 描述真实行为，不要臆造变更未实现的内容。${
         convention
           ? `
 
 仓库在文档里明确写了提交信息规范（见下方「仓库贡献规范」）：
-7. 该规范优先级高于以上第 1、5 条对风格与语言的推断，冲突时以它为准。
-8. 规范里若规定了格式（如 scope 白名单、字数上限、必须带 issue 号），逐条照做。
+6. 该规范优先级高于以上第 1-3 条，冲突时以它为准。
+7. 规范里若规定了格式（如 scope 白名单、字数上限、必须带 issue 号），逐条照做。
 
 【仓库贡献规范（节选）】
 ${convention}`
@@ -226,17 +226,18 @@ ${convention}`
     },
   },
   mrDescription: {
-    // 与 commitMessage 同源：风格与语言从仓库近期提交推断，convention 文档优先。
+    // 与 commitMessage 同源：统一规范（不跟仓库历史风格走），convention 文档优先。
     // 输出是「标题 + 空行 + 正文」的纯文本，前端按第一行/其余解析（lib/mrUrl.ts parseMrDraft）。
     system(lang: string, convention?: string) {
       return `你是资深工程师。根据「当前分支相对目标分支的 diff」写一条合并请求（MR/PR）的标题与描述。
 
 规则：
-1. 第一行 = 标题：简洁具体、祈使语气、无句号，风格跟随仓库近期提交（不明显时 Conventional Commits: type(scope): 主题）。
+1. 第一行 = 标题：Conventional Commits 格式 type(scope): 主题，祈使语气、无句号、简洁具体。
 2. 空一行后 = 描述正文：2-5 条要点，讲清「为什么改」与「改了什么」，不逐条复述 diff 文件名；有兼容性/迁移影响必须写。
-3. 只基于 diff 描述真实改动，不臆造。跟随仓库主导语言（近期提交中文则中文）。${
+3. 只基于 diff 描述真实改动，不臆造。${
         convention
           ? `
+4. 仓库贡献规范优先级高于以上第 1-2 条，冲突时以它为准。
 
 【仓库贡献规范（节选）】
 ${convention}`

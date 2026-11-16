@@ -312,20 +312,15 @@ async function genMrDescription() {
       mrPreviewErr.value = `${src} 相对 ${dst} 没有差异，无法生成`;
       return;
     }
-    // 与 AI 生成提交信息一致：近期提交推断风格，仓库规范文档优先
-    const [recentLog, convention] = await Promise.all([
-      api.log(path).then((list) =>
-        list.slice(0, 10).map((c) => c.subject).join("\n"),
-      ),
-      readCommitConvention(path),
-    ]);
+    // 与 AI 生成提交信息一致：统一规范由提示词固定，只读仓库自己写明的规范文档
+    const convention = await readCommitConvention(path);
     if (repo.value !== path) {
       mrPreviewErr.value = "已切换仓库，生成已停止；切回原仓库重试或手动填写";
       return;
     }
     const user = `${
       convention ? `【仓库贡献规范】\n${convention}\n\n` : ""
-    }【仓库近期提交风格】\n${recentLog || "（无历史提交）"}\n\n【${src} 相对 ${dst} 的 diff】\n${clipForAI(d)}`;
+    }【${src} 相对 ${dst} 的 diff】\n${clipForAI(d)}`;
     const text = await aiComplete(
       AI_PROMPTS.mrDescription.system(settings.aiCommitLang, convention),
       user,
