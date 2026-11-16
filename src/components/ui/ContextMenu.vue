@@ -88,29 +88,36 @@ function onKey(e: KeyboardEvent) {
 </script>
 
 <template>
-  <div class="fixed inset-0 z-50" @click="emit('close')" @contextmenu.prevent="onOverlayContextmenu">
-    <div
-      ref="root"
-      class="pop-in surface-menu fixed min-w-[150px] max-w-[440px] overflow-hidden rounded-sm py-1"
-      :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
-      @click.stop
-    >
-      <template v-for="(it, i) in items" :key="i">
-        <div v-if="it.separator" class="my-1 border-t border-border/60" />
-        <button
-          v-else
-          class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors duration-fast active:bg-active"
-          :class="[
-            it.danger ? 'text-destructive' : '',
-            active === i ? 'bg-hover' : '',
-            it.disabled && 'pointer-events-none opacity-40',
-          ]"
-          @mousemove="active = i"
-          @click.stop="run(it)"
-        >
-          <span class="min-w-0 flex-1 truncate">{{ it.label }}</span>
-        </button>
-      </template>
+  <!-- Teleport 到 body：菜单的根是 fixed inset-0，调用处常常是 overflow-y-auto 的
+       侧栏（如变更面板的右栏）或 flex 列。fixed 本身脱离文档流，但把它留在滚动容器
+       内部仍会让该容器的滚动区/滚动条状态发生变化（实测：在变更面板点「⋯」展开菜单
+       时右栏内容整体跳一下）。挪到 body 下与调用处的布局彻底脱钩，同时也保证菜单不被
+       任何祖先的 transform/contain 意外做成包含块。 -->
+  <Teleport to="body">
+    <div class="fixed inset-0 z-50" @click="emit('close')" @contextmenu.prevent="onOverlayContextmenu">
+      <div
+        ref="root"
+        class="pop-in surface-menu fixed min-w-[150px] max-w-[440px] overflow-hidden rounded-sm py-1"
+        :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
+        @click.stop
+      >
+        <template v-for="(it, i) in items" :key="i">
+          <div v-if="it.separator" class="my-1 border-t border-border/60" />
+          <button
+            v-else
+            class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors duration-fast active:bg-active"
+            :class="[
+              it.danger ? 'text-destructive' : '',
+              active === i ? 'bg-hover' : '',
+              it.disabled && 'pointer-events-none opacity-40',
+            ]"
+            @mousemove="active = i"
+            @click.stop="run(it)"
+          >
+            <span class="min-w-0 flex-1 truncate">{{ it.label }}</span>
+          </button>
+        </template>
+      </div>
     </div>
-  </div>
+  </Teleport>
 </template>

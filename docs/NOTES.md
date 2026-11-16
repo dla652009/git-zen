@@ -1368,3 +1368,18 @@ fixed 相对视口，不受任何祖先裁剪影响。代价是锚点要自己�
 
 以后再写「挂在按钮上的浮层」，先确认是不是 fixed/Teleport —— 这是本项目第二次栽在
 祖先裁剪上（第一次是 tooltip 被 overflow 裁掉改用 Teleport）。
+
+## 浮层组件一律 Teleport 到 body（space-y 会选中它）
+
+`ui/ContextMenu` 原来直接渲染在调用处。变更面板的提交区是 `div.space-y-2`，菜单挂进去后：
+
+`space-y-*` 展开是 `.space-y-2 > :not([hidden]) ~ :not([hidden]) { margin-top: .5rem }`
+—— 菜单虽然是 `position:fixed` 不占空间，**但它仍会被 `~` 兄弟选择器选中**，
+于是它前面那个元素（提交按钮）凭空多拿一条 8px 的 `margin-top`。
+表现：点「⋯」→ 提交按钮下移 → 关掉又弹回，即用户说的「展开弹框界面会跳动」。
+
+修法与其它浮层统一：**Teleport 到 body**。顺带解决两类隐患：
+`overflow-y-auto` 容器里的滚动区/滚动条状态变化，以及祖先的 `transform`/`contain`
+把 fixed 元素做成包含块导致定位错乱。
+
+这是同一个坑的第三次（tooltip、select、contextmenu）—— 新写浮层先 Teleport，再谈定位。
