@@ -1352,3 +1352,19 @@ Alma 的 shell 环境里带着 `CI=1`，tauri-cli 会把它透传给 NSIS 构建
 - **观感项**：点当前已激活的选项卡，`switchRepo` 静默早退（`path===repo`）——这是合理
   行为，但在 activate 数据未到时反复点击会让人以为「点了没反应」。若要更明确的反馈，
   可给选项卡加「切换中」状态，未做（避免过度设计）。
+
+## 下拉面板必须 Teleport + fixed，不能用 absolute
+
+`ui/Select.vue` 原来是 `position:absolute` 挂在按钮下方的相对容器里。设置页的内容区是
+`overflow-y-auto`、弹窗外壳是 `overflow-hidden` —— absolute 面板会被这两层祖先裁掉，
+表现就是「列表在容器底部被切断、尾部选项点不到」（字体下拉在设置页里最容易看到）。
+
+修法与 Tooltip / ContextMenu / FolderDropdown 统一：**面板 Teleport 到 body + `position:fixed`**。
+fixed 相对视口，不受任何祖先裁剪影响。代价是锚点要自己算：
+`getBoundingClientRect()` 取按钮位置 → 面板实测宽高 → 右溢出收敛、底部放不下翻到上方
+（与 Tooltip 同款策略）。另外两个配套点：
+- 滚动/缩放要收起面板（capture 监听的 scroll 才能覆盖任意滚动容器）——锚点会跑位置；
+- 面板在 body 下，Esc 得自己 `stopPropagation`，否则连下层浮层一起关。
+
+以后再写「挂在按钮上的浮层」，先确认是不是 fixed/Teleport —— 这是本项目第二次栽在
+祖先裁剪上（第一次是 tooltip 被 overflow 裁掉改用 Teleport）。
