@@ -478,64 +478,74 @@ async function genCommitMsg() {
 
 <template>
   <div class="flex h-full flex-col">
-    <!-- 进行中的多步操作：冲突全解决后给「完成」出口，不必回终端跑 --continue -->
+    <!-- 进行中的多步操作横幅。
+         右栏本来就窄（默认 300px 上下），所以：标题一行说清「在做什么 + 还剩几个」，
+         解释压成一行小字（只在有冲突时出现，解决完了就不必再教一遍），
+         主操作做成实心按钮压在最下 —— 之前三样挤在一行，文字被按钮压得折行。 -->
     <div
       v-if="opInfo"
-      class="mx-3 mt-3 flex items-start gap-2 rounded-md border px-2.5 py-2"
+      class="mx-3 mt-3 overflow-hidden rounded-md border-l-2"
       :class="
         opInfo.left
-          ? 'border-[var(--c-mod)]/40 bg-[var(--c-mod)]/10'
-          : 'border-[var(--c-add)]/40 bg-[var(--c-add)]/10'
+          ? 'border-l-[var(--c-mod)] border-y border-r border-[var(--c-mod)]/25 bg-[var(--c-mod)]/10'
+          : 'border-l-[var(--c-add)] border-y border-r border-[var(--c-add)]/25 bg-[var(--c-add)]/10'
       "
     >
-      <GitMerge
-        class="mt-0.5 size-3.5 shrink-0"
-        :class="opInfo.left ? 'text-[var(--c-mod)]' : 'text-[var(--c-add)]'"
-      />
-      <div class="min-w-0 flex-1 text-xs leading-relaxed">
-        <div class="font-medium tabular-nums">
+      <div class="flex items-center gap-1.5 px-2.5 pt-2">
+        <GitMerge
+          class="size-3.5 shrink-0"
+          :class="opInfo.left ? 'text-[var(--c-mod)]' : 'text-[var(--c-add)]'"
+        />
+        <span class="min-w-0 flex-1 truncate text-xs font-semibold">
           {{ opInfo.title }}
-          <template v-if="opInfo.left">（还剩 {{ opInfo.left }} 个冲突文件）</template>
-        </div>
-        <div class="mt-0.5 text-muted-foreground">
-          <template v-if="opInfo.left">逐个解决后「暂存」，全部暂存完就能收尾。</template>
-          <template v-else>冲突已全部解决，可以{{ opInfo.noun }}了。</template>
-        </div>
+        </span>
+        <span
+          v-if="opInfo.left"
+          class="shrink-0 rounded-xs px-1 text-2xs font-semibold tabular-nums text-[var(--c-mod)]"
+        >
+          还剩 {{ opInfo.left }}
+        </span>
       </div>
-      <Button
-        v-if="opInfo.left"
-        variant="ghost"
-        size="sm"
-        class="h-6 shrink-0 px-2 text-xs"
-        @click="emit('abortMerge')"
-      >
-        放弃{{ opInfo.noun }}
-      </Button>
-      <Button v-else size="sm" class="h-6 shrink-0 px-2 text-xs" @click="emit('opContinue')">
-        完成{{ opInfo.noun }}
-      </Button>
+      <p class="mt-1 px-2.5 text-2xs leading-snug text-muted-foreground">
+        <template v-if="opInfo.left">解决冲突后暂存，全部暂存完即可收尾</template>
+        <template v-else>冲突已全部解决</template>
+      </p>
+      <div class="mt-1.5 flex justify-end px-2.5 pb-2">
+        <Button
+          v-if="opInfo.left"
+          variant="ghost"
+          size="sm"
+          class="h-6 px-2 text-xs"
+          @click="emit('abortMerge')"
+        >
+          放弃{{ opInfo.noun }}
+        </Button>
+        <Button v-else size="sm" class="h-6 px-2 text-xs" @click="emit('opContinue')">
+          完成{{ opInfo.noun }}
+        </Button>
+      </div>
     </div>
 
     <!-- 冲突态横幅：没有 op 状态时（例如外部操作留下的冲突）兜底给「放弃合并」出口 -->
     <div
       v-if="!opInfo && conflictFiles.length"
-      class="mx-3 mt-3 flex items-start gap-2 rounded-md border border-[var(--c-mod)]/40 bg-[var(--c-mod)]/10 px-2.5 py-2"
+      class="mx-3 mt-3 overflow-hidden rounded-md border-l-2 border-l-[var(--c-mod)] border-y border-r border-[var(--c-mod)]/25 bg-[var(--c-mod)]/10"
     >
-      <GitMerge class="mt-0.5 size-3.5 shrink-0 text-[var(--c-mod)]" />
-      <div class="min-w-0 flex-1 text-xs leading-relaxed">
-        <div class="font-medium tabular-nums">合并冲突未解决（{{ conflictFiles.length }} 个文件）</div>
-        <div class="mt-0.5 text-muted-foreground">
-          逐个解决后暂存并提交即完成合并；也可以直接放弃，回到合并前。
-        </div>
+      <div class="flex items-center gap-1.5 px-2.5 pt-2">
+        <GitMerge class="size-3.5 shrink-0 text-[var(--c-mod)]" />
+        <span class="min-w-0 flex-1 truncate text-xs font-semibold">存在未解决的冲突</span>
+        <span class="shrink-0 rounded-xs px-1 text-2xs font-semibold tabular-nums text-[var(--c-mod)]">
+          {{ conflictFiles.length }}
+        </span>
       </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        class="h-6 shrink-0 px-2 text-xs"
-        @click="emit('abortMerge')"
-      >
-        放弃合并
-      </Button>
+      <p class="mt-1 px-2.5 text-2xs leading-snug text-muted-foreground">
+        解决后暂存并提交即可完成合并
+      </p>
+      <div class="mt-1.5 flex justify-end px-2.5 pb-2">
+        <Button variant="ghost" size="sm" class="h-6 px-2 text-xs" @click="emit('abortMerge')">
+          放弃合并
+        </Button>
+      </div>
     </div>
 
     <!-- 过滤框：树解决了「文件去哪了」，剩下的问题是「文件在哪」—— 几十个文件在两个列表里
