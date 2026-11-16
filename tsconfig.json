@@ -20,6 +20,7 @@
     "src/lib/fileTree.test.ts",
     "src/lib/mrUrl.test.ts",
     "src/lib/repoGroups.test.ts",
+    "src/lib/workflowIO.test.ts",
     "src/lib/overlays.test.ts",
     "src/lib/patch.test.ts",
     "src/lib/safeJson.test.ts",

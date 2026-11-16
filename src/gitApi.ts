@@ -224,6 +224,9 @@ export const initRepo = (path: string) => invoke<void>("git_init", { path });
 export const writeTextFile = (path: string, content: string) =>
   invoke<void>("git_write_file", { path, content });
 
+/** 读取任意路径的文本文件（路径来自系统打开对话框，如导入工作流配置） */
+export const readTextFile = (path: string) => invoke<string>("git_read_file", { path });
+
 // ---- M19 ----
 
 // reflog 时间线：selector 是按位置编号的（列表一变就指向别处），回到某一步请用 hash

@@ -1104,6 +1104,20 @@ pub async fn git_write_file(path: String, content: String) -> Result<(), String>
     .await
 }
 
+/// 读取任意路径的文本文件（工作流配置导入用；路径来自系统打开对话框）。
+/// 与 git_write_file 对称：这两个只管系统对话框给的路径，不碰仓库。
+/// 非 UTF-8 内容直接判错 —— 配置文件不可能是二进制，静默当乱码解析会生成一堆看似
+/// 合法、实则错误的工作流。
+#[tauri::command]
+pub async fn git_read_file(path: String) -> Result<String, String> {
+    offload(move || {
+        std::fs::read(&path)
+            .map_err(|e| format!("读取失败: {e}"))
+            .and_then(|bytes| String::from_utf8(bytes).map_err(|_| "文件不是 UTF-8 文本".to_string()))
+    })
+    .await
+}
+
 // ---------- amend / 撤销提交 ----------
 
 /// 追加到上次提交（amend）：message 非空时同时更新提交信息，否则保留原信息（--no-edit）。

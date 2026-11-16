@@ -4,6 +4,7 @@ import {
   X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe, Workflow as WorkflowIcon, ChevronDown,
   GripVertical, Pin, Pencil, Trash2, TriangleAlert, Copy,
   GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload, CloudOff,
+  FileDown,
 } from "@lucide/vue";
 import { VueDraggable } from "vue-draggable-plus";
 import {
@@ -21,6 +22,8 @@ import { readJsonObject } from "../lib/safeJson";
 import { humanizeMsg } from "../lib/errors";
 import { workflows } from "../workflowStore";
 import { newFlowId, type BranchRef, type Workflow, type WorkflowStep } from "../workflow";
+import { exportFileName, parseWorkflowFile, toFileText, uniqueName } from "../lib/workflowIO";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { Button, Input, Spinner, Select, Switch, Tooltip } from "@/components/ui";
 import CommitHeatmap from "./CommitHeatmap.vue";
 
@@ -133,6 +136,67 @@ function addFlow() {
   const wf: Workflow = { id: newFlowId(), name: `工作流 ${workflows.length + 1}`, steps: [] };
   workflows.push(wf);
   wfExpanded.value = wf.id;
+}
+
+// ---- 导入 / 导出：把配置当文件传给别人 ----
+// 与「复制」的区别：复制留在本机同一个 store 里，导入导出跨机器、跨人。
+const ioMsg = ref<{ kind: "ok" | "err"; text: string } | null>(null);
+const ioBusy = ref(false);
+
+async function exportFlows(list: Workflow[], title: string) {
+  if (!list.length || ioBusy.value) return;
+  ioBusy.value = true;
+  ioMsg.value = null;
+  try {
+    const target = await saveDialog({
+      title,
+      defaultPath: exportFileName(list),
+      filters: [{ name: "工作流配置", extensions: ["json"] }],
+    });
+    if (!target) return;
+    await api.writeTextFile(target, toFileText(list));
+    ioMsg.value = { kind: "ok", text: `已导出 ${list.length} 个工作流` };
+  } catch (e) {
+    ioMsg.value = { kind: "err", text: humanizeMsg(e) };
+  } finally {
+    ioBusy.value = false;
+  }
+}
+
+async function importFlows() {
+  if (ioBusy.value) return;
+  ioBusy.value = true;
+  ioMsg.value = null;
+  try {
+    const picked = await openDialog({
+      title: "导入工作流配置",
+      multiple: false,
+      filters: [{ name: "工作流配置", extensions: ["json"] }],
+    });
+    // 取消对话框返回 null，不是错误
+    if (!picked || Array.isArray(picked)) return;
+    const text = await api.readTextFile(picked);
+    const res = parseWorkflowFile(text, newFlowId);
+    if (!res.ok) {
+      ioMsg.value = { kind: "err", text: res.error };
+      return;
+    }
+    // 重名加后缀而不是覆盖：导入是「加东西进来」，不该动到已有的
+    const taken = workflows.map((w) => w.name);
+    for (const wf of res.workflows) {
+      wf.name = uniqueName(wf.name, taken);
+      taken.push(wf.name); // 同一文件里两条同名也要各自区分
+      workflows.push(wf);
+    }
+    ioMsg.value = {
+      kind: "ok",
+      text: `已导入 ${res.workflows.length} 个工作流${res.skipped ? `（跳过 ${res.skipped} 个无法识别）` : ""}`,
+    };
+  } catch (e) {
+    ioMsg.value = { kind: "err", text: humanizeMsg(e) };
+  } finally {
+    ioBusy.value = false;
+  }
 }
 // 复制：深拷贝后插在原工作流后面。步骤是嵌套结构，浅拷贝会让两份共用同一个 steps
 // 数组（改一个另一个跟着变），所以走 JSON 往返 —— 工作流数据是纯 JSON，没有函数/Date。
@@ -707,9 +771,31 @@ const NAV = [
                 <WorkflowIcon class="inline size-3.5 align-[-2px] text-primary" /> 按钮下拉一键执行。
                 步骤自上而下顺序执行，任一步失败立即中止；「提交推送」在有改动时自动全部暂存，无改动时跳过。
               </p>
-              <Button variant="secondary" size="sm" class="mb-3" @click="addFlow">
-                <Plus class="size-3.5" /> 新建工作流
-              </Button>
+              <div class="mb-3 flex flex-wrap items-center gap-1.5">
+                <Button variant="secondary" size="sm" @click="addFlow">
+                  <Plus class="size-3.5" /> 新建工作流
+                </Button>
+                <Button variant="ghost" size="sm" :disabled="ioBusy" @click="importFlows">
+                  <ArrowDownToLine class="size-3.5" /> 导入…
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  :disabled="ioBusy || !workflows.length"
+                  title="把全部工作流存成一个文件，可发给别人导入"
+                  @click="exportFlows([...workflows], '导出全部工作流')"
+                >
+                  <ArrowUpFromLine class="size-3.5" /> 导出全部
+                </Button>
+                <span
+                  v-if="ioMsg"
+                  class="min-w-0 flex-1 truncate text-xs"
+                  :class="ioMsg.kind === 'ok' ? 'text-muted-foreground' : 'text-destructive'"
+                  :title="ioMsg.text"
+                >
+                  {{ ioMsg.text }}
+                </span>
+              </div>
               <div v-if="!workflows.length" class="py-10 text-center text-xs text-muted-foreground">
                 还没有工作流。新建一个试试——先从「切 master → 拉取 → 新建分支」开始。
               </div>
@@ -762,6 +848,18 @@ const NAV = [
                         @click="copyFlow(w)"
                       >
                         <Copy class="size-3.5" />
+                      </Button>
+                    </Tooltip>
+                    <Tooltip text="导出为文件">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        class="h-7 w-7 text-muted-foreground hover:text-primary"
+                        :disabled="ioBusy"
+                        :aria-label="`导出 ${w.name}`"
+                        @click="exportFlows([w], `导出「${w.name}」`)"
+                      >
+                        <FileDown class="size-3.5" />
                       </Button>
                     </Tooltip>
                     <Tooltip text="重命名">
