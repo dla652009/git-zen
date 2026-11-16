@@ -935,6 +935,24 @@ function addMember(group: string, path: string) {
   // 否则看起来就像点坏了。toast 放在这里而不是各调用点，几条入口才不会漏
   if (r) toast(`已把「${r.name}」收进「${group}」`);
 }
+// 批量归组（分组管理弹窗的勾选提交）：逐个 addMember 会刷一串 toast，
+// 这里一次写完只报一条；从别的分组抢人时在文案里点名，别让用户以为原分组没少人
+function addMembers(group: string, paths: string[]) {
+  let moved = 0;
+  for (const path of paths) {
+    const r = repoByPath.value.get(path);
+    if (!r || r.group === group) continue;
+    if (r.group) moved += 1;
+    r.group = group;
+  }
+  const n = paths.length;
+  if (!n) return;
+  toast(
+    moved
+      ? `已把 ${n} 个仓库收进「${group}」（其中 ${moved} 个来自其它分组）`
+      : `已把 ${n} 个仓库收进「${group}」`,
+  );
+}
 // 移出分组：仓库本身不会丢，只是回到标签栏——同一个面板下方的「添加仓库」列表
 // 一次点击就能加回来，属于完全可逆操作，故意不加确认框（危险操作到处确认会让确认失去意义）
 function removeMember(path: string) {
@@ -1017,8 +1035,12 @@ function closeGroupMgr() {
   if (itemDragged()) return;
   showGroupMgr.value = false;
 }
-function openGroupMgr() {
+// focus：从某个分组的入口（文件夹右键/下拉里的「管理分组」）进来时，
+// 直接选中那个分组，省掉「打开弹窗再在左栏找它」的一步
+const groupMgrFocus = ref("");
+function openGroupMgr(focus = "") {
   folderDd.value = null;
+  groupMgrFocus.value = focus;
   showGroupMgr.value = true;
 }
 function toggleFolder(g: string, ev: MouseEvent | KeyboardEvent) {
@@ -3231,7 +3253,7 @@ onUnmounted(() => {
       :y="folderCtx.y"
       :items="[
         { label: '重命名…', fn: () => openGroupRename(folderCtx!.group) },
-        { label: '管理分组…', fn: openGroupMgr },
+        { label: '管理分组…', fn: () => openGroupMgr(folderCtx!.group) },
         { label: '删除分组', danger: true, fn: () => askDeleteGroup(folderCtx!.group) },
       ]"
       @close="folderCtx = null"
@@ -3267,7 +3289,7 @@ onUnmounted(() => {
       :current-repo="repo"
       @close="closeFolderDd"
       @close-force="folderDd = null"
-      @open-mgr="openGroupMgr"
+      @open-mgr="(g: string) => openGroupMgr(g)"
       @member-activate="onMemberClick"
       @remove-member="removeMember"
       @drag-member="onFolderDragMember"
@@ -3282,12 +3304,14 @@ onUnmounted(() => {
       :repos="repos"
       :current-repo="repo"
       :highlighted="mgrHighlighted"
+      :initial-group="groupMgrFocus"
       @groups-change="syncGroupBarOrder"
       @close="closeGroupMgr"
       @create="openGroupCreate"
       @rename="openGroupRename"
       @delete="askDeleteGroup"
       @add-member="addMember"
+      @add-members="addMembers"
       @remove-member="removeMember"
       @drag-member="onMgrDragMember"
     />

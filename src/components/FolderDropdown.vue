@@ -21,7 +21,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   close: [];
   "close-force": [];
-  "open-mgr": [];
+  /** 带上当前分组名：弹窗直接选中它，省掉打开后再找的一步 */
+  "open-mgr": [group: string];
   "member-activate": [path: string];
   "remove-member": [path: string];
   "drag-member": [e: MouseEvent, path: string, name: string];
@@ -94,7 +95,7 @@ watch(
       <div class="mt-1 border-t border-border/60 pt-1">
         <button
           class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors duration-fast hover:bg-hover"
-          @click.stop="emit('open-mgr')"
+          @click.stop="emit('open-mgr', dd!.group)"
         >
           管理分组…
         </button>
