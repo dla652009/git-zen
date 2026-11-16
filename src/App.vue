@@ -23,6 +23,8 @@ import {
   ExternalLink,
   History,
   LayoutGrid,
+  ListTree,
+  List,
   PanelLeft,
   PanelRight,
 } from "@lucide/vue";
@@ -1373,6 +1375,11 @@ const {
 
 
 // ---- 分支树：本地 / 按远程前缀分组，可折叠 ----
+// 分支面板视图切换：目录树 ↔ 平铺。与变更列表的 changeView 各自独立
+// （「变更想平铺、分支想分层」是很常见的组合），偏好同样存 settings 跨重启保留。
+function toggleBranchView() {
+  settings.branchView = settings.branchView === "flat" ? "tree" : "flat";
+}
 // "gz:tags"（侧栏标签组）默认收起，键带前缀避免与分支树节点撞名
 const collapsedGroups = ref(new Set<string>(["gz:tags"]));
 function toggleGroup(g: string) {
@@ -2637,8 +2644,20 @@ onUnmounted(() => {
         :class="[repoAnimOn && !leftFold ? repoAnimClass : '', 'repo-anim-1']"
         :style="{ width: leftW + 'px' }"
       >
-        <div class="px-3 pt-3.5 pb-2 text-2xs font-semibold tracking-wide text-muted-foreground">
-          分支
+        <div class="flex items-center gap-1 px-3 pt-3.5 pb-2 text-2xs font-semibold tracking-wide text-muted-foreground">
+          <span>分支</span>
+          <!-- 视图切换：目录树（按 / 分层）/ 平铺（一行一个完整分支名）。
+               偏好存设置里跨重启保留；与变更列表的 tree/flat 相互独立。 -->
+          <Tooltip :text="settings.branchView === 'flat' ? '切换到目录树' : '切换到平铺列表'">
+            <button
+              class="ml-auto cursor-pointer rounded-xs p-0.5 text-muted-foreground transition-colors duration-fast hover:bg-hover hover:text-foreground"
+              :aria-label="settings.branchView === 'flat' ? '切换到目录树' : '切换到平铺列表'"
+              @click="toggleBranchView"
+            >
+              <ListTree v-if="settings.branchView === 'flat'" class="size-3.5" />
+              <List v-else class="size-3.5" />
+            </button>
+          </Tooltip>
         </div>
         <!-- 分支模糊搜索（创建分支在工具栏按钮） -->
         <div class="px-2.5 pb-2">
@@ -2669,6 +2688,7 @@ onUnmounted(() => {
               <BranchTree
                 v-model="collapsedGroups"
                 :nodes="localNodes"
+                :flat="settings.branchView === 'flat'"
                 @switch="switchBranch"
                 @menu="(b, x, y) => (branchMenu = { x, y, b })"
               />
@@ -2693,6 +2713,7 @@ onUnmounted(() => {
                 <BranchTree
                   v-model="collapsedGroups"
                   :nodes="remoteNodeMap.get(prefix) ?? []"
+                  :flat="settings.branchView === 'flat'"
                   @switch="switchBranch"
                   @menu="(b, x, y) => (branchMenu = { x, y, b })"
                 />
@@ -3114,20 +3135,27 @@ onUnmounted(() => {
     />
     </Transition>
 
-    <footer class="flex items-center gap-3 border-t border-border bg-card px-3 py-1.5 text-xs text-muted-foreground">
+    <!-- 高度固定：切仓库时 remoteWebUrl 与 status 都是异步回来的，用 v-if 会让
+         按钮/文字先后出现并把底栏撑高（界面跳动）。这里统一 fixed 行高 + 占位不可见。 -->
+    <footer class="flex h-8 shrink-0 items-center gap-3 border-t border-border bg-card px-3 text-xs text-muted-foreground">
       <span class="font-medium text-foreground">{{ status?.branch ?? "—" }}</span>
       <span class="flex-1" />
-      <span v-if="status" class="tabular-nums">{{ status.files.length }} 个变更文件</span>
-      <Tooltip v-if="remoteWebUrl" text="打开远程仓库网页（右键更多）">
+      <span class="tabular-nums" :class="!status && 'invisible'">
+        {{ status ? `${status.files.length} 个变更文件` : "0 个变更文件" }}
+      </span>
+      <!-- 不可见而不是不渲染：占住同样的宽度，远程信息到达时不会挤动前面的元素 -->
+      <Tooltip :text="remoteWebUrl ? '打开远程仓库网页（右键更多）' : '正在读取远程信息…'">
         <Button
           variant="ghost"
           size="sm"
           class="h-5 gap-1 px-1.5 text-xs"
+          :class="!remoteWebUrl && 'invisible'"
+          :disabled="!remoteWebUrl"
           @click="openRemote"
           @contextmenu.prevent="remoteCtx = { x: $event.clientX, y: $event.clientY }"
         >
         <ExternalLink class="size-3" />
-          远程
+        远程
         </Button>
       </Tooltip>
       <Badge v-if="currentBranchNoUpstream" variant="warning" class="cursor-default">

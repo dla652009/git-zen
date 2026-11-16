@@ -26,8 +26,35 @@ const GROUP_GUIDE = GROUP_INSET + 6;
 // 而无单位的 1.25 又会各自乘自己的字号（13px×1.25 ≠ 16px×1.25），根本统一不了。
 const ROW_LEADING = "1.25rem";
 const props = withDefaults(
-  defineProps<{ nodes: BNode[]; depth?: number }>(),
-  { depth: 0 },
+  defineProps<{
+    nodes: BNode[];
+    depth?: number;
+    /** 平铺模式：不渲染文件夹层，把所有叶子拉平成一列（显示完整分支名）。
+     *  只有组件根实例需要关注它 —— 递归子节点不会再出现在平铺模式里。 */
+    flat?: boolean;
+  }>(),
+  { depth: 0, flat: false },
+);
+
+// 平铺：递归收集所有叶子，按完整分支名排序。
+// 用完整名（feature/login 而不是叶子段 login）——平铺时没有层级上下文，
+// 只显示末段会出现两个同名 login 分不清谁是谁。
+function flatten(list: BNode[], out: BNode[] = []): BNode[] {
+  for (const n of list) {
+    if (n.children.length) flatten(n.children, out);
+    else out.push(n);
+  }
+  return out;
+}
+const flatLeaves = computed(() =>
+  flatten(props.nodes)
+    .filter((n) => !!n.branch)
+    .sort((a, b) =>
+      a.branch!.name.localeCompare(b.branch!.name, undefined, {
+        numeric: true,
+        sensitivity: "base",
+      }),
+    ),
 );
 const emit = defineEmits<{
   switch: [b: Branch];
@@ -51,7 +78,29 @@ function toggle(path: string) {
 </script>
 
 <template>
-  <template v-for="n in nodes" :key="n.path">
+  <!-- 平铺模式：只有根实例会用（flat 由 App 传给一级树），一列到底、没有文件夹行。
+       缩进取一级栏的内边距，与目录树分支行的起点对齐。 -->
+  <template v-if="flat">
+    <li
+      v-for="n in flatLeaves"
+      :key="n.path"
+      :class="[
+        'relative flex cursor-pointer items-center gap-1 py-1.5 pr-3 transition-colors duration-fast hover:bg-hover',
+        n.branch!.current && 'font-semibold text-primary',
+      ]"
+      :style="{ paddingLeft: TREE_BASE + 'px', lineHeight: ROW_LEADING }"
+      :title="`${n.branch!.name}${n.branch!.current ? '（当前分支）' : '（单击切换 · 右键更多操作）'}`"
+      @click="!n.branch!.current && emit('switch', n.branch!)"
+      @contextmenu.prevent="emit('menu', n.branch!, $event.clientX, $event.clientY)"
+    >
+      <span class="truncate">{{ n.branch!.name }}</span>
+      <span class="ml-auto shrink-0 pl-1 text-2xs leading-none tabular-nums">
+        <span v-if="n.branch!.ahead" class="mr-0.5 text-[var(--c-mod)]">↑{{ n.branch!.ahead }}</span>
+        <span v-if="n.branch!.behind" class="text-[var(--c-conf)]">↓{{ n.branch!.behind }}</span>
+      </span>
+    </li>
+  </template>
+  <template v-else v-for="n in nodes" :key="n.path">
     <!-- 中间节点：可折叠 -->
     <template v-if="n.children.length">
       <div

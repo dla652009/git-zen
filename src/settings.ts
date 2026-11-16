@@ -17,6 +17,10 @@ export interface Settings {
   mrAiGen: "on" | "off";
   /** 变更列表视图：目录树 / 平铺。放在设置里而不是组件内，这样能跨重启保留 */
   changeView: "tree" | "flat";
+  /** 分支面板视图：目录树（按 / 分层折叠）/ 平铺（完整分支名一行一条）。
+   *  与 changeView 同理放设置里，跨重启保留；两者互相独立 —— 变更列表想平铺、
+   *  分支想分层是常见组合，不该被同一个开关绑住 */
+  branchView: "tree" | "flat";
   /** 推送前先列出这次要推哪些提交。推送是唯一一个「做了就收不回」的日常操作，
    *  也是工具栏上唯一没有确认的按钮；嫌烦可在 设置 › 个性化 关掉 */
   pushPreview: boolean;
@@ -59,6 +63,7 @@ const DEFAULTS: Settings = {
   aiEnabled: "on",
   mrAiGen: "off",
   changeView: "flat",
+  branchView: "tree",
   pushPreview: true,
 };
 
@@ -98,6 +103,10 @@ function load(): Settings {
       saved.changeView === "flat" || saved.changeView === "tree"
         ? saved.changeView
         : DEFAULTS.changeView,
+    branchView:
+      saved.branchView === "flat" || saved.branchView === "tree"
+        ? saved.branchView
+        : DEFAULTS.branchView,
     // 缺省即开：老用户的 localStorage 里没有这个键，不该因此少掉预览
     pushPreview: saved.pushPreview !== false,
   };
