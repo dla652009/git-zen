@@ -22,7 +22,24 @@ function load(): Workflow[] {
   const raw = readRaw();
   if (raw === null || raw === "") return seedWorkflows();
   const list = parseJson<unknown>(raw, null);
-  return Array.isArray(list) ? (list as Workflow[]) : seedWorkflows();
+  return Array.isArray(list) ? dropLegacyFields(list as Workflow[]) : seedWorkflows();
+}
+
+/**
+ * 剥掉已经不在数据模型里的字段。
+ * `skipIfMissing` 曾经是删除步骤的配置项，现在语义写死成「不存在就跳过」；
+ * 老配置里留着它不影响执行（执行器不再读），但会跟着「导出」跑到别人的文件里，
+ * 让人以为那是个还能配的东西。
+ */
+function dropLegacyFields(list: Workflow[]): Workflow[] {
+  for (const wf of list) {
+    for (const s of wf.steps) {
+      if (s.kind === "deleteBranch" || s.kind === "deleteRemoteBranch") {
+        delete (s as { skipIfMissing?: boolean }).skipIfMissing;
+      }
+    }
+  }
+  return list;
 }
 
 export const workflows = reactive<Workflow[]>(load());

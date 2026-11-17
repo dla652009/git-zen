@@ -367,11 +367,8 @@ export function useWorkflowRun(opts: {
         const exact = local.find((b) => b.name === name);
         const ci = local.filter((b) => b.name.toLowerCase() === name.toLowerCase());
         const hit = exact ?? (ci.length === 1 ? ci[0] : undefined);
-        if (!hit) {
-          // 「有就删」的清理步骤：分支本来就不在，跳过而不是卡住整条流程
-          if (step.skipIfMissing) return `分支「${name}」不存在，跳过`;
-          throw new Error(`分支「${name}」不存在：检查名字拼写（大小写也要一致）`);
-        }
+        // 清理步骤是「有就删」的语义：本来就不在 = 目的已达成，跳过而不是卡住整条流程
+        if (!hit) return `分支「${name}」不存在，跳过`;
         const st = await api.status(path);
         if (hit.name === st.branch) {
           throw new Error(
@@ -412,7 +409,8 @@ export function useWorkflowRun(opts: {
               `远程上没有「${name}」：这一步填远程上的分支名，不要带 origin/ 前缀 —— 要删 ${name} 就填 ${plain}`,
             );
           }
-          if (missing && step.skipIfMissing) return `远程分支「${name}」不存在，跳过`;
+          // 与本地删除同一语义：远程上本来就没有 = 目的已达成
+          if (missing) return `远程分支「${name}」不存在，跳过`;
           throw e;
         }
         return;

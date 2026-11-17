@@ -291,8 +291,6 @@ const newStepPrefix = ref("");
 const newStepLabel = ref("");
 // 「新建分支」写死名字：填了就不在运行时要输入
 const newStepBranchName = ref("");
-// 删除类步骤：目标本来就不在时跳过而不是失败
-const newStepSkipIfMissing = ref(false);
 const addStepErr = ref("");
 // 与执行期同一判据：refspec 会删到别的命名空间（如远程 tag），编辑时就不让存
 function isRefspec(name: string): boolean {
@@ -331,7 +329,6 @@ watch(
     newStepMessage,
     newStepLabel,
     newStepBranchName,
-    newStepSkipIfMissing,
   ],
   () => (addStepErr.value = ""),
 );
@@ -369,12 +366,12 @@ function buildDraftStep(): WorkflowStep | null {
     // 清理类：名字写死在流程里（「跑完就删掉 feature/xxx」是固定意图，不适合运行时再问）
     case "deleteBranch": {
       const name = newStepName.value.trim();
-      return name ? { kind: "deleteBranch", name, skipIfMissing: newStepSkipIfMissing.value } : null;
+      return name ? { kind: "deleteBranch", name } : null;
     }
     case "deleteRemoteBranch": {
       const name = newStepName.value.trim();
       if (!name || isRefspec(name)) return null;
-      return { kind: "deleteRemoteBranch", name, skipIfMissing: newStepSkipIfMissing.value };
+      return { kind: "deleteRemoteBranch", name };
     }
   }
 }
@@ -985,18 +982,6 @@ const NAV = [
                               "
                               @update:model-value="(v: string | number) => (s.name = String(v))"
                             />
-                            <label class="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-muted-foreground">
-                              <input
-                                type="checkbox"
-                                class="accent-[var(--primary)]"
-                                :checked="!!s.skipIfMissing"
-                                @change="
-                                  (e: Event) =>
-                                    (s.skipIfMissing = (e.target as HTMLInputElement).checked)
-                                "
-                              />
-                              不存在时跳过
-                            </label>
                           </template>
                           <span
                             v-else
@@ -1083,10 +1068,6 @@ const NAV = [
                               : '要删除的本地分支名'
                           "
                         />
-                        <label class="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-muted-foreground">
-                          <input v-model="newStepSkipIfMissing" type="checkbox" class="accent-[var(--primary)]" />
-                          不存在时跳过
-                        </label>
                       </template>
                       <Button variant="default" size="sm" class="ml-auto h-8 shrink-0" @click="addStep(w)">
                         <Plus class="size-3.5" /> 添加

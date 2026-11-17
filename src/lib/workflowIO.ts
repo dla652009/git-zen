@@ -93,11 +93,9 @@ function parseStep(v: unknown): WorkflowStep | null {
     case "deleteRemoteBranch": {
       const name = str(v.name)?.trim();
       if (!name) return null;
-      return {
-        kind: kind as "deleteBranch" | "deleteRemoteBranch",
-        name,
-        ...(v.skipIfMissing === true ? { skipIfMissing: true } : {}),
-      };
+      // 「不存在就跳过」已写死成默认语义，旧文件里带的 skipIfMissing 字段直接忽略，
+      // 不必因为多了个字段就拒绝导入
+      return { kind: kind as "deleteBranch" | "deleteRemoteBranch", name };
     }
     case "commitPush": {
       const src = str(v.msgSource);

@@ -52,10 +52,20 @@ assert(
   "commitPush ai",
 );
 // 删除类：名字写死进标签，空名字要给可读提示而不是「删除 undefined」
-assert(d({ kind: "deleteBranch", name: "feat/x" }) === "删除本地分支 feat/x（强制 -D）", "deleteBranch");
-assert(d({ kind: "deleteRemoteBranch", name: "feat/x" }) === "删除远程分支 origin/feat/x", "deleteRemoteBranch");
+// 「不存在则跳过」是写死的语义，必须出现在描述里 —— 确认弹窗是用户唯一一次通读的机会
+assert(
+  d({ kind: "deleteBranch", name: "feat/x" }) === "删除本地分支 feat/x（强制 -D，不存在则跳过）",
+  "deleteBranch",
+);
+assert(
+  d({ kind: "deleteRemoteBranch", name: "feat/x" }) === "删除远程分支 origin/feat/x（不存在则跳过）",
+  "deleteRemoteBranch",
+);
 // 名字里已经带了 origin/ 时不能再拼一次：origin/origin/foo 看着像删错了对象
-assert(d({ kind: "deleteRemoteBranch", name: "origin/foo" }) === "删除远程分支 origin/foo", "deleteRemoteBranch 已带前缀");
+assert(
+  d({ kind: "deleteRemoteBranch", name: "origin/foo" }) === "删除远程分支 origin/foo（不存在则跳过）",
+  "deleteRemoteBranch 已带前缀",
+);
 assert(d({ kind: "deleteBranch", name: "  " }).includes("未填分支名"), "deleteBranch 空名字");
 
 // flowNeedsInput：ask 引用与新建分支需要输入，纯固定名流程不需要

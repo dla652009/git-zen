@@ -73,6 +73,13 @@ const allKinds = parseWorkflowFile(
   makeId,
 );
 assert(allKinds.ok && allKinds.workflows[0]!.steps.length === 10, "全部步骤类型都能导入");
+// 旧文件里的 skipIfMissing 已不是配置项（语义写死为「不存在就跳过」），
+// 但多一个字段不该让导入失败——兼容旧导出文件
+if (allKinds.ok) {
+  const del = allKinds.workflows[0]!.steps[5] as { kind: string; skipIfMissing?: boolean };
+  assert(del.kind === "deleteBranch", "删除步骤类型正确");
+  assert(del.skipIfMissing === undefined, "旧字段被丢弃，不留在步骤里");
+}
 
 // ---- 非法内容：必须挡住 ----
 assert(!parseWorkflowFile("不是 json", makeId).ok, "非 JSON");

@@ -24,11 +24,12 @@ export type WorkflowStep =
   // 写死时不再弹输入框 —— 每次跑都要手打同一个名字纯属浪费。
   | { kind: "createBranch"; prefix?: string; name?: string }
   // 清理类原语：名字在编辑流程时写死（「跑完删掉 feature/xxx」是固定意图），强制 -D。
-  // skipIfMissing：分支本来就不在时跳过而不是失败 —— 清理步骤常常是「有就删」的意图，
+  // 目标不存在时**跳过**而不是失败：清理步骤常常是「有就删」的意图，
   // 第一次跑已经删掉了、重跑或换个仓库再跑时不该卡住整条流程。
-  | { kind: "deleteBranch"; name: string; skipIfMissing?: boolean }
+  // 这条语义写死，不做成配置 —— 一个「有就删」的清理动作没有「不存在就报错」的合理场景。
+  | { kind: "deleteBranch"; name: string }
   // 远程删除固定走 origin：多远程的仓库极少见，需要时先手动 fetch 确认
-  | { kind: "deleteRemoteBranch"; name: string; skipIfMissing?: boolean }
+  | { kind: "deleteRemoteBranch"; name: string }
   | { kind: "switchBack" };
 
 export interface Workflow {
@@ -67,13 +68,15 @@ export function describeStep(s: WorkflowStep, startBranch?: string): string {
     }
     case "switchBack":
       return `切回起始分支${startBranch ? `（${startBranch}）` : ""}`;
+    // 「不存在则跳过」写在这里：确认弹窗是用户唯一一次通读整套动作的机会，
+    // 让他提前知道「这条不会因为分支已删而失败」
     case "deleteBranch":
-      return `删除本地分支 ${s.name.trim() || "（未填分支名）"}（强制 -D）`;
+      return `删除本地分支 ${s.name.trim() || "（未填分支名）"}（强制 -D，不存在则跳过）`;
     case "deleteRemoteBranch": {
       const name = s.name.trim();
       // 名字已带 origin/ 就原样显示：拼两遍会写成 origin/origin/foo，看着像删错了对象
       const full = name.startsWith("origin/") ? name : `origin/${name}`;
-      return `删除远程分支 ${name ? full : "（未填分支名）"}`;
+      return `删除远程分支 ${name ? full : "（未填分支名）"}（不存在则跳过）`;
     }
     case "commitPush":
       return s.msgSource === "ai"
