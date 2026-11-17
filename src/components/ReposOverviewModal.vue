@@ -18,7 +18,7 @@ import { computed, ref, watch } from "vue";
 import { ChevronDown, Folder, List, ListTree, Play, Workflow as WorkflowIcon } from "@lucide/vue";
 import { Button, ContextMenu, Spinner, Tooltip } from "@/components/ui";
 import type { MenuItem } from "@/components/ui";
-import { splitByGroup, UNGROUPED_KEY } from "@/lib/repoGroups";
+import { pickState, splitByGroup, togglePaths, UNGROUPED_KEY } from "@/lib/repoGroups";
 
 // 全部已打开仓库的状态总览：多仓库时要一屏看完谁落后、谁有未提交改动，
 // 并支持一次性拉取。数据与拉取动作留在 App。
@@ -92,11 +92,33 @@ function toggle(path: string) {
     ? picked.value.filter((p) => p !== path)
     : [...picked.value, path];
 }
+// 全选与按组勾选共用同一套三态判定：两套实现迟早会分叉
+// （一个按数量比、一个按覆盖判断，就会在「有已关闭仓库残留」时给出不同结论）
 const allPicked = computed(
-  () => props.rows.length > 0 && picked.value.length === props.rows.length,
+  () => pickState(props.rows.map((r) => r.path), picked.value) === "all",
 );
 function toggleAll() {
-  picked.value = allPicked.value ? [] : props.rows.map((r) => r.path);
+  picked.value = togglePaths(
+    picked.value,
+    props.rows.map((r) => r.path),
+    props.rows.map((r) => r.path),
+  );
+}
+
+// 按组勾选：三态（全选 / 部分 / 未选）判定与切换都在 lib/repoGroups.ts，
+// 那里有自检 —— 「部分选中」的边界最容易写错，而错了只是勾选看起来怪，不会报错
+const sectionState = (sec: { rows: RepoOverviewRow[] }) =>
+  pickState(
+    sec.rows.map((r) => r.path),
+    picked.value,
+  );
+function toggleSectionPicked(sec: { rows: RepoOverviewRow[] }) {
+  // 顺序按 props.rows：批量执行时按这个顺序派发，稳定顺序才好对照进度
+  picked.value = togglePaths(
+    picked.value,
+    sec.rows.map((r) => r.path),
+    props.rows.map((r) => r.path),
+  );
 }
 
 const menuPos = ref<{ x: number; y: number } | null>(null);
@@ -160,7 +182,7 @@ const menuItems = computed<MenuItem[]>(() => [
             type="checkbox"
             class="size-3.5 accent-[var(--primary)]"
             :checked="allPicked"
-            :indeterminate.prop="picked.length > 0 && !allPicked"
+            :indeterminate.prop="pickState(rows.map((r) => r.path), picked) === 'some'"
             @change="toggleAll"
           >
           全选
@@ -233,34 +255,48 @@ const menuItems = computed<MenuItem[]>(() => [
         <!-- 分组：按选项卡的分组与顺序分节，可折叠 -->
         <template v-else>
           <div v-for="sec in sections" :key="sec.key" class="mb-0.5">
-            <button
-              type="button"
-              class="flex w-full cursor-pointer items-center gap-1.5 rounded-sm px-2 py-1 text-2xs font-semibold tracking-wide text-muted-foreground transition-colors duration-fast hover:bg-hover"
-              :aria-expanded="!collapsed.has(sec.key)"
-              @click="toggleSection(sec.key)"
+            <!-- 组头拆成 div：里面要并排放「勾选」「折叠」两个控件，
+                 嵌套按钮不合法（按钮里再放 input 也是同样的毛病） -->
+            <div
+              class="flex w-full items-center gap-1.5 rounded-sm px-2 py-1 text-2xs font-semibold tracking-wide text-muted-foreground transition-colors duration-fast hover:bg-hover"
             >
-              <ChevronDown
-                class="size-3 shrink-0 transition-transform duration-fast"
-                :class="collapsed.has(sec.key) && '-rotate-90'"
-              />
-              <Folder v-if="sec.key !== UNGROUPED_KEY" class="size-3 shrink-0 text-primary" />
-              <span class="min-w-0 truncate">{{ sec.label }}</span>
-              <span class="shrink-0 tabular-nums font-normal">{{ sec.rows.length }}</span>
-              <span class="flex-1" />
-              <!-- 折叠着也能看出这组有没有活要干 -->
-              <span
-                v-if="sec.dirty"
-                class="shrink-0 rounded-xs bg-[var(--badge-danger-bg)] px-1 tabular-nums text-[var(--badge-danger-fg)]"
+              <input
+                type="checkbox"
+                class="size-3 shrink-0 cursor-pointer accent-[var(--primary)]"
+                :checked="sectionState(sec) === 'all'"
+                :indeterminate.prop="sectionState(sec) === 'some'"
+                :aria-label="`选择「${sec.label}」全部 ${sec.rows.length} 个仓库`"
+                @change="toggleSectionPicked(sec)"
               >
-                {{ sec.dirty }} 变更
-              </span>
-              <span
-                v-if="sec.behind"
-                class="shrink-0 rounded-xs bg-[var(--badge-warning-bg)] px-1 tabular-nums text-[var(--badge-warning-fg)]"
+              <button
+                type="button"
+                class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left"
+                :aria-expanded="!collapsed.has(sec.key)"
+                @click="toggleSection(sec.key)"
               >
-                {{ sec.behind }} 落后
-              </span>
-            </button>
+                <ChevronDown
+                  class="size-3 shrink-0 transition-transform duration-fast"
+                  :class="collapsed.has(sec.key) && '-rotate-90'"
+                />
+                <Folder v-if="sec.key !== UNGROUPED_KEY" class="size-3 shrink-0 text-primary" />
+                <span class="min-w-0 truncate">{{ sec.label }}</span>
+                <span class="shrink-0 tabular-nums font-normal">{{ sec.rows.length }}</span>
+                <span class="flex-1" />
+                <!-- 折叠着也能看出这组有没有活要干 -->
+                <span
+                  v-if="sec.dirty"
+                  class="shrink-0 rounded-xs bg-[var(--badge-danger-bg)] px-1 tabular-nums text-[var(--badge-danger-fg)]"
+                >
+                  {{ sec.dirty }} 变更
+                </span>
+                <span
+                  v-if="sec.behind"
+                  class="shrink-0 rounded-xs bg-[var(--badge-warning-bg)] px-1 tabular-nums text-[var(--badge-warning-fg)]"
+                >
+                  {{ sec.behind }} 落后
+                </span>
+              </button>
+            </div>
             <div v-if="!collapsed.has(sec.key)">
               <div
                 v-for="r in sec.rows"

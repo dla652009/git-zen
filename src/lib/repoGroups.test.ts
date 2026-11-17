@@ -3,7 +3,7 @@
 // 守的是分组切分的三条规则：顺序照抄选项卡、未知组不丢、未分组放最后。
 // 写错任何一条的症状都是「总览和标签栏对不上号」，而这种错不会报错，只能靠断言兜。
 import assert from "node:assert";
-import { splitByGroup, UNGROUPED_KEY } from "./repoGroups.ts";
+import { pickState, splitByGroup, togglePaths, UNGROUPED_KEY } from "./repoGroups.ts";
 
 const row = (path: string, group?: string) => ({ path, group });
 
@@ -57,5 +57,51 @@ assert.deepEqual(splitByGroup([], ["x"]), [], "空仓库列表返回空数组");
 const r6 = splitByGroup([row("/a", " work ")], ["work"]);
 assert.equal(r6.length, 1, "trim 后归入 work 组");
 assert.equal(r6[0]!.key, "work", "key 用 trim 后的名字");
+
+// ---- pickState：三态判定的边界 ----
+assert.equal(pickState([], []), "none", "空集合既不是全选也不是部分");
+assert.equal(pickState([], ["a"]), "none", "空路径列表恒为 none");
+assert.equal(pickState(["/a"], []), "none", "一个都没选");
+assert.equal(pickState(["/a"], ["/a"]), "all", "全选");
+assert.equal(pickState(["/a", "/b"], ["/a"]), "some", "选了一部分");
+assert.equal(pickState(["/a", "/b"], ["/a", "/b"]), "all", "全选了");
+// 集合里有已不存在的 path 时，按「是否覆盖全部」判断而不是比数量
+assert.equal(
+  pickState(["/a", "/b"], ["/a", "/b", "/gone"]),
+  "all",
+  "多余 path 不影响判定（按覆盖算，不按数量）",
+);
+assert.equal(pickState(["/a", "/b"], new Set(["/a", "/b"])), "all", "接受 Set");
+
+// ---- togglePaths：只动这一批，其余保持 ----
+assert.deepEqual(togglePaths([], ["/a", "/b"]), ["/a", "/b"], "从空开始全选这一批");
+assert.deepEqual(
+  togglePaths(["/a", "/b"], ["/a", "/b"]),
+  [],
+  "已全选则整批取消",
+);
+// 无 order 时保持集合插入序：已有的在前，新加的追加
+assert.deepEqual(
+  togglePaths(["/a", "/x"], ["/a", "/b"]),
+  ["/a", "/x", "/b"],
+  "部分选中时补满这一批，别的组不动",
+);
+assert.deepEqual(
+  togglePaths(["/a", "/b", "/x"], ["/a", "/b"]),
+  ["/x"],
+  "整批取消时别的组不受影响",
+);
+// 有 order 时按 order 重排，稳定批量派发顺序
+assert.deepEqual(
+  togglePaths(["/c"], ["/a"], ["/a", "/b", "/c"]),
+  ["/a", "/c"],
+  "按 order 排序",
+);
+// order 里没有的 path 不能被静默丢掉
+assert.deepEqual(
+  togglePaths(["/zzz"], ["/a"], ["/a"]),
+  ["/a", "/zzz"],
+  "order 之外的勾选保留在末尾",
+);
 
 console.log("repoGroups tests passed");
