@@ -30,7 +30,7 @@ import {
   PanelRight,
 } from "@lucide/vue";
 import * as api from "./gitApi";
-import { AI_PROMPTS, abortAi, aiComplete, clipForAI, isAbortError } from "./ai";
+import { AI_PROMPTS, abortAi, aiComplete, aiUnavailableReason, clipForAI, isAbortError } from "./ai";
 import type { Status, LogEntry, Branch, TagEntry, ReflogEntry } from "./gitApi";
 import { parseBranchPrefixes, settings } from "./settings";
 import { workflows } from "./workflowStore";
@@ -72,6 +72,7 @@ import CommandPalette from "./components/CommandPalette.vue";
 import BranchSwitcher from "./components/BranchSwitcher.vue";
 import WorkflowConfirmDialog from "./components/WorkflowConfirmDialog.vue";
 import WorkflowRunDialog from "./components/WorkflowRunDialog.vue";
+import WorkflowAskMessage from "./components/WorkflowAskMessage.vue";
 import WorkflowRunBatchDialog from "./components/WorkflowRunBatchDialog.vue";
 import ReflogModal from "./components/ReflogModal.vue";
 import WorktreeModal from "./components/WorktreeModal.vue";
@@ -282,13 +283,9 @@ const mrPreviewBusy = ref(false);
 const mrPreviewErr = ref("");
 const mrPreviewPrefill = ref(true);
 
-/** AI 是否可用：总开关打开且配置了 Key（本地 Ollama 可留空） */
+/** AI 是否可用。判定收在 ai.ts（工作流执行器也要用同一套，两处判断迟早会分叉） */
 function aiReady(): boolean {
-  if (settings.aiEnabled !== "on") return false;
-  return !!(
-    settings.aiBaseUrl.trim() &&
-    (settings.aiApiKey.trim() || settings.aiBaseUrl.includes("localhost"))
-  );
+  return aiUnavailableReason() === null;
 }
 
 function openMrPreview(src: string, dst: string) {
@@ -1695,6 +1692,8 @@ const {
   wfRunOpen,
   wfBatch,
   wfBatchOpen,
+  wfAsk,
+  answerAsk,
   runFlow,
   runFlowForRepos,
   flowInputsReady,
@@ -2474,6 +2473,9 @@ const overlayLayers: Record<OverlayName, OverlayLayer> = {
   // 整个流程半路无声死掉（「点背景」那条路修过，Esc 这条漏了）。
   // open 只看「弹窗是否可见」而不是「状态是否存在」：执行中被关掉之后，状态还要留着
   // 继续更新，但此时 Esc 不该再命中这一层（否则后面的设置页/总览永远关不掉）
+  // Esc 关手填框 = 取消执行（与点「取消执行」同义），不能只是把它藏起来：
+  // 那个 await 还挂着，执行器永远停在半路
+  flowAsk: { open: () => !!wfAsk.value, close: () => answerAsk(null) },
   flowRun: { open: () => wfRunOpen.value, close: () => closeWfRun() },
   // 批次弹窗同理：执行中 Esc 只收起，不置空 wfBatch
   flowBatch: { open: () => wfBatchOpen.value, close: () => closeWfBatch() },
@@ -3496,6 +3498,9 @@ onUnmounted(() => {
       @close="wfConfirm = null"
       @confirm="confirmFlow()"
     />
+
+    <!-- AI 生成不了提交信息时的手填输入框：执行流此刻真的停住等这一句 -->
+    <WorkflowAskMessage v-model:ask="wfAsk" @answer="answerAsk" />
 
     <!-- 工作流执行进度：渲染在 WorkflowRunDialog.vue -->
     <WorkflowRunDialog

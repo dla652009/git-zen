@@ -5,7 +5,7 @@
 import { ref, type Ref } from "vue";
 import * as api from "../gitApi";
 import type { Status } from "../gitApi";
-import { AI_PROMPTS, aiComplete, clipForAI } from "../ai";
+import { AI_PROMPTS, aiComplete, aiUnavailableReason, clipForAI } from "../ai";
 import { parseBranchPrefixes, settings } from "../settings";
 import { defaultBranchPrefix, flowInputSlots } from "../workflow";
 import type { BranchRef, InputSlot, Workflow, WorkflowStep } from "../workflow";
@@ -124,6 +124,38 @@ export function useWorkflowRun(opts: {
   // 进度弹窗是否可见。执行期间允许把它关掉（多步操作可能跑很久），
   // 状态本身留在 wfRun 里继续更新 —— 早前直接把 wfRun 置空，下一步循环就会读到 null 崩掉
   const wfRunOpen = ref(false);
+
+  /**
+   * AI 生成提交信息失败时的兜底输入框。
+   * 执行流就地停在这一步等用户填 —— 不重跑整条流程（前面的 checkout/merge 已经生效），
+   * 也不假装成功（那会提交一条自动编的信息）。
+   * resolve 得到填写内容 = 继续；null = 用户取消，按失败处理。
+   */
+  const wfAsk = ref<{
+    /** 失败原因，展示在输入框上方 */
+    reason: string;
+    draft: string;
+  } | null>(null);
+  let askResolve: ((v: string | null) => void) | null = null;
+
+  function askCommitMessage(reason: string): Promise<string | null> {
+    // 同时只允许一个：上一步不可能并发执行两次
+    if (askResolve) askResolve(null);
+    wfAsk.value = { reason, draft: "" };
+    return new Promise((resolve) => {
+      askResolve = resolve;
+    });
+  }
+  function answerAsk(value: string | null) {
+    const resolve = askResolve;
+    askResolve = null;
+    wfAsk.value = null;
+    resolve?.(value);
+  }
+  /** 执行被外部中止（切仓库/关弹窗）时，别让一个永远不 resolve 的 Promise 吊着 */
+  function cancelAsk() {
+    if (askResolve) answerAsk(null);
+  }
 
   /**
    * 在**指定仓库**上顺序跑流程步骤：不读 opts.repo / opts.status，起点分支由调用方给。
@@ -265,6 +297,13 @@ export function useWorkflowRun(opts: {
   ): Promise<string | undefined> {
     const refName = (r: BranchRef) =>
       r.mode === "fixed" ? (r.name ?? "") : r.mode === "start" ? startBranch : inputBranch;
+    /** 问用户要一条提交信息；取消则抛错（步骤失败、流程停住，可重试） */
+    async function askWhy(reason: string): Promise<string | null> {
+      const manual = await askCommitMessage(reason);
+      if (manual === null) throw new Error(`${reason}（已取消手动填写）`);
+      return manual.trim();
+    }
+
     // 前端先拦：空分支名会被后端 check_positional 挡成「分支名不能为空」，
     // 前端知道空的原因（游离 HEAD），能说清该怎么办
     const usesStart = step.kind === "switchBack" || ("ref" in step && step.ref?.mode === "start");
@@ -379,27 +418,46 @@ export function useWorkflowRun(opts: {
         return;
       }
       case "commitPush": {
-        const st = await api.status(path);
-        if (!st.files.length) return "无改动，跳过";
-        // 自动全部暂存（git add . 连删除/重命名一起收，免解析 porcelain 路径）
-        await api.stage(path, ["."]);
+        if (!(await api.status(path)).files.length) return "无改动，跳过";
+
+        // 取提交信息的三种来路，优先级：固定信息 → AI → 手填兜底。
+        // AI 这条路上任何一环失败都不直接判死整条流程：前面的 checkout/merge 已经生效，
+        // 为「生成不出信息」丢掉整次执行太亏，改成问用户要一句继续。
         let msg = step.msgSource === "fixed" ? (step.message ?? "").trim() : "";
+
         if (step.msgSource === "ai") {
-          const diff = await api.diff(path, ["."], true);
-          // 统一规范由提示词固定，不再取近期提交推断风格
-          // 生成失败 = 步骤中止（可重跑），不用固定文本兜底
-          msg = await aiComplete(
-            AI_PROMPTS.commitMessage.system(settings.aiCommitLang),
-            `【暂存区 diff】\n${clipForAI(diff)}`,
-          );
+          const why = aiUnavailableReason();
+          if (why) {
+            // 压根没得谈（开关关着/没配 Key）：先把话说清楚，不先暂存再去撞墙
+            msg = (await askWhy(why)) ?? "";
+            await api.stage(path, ["."]);
+          } else {
+            // 自动全部暂存（git add . 连删除/重命名一起收，免解析 porcelain 路径）
+            await api.stage(path, ["."]);
+            const diff = await api.diff(path, ["."], true);
+            try {
+              // 统一规范由提示词固定，不再取近期提交推断风格
+              msg = await aiComplete(
+                AI_PROMPTS.commitMessage.system(settings.aiCommitLang),
+                `【暂存区 diff】\n${clipForAI(diff)}`,
+              );
+            } catch (e) {
+              // 前置检查过了但调用仍失败（网络断、配额耗尽、模型下线）：
+              // 文件已经暂存好了，这时让用户手填一句比整次执行作废划算
+              msg = (await askWhy(`AI 生成失败：${humanize(String(e)).msg}`)) ?? "";
+            }
+          }
+        } else {
+          await api.stage(path, ["."]);
         }
-        // AI 生成最长 30s，是最容易被切仓库的窗口：提交前再校验一次本次执行是否仍有效
-        if (step.msgSource === "ai" && !alive()) {
-          throw new Error("执行期间切换了仓库，工作流已中止");
-        }
+
+        // 手填可能等了几分钟，是最容易被切仓库/切分支的窗口：
+        // 提交前重新取一次分支，别用工位已经过期的快照往错误的分支上推
+        const branchNow = (await api.status(path)).branch;
+        if (!alive()) throw new Error("执行期间切换了仓库，工作流已中止");
         if (!msg) throw new Error("提交信息为空");
         await api.commit(path, msg);
-        await api.push(path, st.branch); // 无上游自动 -u
+        await api.push(path, branchNow); // 无上游自动 -u
         return;
       }
       default:
@@ -640,5 +698,8 @@ export function useWorkflowRun(opts: {
     retryBatchRow,
     resumeBatchSkipped,
     closeWfBatch,
+    // AI 失败兜底：执行流就地停下等用户填一句提交信息
+    wfAsk,
+    answerAsk,
   };
 }

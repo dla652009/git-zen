@@ -120,6 +120,21 @@ function statusToText(status: number): string {
   }
 }
 
+/**
+ * AI 不可用的原因；null = 可用。
+ * 返回原因而不是 boolean：调用点大多要把「为什么不能用」说给用户听，
+ * 「未配置」「已关闭」「缺 Key」三者的处置完全不同。
+ */
+export function aiUnavailableReason(): string | null {
+  if (settings.aiEnabled !== "on") return "AI 功能已关闭（设置 › AI 可开启）";
+  if (!settings.aiBaseUrl.trim()) return "未配置 AI Base URL（设置 › AI）";
+  // 本地服务（Ollama / LM Studio）本来就不需要 Key
+  if (!settings.aiApiKey.trim() && !settings.aiBaseUrl.includes("localhost")) {
+    return "未配置 AI API Key（设置 › AI；本地模型可忽略此项）";
+  }
+  return null;
+}
+
 // 非流式调用：部分模型/中转不支持 SSE，统一一次性返回 + 前端 Spinner
 export async function aiComplete(
   system: string,
