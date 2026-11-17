@@ -6,6 +6,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_opener::init())
+        // 自动更新：启动后由前端调 check()，安装完调用 process 插件的 relaunch()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             git::git_status,
             git::git_log,

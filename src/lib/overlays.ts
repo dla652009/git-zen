@@ -28,6 +28,8 @@ export const overlayOrder = [
   // AI 失败手填框压在进度弹窗之上：执行流此刻停在这一步等它，
   // Esc 该先关它，而且关掉等于「取消执行」，与点「取消执行」同一后果
   "flowAsk",
+  // 更新提示压在最上层：它可能是启动时自己弹出来的，别的弹窗不该盖住它
+  "update",
   "flowRun",
   "flowBatch",
   "settings",

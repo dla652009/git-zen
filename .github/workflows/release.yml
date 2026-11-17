@@ -1,0 +1,63 @@
+name: Release
+
+# 打 tag 即发布：git tag v0.5.0 && git push --tags
+# 自动完成：构建 → 用 updater 私钥签名 → 创建 Release → 上传安装包与 latest.json
+#
+# 需要两个仓库 Secret（Settings › Secrets and variables › Actions）：
+#   TAURI_SIGNING_PRIVATE_KEY          —— `pnpm tauri signer generate` 生成的私钥全文
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD —— 生成时设的密码（空密码就留空字符串）
+# 没有这两个，构建出的包没有签名，updater 会拒绝安装（这是官方的强制校验）。
+
+on:
+  push:
+    tags:
+      - "v*"
+  # 手动触发，方便先验证一遍流程
+  workflow_dispatch:
+
+jobs:
+  release:
+    permissions:
+      # tauri-action 需要写 Release 的权限
+      contents: write
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      # 自检放在构建前：类型错、契约不符、测试挂了就别发出去
+      - name: 自检（契约 + 对比度 + 类型 + 单测 + 构建）
+        run: pnpm verify
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: 构建并发布
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "git-zen ${{ github.ref_name }}"
+          # 从 docs/RELEASE-<版本号>.md 取正文；文件不存在时为空白（不至于因此失败）
+          releaseBody: ""
+          releaseDraft: false
+          prerelease: false
+          # tauri-action 会生成 latest.json 并一并上传，updater 的 endpoint 就指着它
+          args: --bundles nsis

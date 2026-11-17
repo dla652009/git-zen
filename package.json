@@ -13,10 +13,12 @@
   },
   "dependencies": {
     "@lucide/vue": "^1.33.0",
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "^2.12.4",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-http": "^2.5.9",
     "@tauri-apps/plugin-opener": "^2.5.4",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-updater": "^2.14.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "markdown-it": "^15.0.0",
@@ -26,7 +28,7 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
-    "@tauri-apps/cli": "^2",
+    "@tauri-apps/cli": "^2.12.4",
     "@types/markdown-it": "^14.2.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "tailwindcss": "^4.3.3",

@@ -24,3 +24,8 @@ src-tauri/gen/schemas
 Thumbs.db
 .alma-snapshots
 .alma/
+
+# 更新签名私钥：绝不能进仓库（误提交等于把更新通道交给别人）
+*.key
+*.key.pub
+!*.key.example

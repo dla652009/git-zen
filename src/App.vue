@@ -73,6 +73,7 @@ import BranchSwitcher from "./components/BranchSwitcher.vue";
 import WorkflowConfirmDialog from "./components/WorkflowConfirmDialog.vue";
 import WorkflowRunDialog from "./components/WorkflowRunDialog.vue";
 import WorkflowAskMessage from "./components/WorkflowAskMessage.vue";
+import UpdateDialog from "./components/UpdateDialog.vue";
 import WorkflowRunBatchDialog from "./components/WorkflowRunBatchDialog.vue";
 import ReflogModal from "./components/ReflogModal.vue";
 import WorktreeModal from "./components/WorktreeModal.vue";
@@ -146,12 +147,22 @@ import { usePalette, type PaletteResult } from "./composables/usePalette";
 import { useWorkflowRun } from "./composables/useWorkflowRun";
 import { useAiPanel } from "./composables/useAiPanel";
 import { useRepoSession } from "./composables/useRepoSession";
+import { useUpdater } from "./composables/useUpdater";
 import { branchOwners, findSelf, normPath, toRows } from "./lib/worktree";
 import type { WorktreeEntry } from "./gitApi";
 
 // ---- 仓库数据 LRU 缓存：切回最近访问的仓库秒开，容量可在设置-个性化调节 ----
 // 实现见 src/composables/useRepoCache.ts
 const { cacheGet, cachePeek, cachePut, cacheDrop } = useRepoCache();
+// 自动更新：启动时静默检查，有新版本弹窗。状态与下载逻辑都在 composable 里
+const {
+  phase: updatePhase,
+  pending: updatePending,
+  checkForUpdate,
+  installUpdate,
+  later: updateLater,
+  reset: updateReset,
+} = useUpdater();
 
 // ---- 工作树（worktree）：只读表 + 切换。设计见 docs/DESIGN-WORKTREE.md ----
 // 数据由 useRepoSession 的 refresh/activate 统一拉（git worktree list 是纯本地读，与 status
@@ -2577,6 +2588,11 @@ const overlayLayers: Record<OverlayName, OverlayLayer> = {
   // Esc 关手填框 = 取消执行（与点「取消执行」同义），不能只是把它藏起来：
   // 那个 await 还挂着，执行器永远停在半路
   flowAsk: { open: () => !!wfAsk.value, close: () => answerAsk(null) },
+  // Esc 关更新框 = 稍后再说（下载中不给关，半截文件更麻烦）
+  update: {
+    open: () => ["available", "error", "ready"].includes(updatePhase.value.kind),
+    close: () => (updatePhase.value.kind === "available" ? updateLater() : updateReset()),
+  },
   flowRun: { open: () => wfRunOpen.value, close: () => closeWfRun() },
   // 批次弹窗同理：执行中 Esc 只收起，不置空 wfBatch
   flowBatch: { open: () => wfBatchOpen.value, close: () => closeWfBatch() },
@@ -2713,6 +2729,9 @@ onMounted(async () => {
     await refresh();
     fetchOnce();
   }
+  // 更新检查放在最后且不 await：仓库已经能用了才去问服务器，
+  // 网络慢也挡不住用户干活（dev 模式下这个调用内部会直接返回）
+  void checkForUpdate(true);
 });
 
 onUnmounted(() => {
@@ -3600,6 +3619,15 @@ onUnmounted(() => {
       :batch-names="wfConfirm?.targets?.map((t) => t.name)"
       @close="wfConfirm = null"
       @confirm="confirmFlow()"
+    />
+
+    <!-- 自动更新：有新版本 / 下载中 / 安装失败 -->
+    <UpdateDialog
+      v-model:phase="updatePhase"
+      @install="installUpdate()"
+      @later="updateLater()"
+      @retry="installUpdate()"
+      @close="updateReset()"
     />
 
     <!-- AI 生成不了提交信息时的手填输入框：执行流此刻真的停住等这一句 -->
