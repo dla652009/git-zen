@@ -3,7 +3,7 @@ import { computed, reactive, ref, nextTick, onMounted, watch, type Component } f
 import {
   X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe, Workflow as WorkflowIcon, ChevronDown,
   GripVertical, Pin, Pencil, Trash2, TriangleAlert, Copy,
-  GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload, CloudOff, CloudDownload, GitPullRequestCreate,
+  GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload, CloudOff, CloudDownload, GitPullRequestCreate, Info, RefreshCw, Download,
   FileDown,
 } from "@lucide/vue";
 import { VueDraggable } from "vue-draggable-plus";
@@ -24,16 +24,48 @@ import { workflows } from "../workflowStore";
 import { newFlowId, type BranchRef, type Workflow, type WorkflowStep } from "../workflow";
 import { exportFileName, parseWorkflowFile, toFileText, uniqueName } from "../lib/workflowIO";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { Button, Input, Spinner, Select, Switch, Tooltip } from "@/components/ui";
+import { Badge, Button, Input, Spinner, Select, Switch, Tooltip } from "@/components/ui";
 import CommitHeatmap from "./CommitHeatmap.vue";
 
-const props = defineProps<{ repo: string; initialTab?: string }>();
-const emit = defineEmits<{ close: [] }>();
+const props = defineProps<{
+  repo: string;
+  initialTab?: string;
+  /** 当前应用版本（从 Tauri 拿，前端不另存一份避免与 package.json 不同步） */
+  appVersion: string;
+  /**
+   * 待安装的新版本号（已经查到了、还没装）。
+   * 空 = 没有新版本。设置页据此显示徽标与「安装」按钮 —— 不依赖「本次是否手动查过」，
+   * 因为新版本可能是启动时的自动检查发现的。
+   */
+  updateAvailable: string;
+  /** 检查/下载进行中，按钮要禁用并转圈 */
+  updateBusy: boolean;
+  /** 手动检查的即时结果（已是最新 / 出错）；null = 没有可说的 */
+  checkResult: { ok: boolean; text: string } | null;
+}>();
+const emit = defineEmits<{
+  close: [];
+  /** 用户点了「检查更新」—— 由 App 侧驱动 updater（状态在那儿） */
+  "check-update": [];
+  /** 用户在「关于」页点了「安装 X」 */
+  "install-update": [];
+  "open-url": [url: string];
+}>();
 
 // 草稿编辑，保存才写回（写回后 watcher 自动持久化+生效）
 const draft = reactive<Settings>({ ...settings });
-const tab = ref<"user" | "ai" | "appearance" | "personal" | "workflow" | "remote" | "shortcuts">(
-  (props.initialTab as "user" | "ai" | "appearance" | "personal" | "workflow" | "shortcuts") || "user"
+const tab = ref<
+  "user" | "ai" | "appearance" | "personal" | "workflow" | "remote" | "shortcuts" | "about"
+>(
+  (props.initialTab as
+    | "user"
+    | "ai"
+    | "appearance"
+    | "personal"
+    | "workflow"
+    | "remote"
+    | "shortcuts"
+    | "about") || "user"
 );
 
 // AI 连通性自测。原来这件事在「保存」里顺手做，结果是网络一断连设置都改不了——
@@ -531,6 +563,7 @@ const NAV = [
   { id: "workflow", label: "工作流", icon: WorkflowIcon },
   { id: "remote", label: "远程", icon: Globe },
   { id: "shortcuts", label: "快捷键", icon: Keyboard },
+  { id: "about", label: "关于", icon: Info },
 ] as const;
 </script>
 
@@ -1166,7 +1199,7 @@ const NAV = [
           </template>
 
           <!-- 快捷键 -->
-          <template v-else>
+          <template v-else-if="tab === 'shortcuts'">
             <div class="space-y-4">
               <section v-for="g in SHORTCUT_GROUPS" :key="g.title">
                 <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">{{ g.title }}</h3>
@@ -1186,6 +1219,73 @@ const NAV = [
               光标在输入框里时，全局键让给输入法与文本编辑：只保留 Esc、Ctrl + Tab，以及在切换器的搜索框里按
               Ctrl + P / Ctrl + B 把它自己关掉。
             </p>
+          </template>
+
+          <!-- 关于 -->
+          <template v-else>
+            <section>
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">版本</h3>
+              <div class="flex items-center gap-2">
+                <span class="text-sm font-medium tabular-nums">Git Zen {{ appVersion || "—" }}</span>
+                <Badge v-if="updateAvailable" variant="info">{{ updateAvailable }}</Badge>
+              </div>
+              <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
+                启动时自动检查更新，之后每 6 小时复查一次。检查失败不会打扰你。
+              </p>
+              <div class="mt-3 flex flex-wrap items-center gap-2">
+                <!-- 有待装版本时，主操作是「安装」而不是「检查」 -->
+                <Button
+                  v-if="updateAvailable && !updateBusy"
+                  variant="default"
+                  size="sm"
+                  @click="emit('install-update')"
+                >
+                  <Download class="size-3.5" /> 安装 {{ updateAvailable }}
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  :disabled="updateBusy"
+                  @click="emit('check-update')"
+                >
+                  <Spinner v-if="updateBusy" :size="12" />
+                  <RefreshCw v-else class="size-3.5" />
+                  {{ updateBusy ? "检查中…" : "检查更新" }}
+                </Button>
+                <span
+                  v-if="checkResult"
+                  class="min-w-0 flex-1 truncate text-xs"
+                  :class="checkResult.ok ? 'text-muted-foreground' : 'text-destructive'"
+                  :title="checkResult.text"
+                >
+                  {{ checkResult.text }}
+                </span>
+              </div>
+            </section>
+
+            <section class="mt-5">
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">链接</h3>
+              <div class="flex flex-col items-start gap-1.5">
+                <button
+                  class="cursor-pointer text-xs text-primary hover:underline"
+                  @click="emit('open-url', 'https://github.com/dla652009/git-zen')"
+                >
+                  GitHub 仓库
+                </button>
+                <button
+                  class="cursor-pointer text-xs text-primary hover:underline"
+                  @click="emit('open-url', 'https://github.com/dla652009/git-zen/releases')"
+                >
+                  更新日志 / 历史版本
+                </button>
+                <button
+                  class="cursor-pointer text-xs text-primary hover:underline"
+                  @click="emit('open-url', 'https://github.com/dla652009/git-zen/issues')"
+                >
+                  问题反馈
+                </button>
+              </div>
+            </section>
           </template>
         </div>
 

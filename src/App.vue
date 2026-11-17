@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -157,12 +158,45 @@ const { cacheGet, cachePeek, cachePut, cacheDrop } = useRepoCache();
 // 自动更新：启动时静默检查，有新版本弹窗。状态与下载逻辑都在 composable 里
 const {
   phase: updatePhase,
-  pending: updatePending,
+  availableVersion: updateAvailableVersion,
   checkForUpdate,
   installUpdate,
   later: updateLater,
   reset: updateReset,
+  start: updaterStart,
+  stop: updaterStop,
 } = useUpdater();
+
+// 关于页用：版本号从 Tauri 取（唯一来源是 tauri.conf.json，不在前端再存一份）
+const appVersion = ref("");
+void getVersion()
+  .then((v) => (appVersion.value = v))
+  .catch(() => {});
+
+/** 手动「检查更新」的即时回执。自动检查不写这里 —— 免得设置页突然冒出一句几小时前的结果 */
+const updateCheckResult = ref<{ ok: boolean; text: string } | null>(null);
+async function onManualCheckUpdate() {
+  updateCheckResult.value = null;
+  if (updatePhase.value.kind === "checking") return;
+  const before = updatePhase.value;
+  // 已经有待装的新版本：再查一次也不会变，直接提示去安装
+  if (before.kind === "available") {
+    updateCheckResult.value = { ok: true, text: `发现新版本 ${before.version}，可点弹窗安装` };
+    return;
+  }
+  await checkForUpdate(false);
+  const p = updatePhase.value;
+  if (p.kind === "latest") {
+    updateCheckResult.value = { ok: true, text: `已是最新版本（${p.version}）` };
+    updateReset(); // 收掉内部状态，别让下次打开设置页还挂着这句话
+    return;
+  }
+  if (p.kind === "available") {
+    // 设置页开着时 UpdateDialog 被抑制，这里得给一句「发现了什么 + 下一步去哪」
+    updateCheckResult.value = { ok: true, text: `发现新版本 ${p.version}` };
+  }
+  if (p.kind === "error") updateCheckResult.value = { ok: false, text: p.message };
+}
 
 // ---- 工作树（worktree）：只读表 + 切换。设计见 docs/DESIGN-WORKTREE.md ----
 // 数据由 useRepoSession 的 refresh/activate 统一拉（git worktree list 是纯本地读，与 status
@@ -2730,8 +2764,9 @@ onMounted(async () => {
     fetchOnce();
   }
   // 更新检查放在最后且不 await：仓库已经能用了才去问服务器，
-  // 网络慢也挡不住用户干活（dev 模式下这个调用内部会直接返回）
-  void checkForUpdate(true);
+  // 网络慢也挡不住用户干活（dev 模式下这个调用内部会直接返回）。
+  // start() 同时挂上 6 小时一次的定时复查
+  updaterStart();
 });
 
 onUnmounted(() => {
@@ -2739,6 +2774,7 @@ onUnmounted(() => {
   window.removeEventListener("keydown", onGlobalKeydown);
   window.removeEventListener("resize", clampSidebars);
   endResize(); // 拖动中途卸载（热更新/退出）别把监听和 col-resize 光标留下
+  updaterStop(); // 定时复查也要停，否则热更新后旧实例还在偷偷查
 });
 </script>
 
@@ -3380,6 +3416,13 @@ onUnmounted(() => {
       v-if="showSettings"
       :repo="repo"
       :initial-tab="showSettingsTab"
+      :app-version="appVersion"
+      :update-available="updateAvailableVersion"
+      :update-busy="updatePhase.kind === 'checking' || updatePhase.kind === 'downloading'"
+      :check-result="updateCheckResult"
+      @check-update="onManualCheckUpdate"
+      @install-update="installUpdate()"
+      @open-url="(u: string) => openUrl(u).catch(() => {})"
       @close="showSettings = false"
     />
     </Transition>
@@ -3621,8 +3664,11 @@ onUnmounted(() => {
       @confirm="confirmFlow()"
     />
 
-    <!-- 自动更新：有新版本 / 下载中 / 安装失败 -->
+    <!-- 自动更新：有新版本 / 下载中 / 安装失败。
+         设置页开着时不弹：用户正在「关于」页里主动查，结果该在那一页里显示，
+         再盖一个大窗等于让他关两次。下载/安装中仍然要弹（进度必须看得见）。 -->
     <UpdateDialog
+      v-if="!showSettings || updatePhase.kind === 'downloading' || updatePhase.kind === 'ready'"
       v-model:phase="updatePhase"
       @install="installUpdate()"
       @later="updateLater()"
