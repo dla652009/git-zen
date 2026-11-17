@@ -16,6 +16,7 @@ import {
   ChevronRight,
   GitBranch,
   GitBranchPlus,
+  FolderGit2,
   Cloud,
   Tag,
   Workflow as WorkflowIcon,
@@ -1941,15 +1942,25 @@ function openWorktreeAt(path: string) {
 const worktreeOpenedPaths = computed(
   () => new Set(repos.value.map((r) => normPath(r.path))) as ReadonlySet<string>,
 );
-// 标签栏用：从属工作树 → 它的主工作树路径（只收非主工作树，主工作树不标识）
-const worktreeMainMap = computed(() => {
+// 标签栏与顶栏共用：工作树路径 → 身份（是否主工作树 / 归属的主工作树路径）。
+// 主工作树也要进表 —— 只标从属的话，用户看到两个 tab 一个好认一个不好认，
+// 仍然没法回答「哪个是我 clone 的原始目录」。
+const worktreeInfoMap = computed(() => {
   const main = worktrees.value.find((w) => w.is_main);
-  const map = new Map<string, string>();
-  if (!main) return map;
+  const mainPath = main?.path ?? "";
+  const map = new Map<string, { isMain: boolean; mainPath: string }>();
   for (const w of worktrees.value) {
-    if (!w.is_main) map.set(normPath(w.path), main.path);
+    map.set(normPath(w.path), { isMain: w.is_main, mainPath });
   }
   return map;
+});
+
+// 当前仓库的工作树身份（顶栏用）：null = 这个仓库没有工作树信息（单目录仓库）
+const currentWorktreeInfo = computed(() => {
+  const info = worktreeInfoMap.value.get(normPath(repo.value));
+  if (!info) return null;
+  // 数量与「是不是唯一」要现算：只有一个目录时不该大张旗鼓地标「主」
+  return { ...info, count: worktrees.value.length };
 });
 // 选项卡右键里的「工作树…」：目标可能不是当前仓库。切过去再打开是最省事的语义
 // （用户点的是那个 tab 的菜单，期待看到的就是它的工作树），但切仓库是导航、不是写操作，
@@ -2625,6 +2636,33 @@ onUnmounted(() => {
           <span v-if="repoCrumb.parent" class="shrink-0 truncate text-muted-foreground">{{ repoCrumb.parent }}</span>
           <span v-if="repoCrumb.parent" class="shrink-0 text-muted-foreground">›</span>
           <span class="truncate font-medium text-foreground">{{ repoCrumb.name }}</span>
+          <!-- 工作树身份：切到哪个目录后，顶栏必须能立刻回答「我现在在哪一份里」。
+               只有真的有多份（count > 1）时才标 —— 单目录仓库标「主工作树」是噪音 -->
+          <template v-if="currentWorktreeInfo && currentWorktreeInfo.count > 1">
+            <FolderGit2
+              v-if="currentWorktreeInfo.isMain"
+              class="size-3 shrink-0 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <GitBranch
+              v-else
+              class="size-3 shrink-0 text-[var(--badge-info-fg)]"
+              aria-hidden="true"
+            />
+            <span
+              class="shrink-0 self-center rounded-xs px-1 text-2xs leading-4"
+              :class="
+                currentWorktreeInfo.isMain
+                  ? 'bg-muted text-muted-foreground'
+                  : 'bg-[var(--badge-info-bg)] text-[var(--badge-info-fg)]'
+              "
+              :title="
+                currentWorktreeInfo.isMain
+                  ? '主工作树：其他工作树与它共享同一个 .git'
+                  : `工作树：属于 ${currentWorktreeInfo.mainPath}`
+              "
+            >{{ currentWorktreeInfo.isMain ? "主工作树" : "工作树" }}</span>
+          </template>
         </span>
       </Tooltip>
       <span v-else class="text-xs text-muted-foreground">未打开仓库</span>
@@ -2707,7 +2745,7 @@ onUnmounted(() => {
       :is-group-active="isGroupActive"
       :folder-highlighted="folderHighlighted"
       :on-bar-move="onBarMove"
-      :worktree-of="worktreeMainMap"
+      :worktree-info="worktreeInfoMap"
       @switch-repo="switchRepo"
       @close-tab="askCloseTab"
       @folder-toggle="toggleFolder"
