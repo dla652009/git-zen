@@ -14,6 +14,10 @@ export interface BranchRef {
 // 步骤原语（全部复用现有 git 命令，零新增 Rust）
 export type WorkflowStep =
   | { kind: "checkout"; ref: BranchRef }
+  // 从 origin 检出分支（名字写死）。与 checkout 的区别：checkout 只管「切到这个名字」，
+  // 本地已有同名分支时只切换、不保证是最新；这个节点保证「拿到远程那份」：
+  // 先 fetch，本地没有就建跟踪分支，本地已落后则快进（有本地新提交就只切换，不丢东西）。
+  | { kind: "checkoutRemote"; name: string }
   | { kind: "pull" }
   // 有未提交改动时自动全部暂存再提交推送；工作区干净时跳过。
   // AI 生成信息失败 = 步骤失败中止（可重跑）
@@ -55,6 +59,8 @@ export function describeStep(s: WorkflowStep, startBranch?: string): string {
   switch (s.kind) {
     case "checkout":
       return `切换到 ${refLabel(s.ref)}`;
+    case "checkoutRemote":
+      return `检出远程分支 ${s.name.trim() ? `origin/${s.name.trim()}` : "（未填分支名）"}（先拉取，落后则快进）`;
     case "pull":
       return "拉取远程更新";
     case "push":

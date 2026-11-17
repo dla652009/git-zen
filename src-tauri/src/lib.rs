@@ -21,6 +21,7 @@ pub fn run() {
             git::git_push_force,
             git::git_pull,
             git::git_checkout,
+            git::git_checkout_remote,
             git::git_branch_create,
             git::git_branch_delete,
             git::git_branch_rename,

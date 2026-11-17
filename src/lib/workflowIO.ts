@@ -27,6 +27,7 @@ export type ImportResult =
 
 const STEP_KINDS = [
   "checkout",
+  "checkoutRemote",
   "pull",
   "push",
   "merge",
@@ -73,6 +74,10 @@ function parseStep(v: unknown): WorkflowStep | null {
     case "merge": {
       const ref = parseRef(v.ref);
       return ref ? { kind: kind as "checkout" | "merge", ref } : null;
+    }
+    case "checkoutRemote": {
+      const name = str(v.name)?.trim();
+      return name ? { kind: "checkoutRemote", name } : null;
     }
     case "pull":
       return { kind: "pull" };

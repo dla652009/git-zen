@@ -107,6 +107,10 @@ export const pushForce = (repo: string, branch: string) =>
 export const pull = (repo: string) => invoke<void>("git_pull", { repo });
 export const checkout = (repo: string, name: string) =>
   invoke<void>("git_checkout", { repo, name });
+/** 从 origin 检出分支：本地没有就建跟踪分支，落后就快进，有本地提交只切换。
+ *  返回一句人话说明做了什么（「已快进」/「有 N 个未推送提交」）。 */
+export const checkoutRemote = (repo: string, name: string) =>
+  invoke<string>("git_checkout_remote", { repo, name });
 export const branchCreate = (repo: string, name: string) =>
   invoke<void>("git_branch_create", { repo, name });
 export const branchDelete = (repo: string, name: string, force: boolean) =>

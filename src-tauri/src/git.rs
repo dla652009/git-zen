@@ -897,6 +897,67 @@ pub async fn git_checkout(repo: String, name: String) -> Result<(), String> {
     .await
 }
 
+/// 从 origin 检出分支，保证拿到「远程那份」。返回一句人话说明做了什么。
+///
+/// 与 git_checkout 的区别：`git checkout feat/x` 在本地已有同名分支时只切换、不更新，
+/// 用户以为拿到了最新的、其实停在旧提交上。这里按三种情况处理：
+/// 1. 本地没有 → 建同名跟踪分支（checkout -b <name> --track origin/<name>）
+/// 2. 本地有且落后、无本地新提交 → 快进（merge --ff-only）
+/// 3. 本地有本地新提交 → 只切换，不动它（拒绝丢别人的提交）
+///
+/// 不先 fetch：调用方（工作流节点）自己会 fetch，这样「fetch 失败」与「检出失败」
+/// 能分别报错，用户看得出是网络问题还是分支问题。
+#[tauri::command]
+pub async fn git_checkout_remote(repo: String, name: String) -> Result<String, String> {
+    offload(move || {
+        let name = name.trim().to_string();
+        check_positional("分支名", &name)?;
+        let tracking = format!("origin/{name}");
+
+        // 远程分支必须存在：本地凭空 checkout 一个不存在的名字只会得到
+        // pathspec 错误，说不清是「远程没这个分支」还是「名字写错了」
+        let refs = run(&repo, &["for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"])?;
+        if !refs.lines().any(|l| l.trim() == tracking) {
+            return Err(format!(
+                "远程上没有分支 {name}：检查名字拼写，或先 fetch 确认它是否已被删除"
+            ));
+        }
+
+        let locals = run(&repo, &["for-each-ref", "--format=%(refname:short)", "refs/heads"])?;
+        let has_local = locals.lines().any(|l| l.trim() == name);
+
+        if !has_local {
+            // -b 在前，--end-of-options 紧贴位置参数：反过来的话 -b 会被当成 pathspec
+            run(&repo, &["checkout", "-b", &name, "--track", "--end-of-options", &tracking])?;
+            return Ok(format!("已从 {tracking} 建立本地分支 {name}"));
+        }
+
+        // 本地已有：先切过去（此时工作区可能要带着改动过去，交给 git 判断）
+        run(&repo, &["checkout", "--end-of-options", &name])?;
+
+        // 有本地新提交就不能快进 —— 快进本来也会被 git 拒绝，但这里提前判断，
+        // 好给一句「为什么没同步」而不是一个 fast-forward 的英文报错
+        let ahead = run(&repo, &["rev-list", "--count", &format!("{tracking}..{name}")])?;
+        if ahead.trim() != "0" {
+            return Ok(format!(
+                "已切到本地分支 {name}（它有 {} 个未推送的提交，未与远程同步）",
+                ahead.trim()
+            ));
+        }
+
+        // --ff-only：这条路径只该快进，任何需要真正合并的情况都说明判断有误，直接报错
+        match run(&repo, &["merge", "--ff-only", "--no-edit", &tracking]) {
+            Ok(_) => Ok(format!("已切到 {name} 并快进到 {tracking}")),
+            // 已经是同一个提交时 git 会说 Already up to date，正常
+            Err(e) if e.contains("Already up to date") || e.contains("Already up-to-date") => {
+                Ok(format!("已切到 {name}（与 {tracking} 一致）"))
+            }
+            Err(e) => Err(e),
+        }
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn git_branch_create(repo: String, name: String) -> Result<(), String> {
     offload(move || {

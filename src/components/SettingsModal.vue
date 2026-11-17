@@ -3,7 +3,7 @@ import { computed, reactive, ref, nextTick, onMounted, watch, type Component } f
 import {
   X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe, Workflow as WorkflowIcon, ChevronDown,
   GripVertical, Pin, Pencil, Trash2, TriangleAlert, Copy,
-  GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload, CloudOff,
+  GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload, CloudOff, CloudDownload,
   FileDown,
 } from "@lucide/vue";
 import { VueDraggable } from "vue-draggable-plus";
@@ -258,6 +258,7 @@ function pinHint(w: Workflow): string {
 // 步骤类型图标：流程骨架一眼可辨，不必读文字
 const STEP_ICONS: Record<WorkflowStep["kind"], Component> = {
   checkout: GitBranch,
+  checkoutRemote: CloudDownload,
   pull: ArrowDownToLine,
   push: ArrowUpFromLine,
   merge: GitMerge,
@@ -308,6 +309,10 @@ function missingHint(): string {
     return "请先填要删除的分支名";
   if (k === "deleteRemoteBranch" && isRefspec(newStepName.value))
     return "远程删除只接受分支名本身（如 feat/x），refs/… / +… / foo:bar 会在执行时被拒";
+  if (k === "checkoutRemote" && !newStepName.value.trim())
+    return "请先填要检出的远程分支名（不带 origin/）";
+  if (k === "checkoutRemote" && isRefspec(newStepName.value))
+    return "只填分支名本身（如 release/dev），不要写 refs/… / +… / foo:bar";
   return "当前配置不完整，请检查后再添加";
 }
 function addStep(w: Workflow) {
@@ -346,6 +351,12 @@ function buildDraftStep(): WorkflowStep | null {
           label: newStepMode.value === "ask" ? newStepLabel.value.trim() || undefined : undefined,
         },
       };
+    case "checkoutRemote": {
+      // 复用分支名输入框：这个节点的名字同样是写死的（不做运行时输入——
+      // 「每次手打同一个远程分支名」与固定名的意图正好相反）
+      const name = newStepName.value.trim();
+      return name ? { kind: "checkoutRemote", name } : null;
+    }
     case "pull":
       return { kind: "pull" };
     case "push":
@@ -377,6 +388,7 @@ function buildDraftStep(): WorkflowStep | null {
 }
 const KIND_LABELS: Record<WorkflowStep["kind"], string> = {
   checkout: "切换分支",
+  checkoutRemote: "检出远程分支",
   pull: "拉取",
   commitPush: "提交推送",
   push: "推送",
@@ -983,6 +995,13 @@ const NAV = [
                               @update:model-value="(v: string | number) => (s.name = String(v))"
                             />
                           </template>
+                          <Input
+                            v-else-if="s.kind === 'checkoutRemote'"
+                            :model-value="s.name"
+                            class="h-7 min-w-0 flex-1 text-xs"
+                            placeholder="远程分支名（不带 origin/，如 release/dev）"
+                            @update:model-value="(v: string | number) => (s.name = String(v))"
+                          />
                           <span
                             v-else
                             class="min-w-0 flex-1 text-xs text-muted-foreground"
@@ -1067,6 +1086,13 @@ const NAV = [
                               ? '远程上的分支名（不带 origin/）'
                               : '要删除的本地分支名'
                           "
+                        />
+                      </template>
+                      <template v-else-if="newStepKind === 'checkoutRemote'">
+                        <Input
+                          v-model="newStepName"
+                          class="h-8 min-w-0 flex-1 text-xs"
+                          placeholder="远程分支名（不带 origin/，如 release/dev）"
                         />
                       </template>
                       <Button variant="default" size="sm" class="ml-auto h-8 shrink-0" @click="addStep(w)">

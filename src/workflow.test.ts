@@ -43,6 +43,17 @@ assert(
   "createBranch 固定名带前缀",
 );
 assert(d({ kind: "switchBack" }, "feat/a") === "切回起始分支（feat/a）", "switchBack");
+// 检出远程分支：展示成 origin/xxx，并说清「先拉取、落后快进」的语义 ——
+// 用户要靠这句话区分它与普通的「切换到」
+assert(
+  d({ kind: "checkoutRemote", name: "release/dev" }) ===
+    "检出远程分支 origin/release/dev（先拉取，落后则快进）",
+  "checkoutRemote",
+);
+assert(
+  d({ kind: "checkoutRemote", name: "  " }).includes("未填分支名"),
+  "checkoutRemote 空名字",
+);
 assert(
   d({ kind: "commitPush", msgSource: "fixed", message: "x" }).includes("固定信息：x"),
   "commitPush fixed",

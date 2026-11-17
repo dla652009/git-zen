@@ -15,6 +15,19 @@ import { toast } from "../components/ui";
 /** 单步状态：pending/running/done/skip/fail；失败标红停住保留弹窗，成功自动关 */
 export type WfStepState = { state: "pending" | "running" | "done" | "skip" | "fail"; note: string };
 
+/**
+ * 一步执行完的结局。
+ * 早前用「返回字符串 = 跳过」表达，但那把两件事混成一个：**跳过**（没做事，如
+ * 「无改动」「分支本来就不存在」）与**成功但有话要说**（如「已快进到远程」）。
+ * 后者被标成 skip 会让整条流程看起来「什么都没做」。
+ */
+export interface StepOutcome {
+  /** 写进步骤行的备注 */
+  note?: string;
+  /** true = 这步没执行实质动作（跳过），进度里显示为 skip */
+  skipped?: boolean;
+}
+
 /** 批次里一个仓库的状态。done/fail 与 WfRunState 里的步骤状态并存：
     整行失败时步骤状态仍保留，用来指出卡在哪一步 */
 export type WfBatchRowState = "pending" | "running" | "done" | "fail" | "skipped";
@@ -189,7 +202,7 @@ export function useWorkflowRun(opts: {
         const needsStart = wf.steps.slice(i + 1).some(
           (s) => s.kind === "switchBack" || ("ref" in s && s.ref.mode === "start"),
         );
-        const note = await execStep(
+        const out = await execStep(
           path,
           wf.steps[i]!,
           inputs[i] ?? "",
@@ -198,8 +211,8 @@ export function useWorkflowRun(opts: {
           needsStart,
           () => guard() === null,
         );
-        st.note = note ?? "";
-        st.state = note ? "skip" : "done";
+        st.note = out.note ?? "";
+        st.state = out.skipped ? "skip" : "done";
       } catch (e) {
         st.state = "fail";
         const h = humanize(String(e));
@@ -294,7 +307,7 @@ export function useWorkflowRun(opts: {
     startBranch: string,
     startNeededLater: boolean,
     alive: () => boolean = () => true,
-  ): Promise<string | undefined> {
+  ): Promise<StepOutcome> {
     const refName = (r: BranchRef) =>
       r.mode === "fixed" ? (r.name ?? "") : r.mode === "start" ? startBranch : inputBranch;
     /** 问用户要一条提交信息；取消则抛错（步骤失败、流程停住，可重试） */
@@ -316,20 +329,31 @@ export function useWorkflowRun(opts: {
       case "checkout":
         // 目标不存在 → git 报错中止（要建分支就在流程里放"新建分支"原语）
         await api.checkout(path, refName(step.ref));
-        return;
+        return {};
+      case "checkoutRemote": {
+        const name = step.name.trim();
+        if (!name) throw new Error("检出远程分支：分支名不能为空");
+        // 先 fetch：这个节点的语义是「拿到远程那份」，用旧的 origin/* 引用就失去意义了。
+        // fetch 失败 = 网络问题，要单独报出来，别让用户以为分支有问题
+        await api.fetchAll(path);
+        const note = await api.checkoutRemote(path, name);
+        // 后端返回人话（已快进 / 有 N 个未推送提交 / 与远程一致）。
+        // 这是**成功**带备注，不是跳过 —— 标成 skip 会让整条流程看起来什么都没做
+        return { note };
+      }
       case "pull":
         await api.pull(path);
-        return;
+        return {};
       case "push": {
         // 现读分支名：流程里前面的 checkout 步骤已经切走了，status.value 还停在流程开始时的值，
         // 拿它当参数会让 git_push 的「无上游自动 -u」给一个不相干的分支建立跟踪
         const st = await api.status(path);
         await api.push(path, st.branch);
-        return;
+        return {};
       }
       case "merge":
         await api.merge(path, refName(step.ref)); // 冲突 → 报错停留，后续步骤不执行
-        return;
+        return {};
       case "createBranch": {
         // 名字写死时直接用（输入槽已经不生成，inputBranch 是空串）；
         // 否则用确认弹窗里当场填的 + 当场选的前缀。
@@ -342,7 +366,7 @@ export function useWorkflowRun(opts: {
         const p = fixed ? "" : inputPrefix.trim();
         if (p && !name.startsWith(p)) name = p + name;
         await api.branchCreate(path, name);
-        return;
+        return {};
       }
       case "switchBack": {
         // 起始分支可能已经被前面的「删除分支」步骤删掉：那时 checkout 只会甩一句英文
@@ -354,7 +378,7 @@ export function useWorkflowRun(opts: {
           );
         }
         await api.checkout(path, startBranch);
-        return;
+        return {};
       }
       case "deleteBranch": {
         const name = step.name.trim();
@@ -368,7 +392,7 @@ export function useWorkflowRun(opts: {
         const ci = local.filter((b) => b.name.toLowerCase() === name.toLowerCase());
         const hit = exact ?? (ci.length === 1 ? ci[0] : undefined);
         // 清理步骤是「有就删」的语义：本来就不在 = 目的已达成，跳过而不是卡住整条流程
-        if (!hit) return `分支「${name}」不存在，跳过`;
+        if (!hit) return { note: `分支「${name}」不存在，跳过`, skipped: true };
         const st = await api.status(path);
         if (hit.name === st.branch) {
           throw new Error(
@@ -381,7 +405,7 @@ export function useWorkflowRun(opts: {
           );
         }
         await api.branchDelete(path, hit.name, true);
-        return;
+        return {};
       }
       case "deleteRemoteBranch": {
         // 远程删除只作用于 origin：push --delete 找不到分支时会直接报错，不会静默成功。
@@ -410,13 +434,13 @@ export function useWorkflowRun(opts: {
             );
           }
           // 与本地删除同一语义：远程上本来就没有 = 目的已达成
-          if (missing) return `远程分支「${name}」不存在，跳过`;
+          if (missing) return { note: `远程分支「${name}」不存在，跳过`, skipped: true };
           throw e;
         }
-        return;
+        return {};
       }
       case "commitPush": {
-        if (!(await api.status(path)).files.length) return "无改动，跳过";
+        if (!(await api.status(path)).files.length) return { note: "无改动，跳过", skipped: true };
 
         // 取提交信息的三种来路，优先级：固定信息 → AI → 手填兜底。
         // AI 这条路上任何一环失败都不直接判死整条流程：前面的 checkout/merge 已经生效，
@@ -456,7 +480,7 @@ export function useWorkflowRun(opts: {
         if (!msg) throw new Error("提交信息为空");
         await api.commit(path, msg);
         await api.push(path, branchNow); // 无上游自动 -u
-        return;
+        return {};
       }
       default:
         // 加了新的步骤原语却漏了执行分支：这里报出来，不要静默「什么都没做」

@@ -58,6 +58,7 @@ const allKinds = parseWorkflowFile(
       name: "全类型",
       steps: [
         { kind: "checkout", ref: { mode: "fixed", name: "master" } },
+        { kind: "checkoutRemote", name: "release/dev" },
         { kind: "pull" },
         { kind: "push" },
         { kind: "merge", ref: { mode: "start" } },
@@ -72,11 +73,11 @@ const allKinds = parseWorkflowFile(
   ]),
   makeId,
 );
-assert(allKinds.ok && allKinds.workflows[0]!.steps.length === 10, "全部步骤类型都能导入");
+assert(allKinds.ok && allKinds.workflows[0]!.steps.length === 11, "全部步骤类型都能导入");
 // 旧文件里的 skipIfMissing 已不是配置项（语义写死为「不存在就跳过」），
 // 但多一个字段不该让导入失败——兼容旧导出文件
 if (allKinds.ok) {
-  const del = allKinds.workflows[0]!.steps[5] as { kind: string; skipIfMissing?: boolean };
+  const del = allKinds.workflows[0]!.steps[6] as { kind: string; skipIfMissing?: boolean };
   assert(del.kind === "deleteBranch", "删除步骤类型正确");
   assert(del.skipIfMissing === undefined, "旧字段被丢弃，不留在步骤里");
 }
@@ -165,6 +166,18 @@ if (round.ok) {
     original[0]!.steps,
     "步骤逐个一致（含嵌套的 ref）",
   );
+}
+
+// ---- 新节点往返：checkoutRemote 带 name，导出后能原样读回来 ----
+const crRound = parseWorkflowFile(
+  toFileText([{ id: "x", name: "cr", steps: [{ kind: "checkoutRemote", name: "release/dev" }] }]),
+  makeId,
+);
+assert(crRound.ok, "checkoutRemote 往返成功");
+if (crRound.ok) {
+  const s = crRound.workflows[0]!.steps[0]!;
+  assert.equal(s.kind, "checkoutRemote", "类型保留");
+  assert.equal((s as { name: string }).name, "release/dev", "分支名保留");
 }
 
 // ---- 名字去重 ----
