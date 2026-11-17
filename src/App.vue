@@ -632,6 +632,28 @@ if (repo.value && !repos.value.some((r) => r.path === repo.value)) {
 const groupList = ref<string[]>(readJsonArray<string>("gz.groups"));
 watch(groupList, (v) => localStorage.setItem("gz.groups", JSON.stringify(v)));
 
+// 隐藏的分组：只影响**标签栏是否显示那个文件夹**，组本身和组内仓库都照旧存在。
+// 单独存一个列表而不并进 groupList 的结构，是为了让「顺序」这件事只有一份来源 ——
+// 分组的拖拽排序全按 groupList 走，加了隐藏标记只会让排序逻辑跟着复杂。
+// 与 groupList 求交集在读取时做：分组删掉后又新建同名时，旧标记不该诈尸。
+const hiddenGroupsRaw = ref<string[]>(readJsonArray<string>("gz.hiddenGroups"));
+watch(hiddenGroupsRaw, (v) => localStorage.setItem("gz.hiddenGroups", JSON.stringify(v)));
+const hiddenGroups = computed(() => {
+  const live = new Set(groupList.value);
+  return new Set(hiddenGroupsRaw.value.filter((g) => live.has(g)));
+});
+function toggleGroupHidden(name: string) {
+  if (hiddenGroups.value.has(name)) {
+    hiddenGroupsRaw.value = hiddenGroupsRaw.value.filter((g) => g !== name);
+    return;
+  }
+  hiddenGroupsRaw.value = [...hiddenGroupsRaw.value, name];
+  // 组内仓库不占标签栏（只有文件夹），所以隐藏文件夹 = 连当前仓库的入口一起没了。
+  // 不阻止（有人就是想收拾干净的标签栏），但必须说一句，否则像点坏了
+  const inside = repos.value.some((r) => r.group === name && r.path === repo.value);
+  if (inside) toast(`当前仓库在「${name}」里：标签栏已隐藏该分组，从分组管理点眼睛图标可恢复`, "info");
+}
+
 interface BarGroup {
   kind: "group";
   name: string;
@@ -643,6 +665,54 @@ interface BarRepo {
 type BarEntry = BarGroup | BarRepo;
 const barOrder = ref<BarEntry[]>(readJsonArray<BarEntry>("gz.barOrder"));
 watch(barOrder, (v) => localStorage.setItem("gz.barOrder", JSON.stringify(v)), { deep: true });
+
+/**
+ * 标签栏实际渲染的条目：从 barOrder 里滤掉隐藏的分组。
+ *
+ * 为什么要过这一层而不是在 barOrder 里删掉隐藏项：barOrder 的顺序是用户拖出来的，
+ * 删掉再补回只能靠猜（连续隐藏两个相邻分组后就再也猜不准原位）。
+ * 所以 barOrder 保留全部条目、渲染时过滤，恢复后原位出现。
+ *
+ * 只有用户**拖动过**才会走 set（纯隐藏/恢复不动 barOrder，隐藏项待在原位）。
+ * 拖过之后 barOrder 里的隐藏项已经和可见项错位，只能按 groupList 顺序重新安置它们。
+ */
+const visibleBarOrder = computed<BarEntry[]>({
+  get: () => barOrder.value.filter((e) => e.kind !== "group" || !hiddenGroups.value.has(e.name)),
+  set: (list) => {
+    const hidden = new Set(
+      barOrder.value
+        .filter((e): e is BarGroup => e.kind === "group" && hiddenGroups.value.has(e.name))
+        .map((e) => e.name),
+    );
+    if (!hidden.size) {
+      barOrder.value = list;
+      return;
+    }
+    // 把隐藏的分组插回「它在 groupList 顺序里该在的位置」：
+    // 找拖拽结果里最后一个「在 groupList 中排在它前面、且可见」的分组，插到那之后。
+    // 找不到（它排在最前）就插到最前。
+    // 不按「原本在几个可见项之后」定位：那个算法在用户拖走锚点后会把它丢到很意外的
+    // 位置（实测隐藏 G2、把 R1 拖到最前，恢复后 G2 会跑到 R1 后面）。
+    const order = new Map(groupList.value.map((n, i) => [n, i]));
+    const next = [...list];
+    const restore = [...hidden].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
+    for (const name of restore) {
+      const self = order.get(name) ?? 0;
+      let at = 0; // 默认插到最前
+      for (let i = next.length - 1; i >= 0; i--) {
+        const e = next[i]!;
+        if (e.kind !== "group") continue;
+        const idx = order.get(e.name);
+        if (idx !== undefined && idx < self) {
+          at = i + 1;
+          break;
+        }
+      }
+      next.splice(at, 0, { kind: "group", name });
+    }
+    barOrder.value = next;
+  },
+});
 
 // 逐项比较，代替两次 JSON.stringify 全量序列化——syncBar 挂在 deep watcher 上，
 // 拖拽/重命名时会被反复触发，序列化整表在仓库多时是白白烧掉的
@@ -661,7 +731,9 @@ function sameBar(a: BarEntry[], b: BarEntry[]): boolean {
 function syncBar() {
   const groups = new Set(groupList.value);
   const byPath = new Map(repos.value.map((r) => [r.path, r]));
-  // !!e：拖拽库在极端时序下可能往数组里写入脏值，这里兜底过滤防模板读 kind 炸
+  // !!e：拖拽库在极端时序下可能往数组里写入脏值，这里兜底过滤防模板读 kind 炸。
+  // **隐藏的分组仍然留在 barOrder 里**（渲染时才跳过）：位置是用户拖出来的，
+  // 从数据里删掉再补回只能靠猜，隐藏两个相邻分组后就再也猜不准了。
   const next = barOrder.value.filter(
     (e): e is BarEntry =>
       !!e &&
@@ -677,7 +749,8 @@ function syncBar() {
   }
   if (!sameBar(next, barOrder.value)) barOrder.value = next;
 }
-watch([repos, groupList], syncBar, { deep: true });
+// hiddenGroups 也要监听：隐藏/恢复后标签栏要立刻变
+watch([repos, groupList, hiddenGroups], syncBar, { deep: true });
 localStorage.removeItem("gz.tabGroupsCollapsed"); // 旧版折叠状态键，废弃
 syncBar();
 
@@ -905,10 +978,18 @@ function renameGroup(from: string, to: string): boolean {
   });
   const e = barOrder.value.find((x): x is BarGroup => x.kind === "group" && x.name === from);
   if (e) e.name = n;
+  // 隐藏状态跟着走：正在隐藏的分组改名后不该突然现身（标记还挂在旧名字上就失效了）
+  if (hiddenGroupsRaw.value.includes(from)) {
+    hiddenGroupsRaw.value = hiddenGroupsRaw.value.map((g) => (g === from ? n : g));
+  }
   return true;
 }
 function deleteGroup(name: string) {
   groupList.value = groupList.value.filter((g) => g !== name);
+  // 隐藏标记一起清掉：否则以后新建同名分组时它会一出生就是隐藏的
+  // （hiddenGroups 虽然按 groupList 求了交集，但那只挡得住「无法命中」，
+  //  挡不住「删掉又新建同名」。）
+  hiddenGroupsRaw.value = hiddenGroupsRaw.value.filter((g) => g !== name);
   repos.value.forEach((r) => {
     if (r.group === name) r.group = undefined; // syncBar 把成员补回标签栏末尾
   });
@@ -2745,7 +2826,7 @@ onUnmounted(() => {
 
     <!-- 仓库标签栏：文件夹（分组）+ 未分组仓库，可拖动排序；最右侧按钮打开分组管理（渲染在 RepoBar.vue） -->
     <RepoBar
-      v-model:bar-order="barOrder"
+      v-model:bar-order="visibleBarOrder"
       :current-repo="repo"
       :repo-by-path="repoByPath"
       :open-folder="folderDd?.group ?? ''"
@@ -3414,6 +3495,8 @@ onUnmounted(() => {
       :current-repo="repo"
       :highlighted="mgrHighlighted"
       :initial-group="groupMgrFocus"
+      :hidden="hiddenGroups"
+      @toggle-hidden="toggleGroupHidden"
       @groups-change="syncGroupBarOrder"
       @close="closeGroupMgr"
       @create="openGroupCreate"

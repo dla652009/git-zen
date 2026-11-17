@@ -8,7 +8,18 @@
 //
 // CRUD、拖拽机、持久化全留在 App.vue：这里只负责渲染与弹窗内的一次性 UI 状态。
 import { computed, ref, watch } from "vue";
-import { Folder, FolderPlus, GripVertical, Pencil, Plus, Search, X } from "@lucide/vue";
+import {
+  Eye,
+  EyeOff,
+  Folder,
+  FolderClosed,
+  FolderPlus,
+  GripVertical,
+  Pencil,
+  Plus,
+  Search,
+  X,
+} from "@lucide/vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { Button, Input } from "@/components/ui";
 
@@ -26,6 +37,11 @@ const props = defineProps<{
   highlighted: (group: string) => boolean;
   /** 从某个分组的入口进来时直接选中它；空 = 默认选第一个 */
   initialGroup?: string;
+  /**
+   * 已隐藏的分组名。隐藏只影响标签栏是否显示那个文件夹 ——
+   * 分组本身、组内仓库、在总览/下拉里的可见性都不变。
+   */
+  hidden: ReadonlySet<string>;
 }>();
 
 const emit = defineEmits<{
@@ -39,6 +55,8 @@ const emit = defineEmits<{
   "add-members": [group: string, paths: string[]];
   "drag-member": [e: MouseEvent, path: string, name: string];
   "groups-change": [list: string[]];
+  /** 隐藏 / 恢复某个分组在标签栏的显示 */
+  "toggle-hidden": [group: string];
 }>();
 
 // 分组顺序是 App 的持久化状态（gz.groups + 标签栏顺序），这里只做 v-model 桥接
@@ -172,16 +190,43 @@ function commitPicked() {
                   class="mgr-group-handle size-3 shrink-0 cursor-grab text-muted-foreground opacity-0 group-hover/grow:opacity-60"
                   @click.stop
                 />
-                <Folder class="size-3.5 shrink-0" />
-                <span class="min-w-0 flex-1 truncate font-medium" :title="g">{{ g }}</span>
+                <Folder v-if="!hidden.has(g)" class="size-3.5 shrink-0" />
+                <FolderClosed v-else class="size-3.5 shrink-0 opacity-50" />
+                <span
+                  class="min-w-0 flex-1 truncate font-medium"
+                  :class="hidden.has(g) && 'text-muted-foreground line-through'"
+                  :title="hidden.has(g) ? `${g}（已在标签栏隐藏）` : g"
+                  >{{ g }}</span
+                >
                 <span
                   v-if="groupActive(g)"
                   class="size-1.5 shrink-0 rounded-full bg-primary"
                   title="当前打开的仓库在此分组"
                 />
                 <span class="shrink-0 text-2xs tabular-nums text-muted-foreground">{{ memberCount(g) }}</span>
-                <!-- 行内操作：hover 才出现，避免每行常年挂两个按钮 -->
-                <span class="flex shrink-0 items-center opacity-0 transition-opacity duration-fast group-hover/grow:opacity-100">
+                <!-- 隐藏着的分组把眼睛常驻：它正是恢复入口，藏进 hover 里等于让人找不到怎么解 -->
+                <button
+                  v-if="hidden.has(g)"
+                  class="shrink-0 cursor-pointer rounded-xs p-0.5 text-muted-foreground hover:text-foreground"
+                  :title="`在标签栏显示「${g}」`"
+                  :aria-label="`显示分组 ${g}`"
+                  @click.stop="emit('toggle-hidden', g)"
+                >
+                  <EyeOff class="size-3" />
+                </button>
+                <!-- 其余行内操作：hover 才出现，避免每行常年挂三个按钮 -->
+                <span
+                  class="flex shrink-0 items-center opacity-0 transition-opacity duration-fast group-hover/grow:opacity-100"
+                >
+                  <button
+                    v-if="!hidden.has(g)"
+                    class="cursor-pointer rounded-xs p-0.5 text-muted-foreground hover:text-foreground"
+                    :title="`在标签栏隐藏「${g}」`"
+                    :aria-label="`隐藏分组 ${g}`"
+                    @click.stop="emit('toggle-hidden', g)"
+                  >
+                    <Eye class="size-3" />
+                  </button>
                   <button
                     class="cursor-pointer rounded-xs p-0.5 text-muted-foreground hover:text-foreground"
                     title="重命名"
