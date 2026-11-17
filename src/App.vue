@@ -1501,6 +1501,12 @@ function branchMenuItems(b: Branch): MenuItem[] {
   if (b.remote) {
     const full = fullName(b);
     return [
+      // 主操作进菜单：远程分支单击不再切换，双击与菜单两个入口都要能到
+      {
+        label: "检出到本地",
+        disabled: busy.value,
+        fn: () => switchBranch(b),
+      },
       { label: "复制分支名", fn: () => copyText(full) },
       { separator: true, label: "" },
       mrItem,

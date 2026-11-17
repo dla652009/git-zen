@@ -60,6 +60,23 @@ const emit = defineEmits<{
   switch: [b: Branch];
   menu: [b: Branch, x: number, y: number];
 }>();
+
+// 本地分支：单击切换（原有手感）。远程分支：单击不动作，双击才 checkout 到本地 ——
+// 远程分支是「别人那边的」参照物，误点一下就切走代价太大；双击是有意的动作。
+function branchTitle(b: Branch): string {
+  if (b.current) return `${b.name}（当前分支）`;
+  if (b.remote) return `${b.name}（双击检出到本地 · 右键更多操作）`;
+  return `${b.name}（单击切换 · 右键更多操作）`;
+}
+function onBranchClick(b: Branch) {
+  if (b.current || b.remote) return;
+  emit("switch", b);
+}
+function onBranchDblClick(b: Branch) {
+  // 双击只在远程分支上生效；本地的双击会触发两次 click，行为已由 click 处理
+  if (b.current || !b.remote) return;
+  emit("switch", b);
+}
 // 折叠集合由根共享（v-model），跨层级一致
 const collapsed = defineModel<Set<string>>({ required: true });
 
@@ -89,8 +106,9 @@ function toggle(path: string) {
         n.branch!.current && 'font-semibold text-primary',
       ]"
       :style="{ paddingLeft: TREE_BASE + 'px', lineHeight: ROW_LEADING }"
-      :title="`${n.branch!.name}${n.branch!.current ? '（当前分支）' : '（单击切换 · 右键更多操作）'}`"
-      @click="!n.branch!.current && emit('switch', n.branch!)"
+      :title="branchTitle(n.branch!)"
+      @click="onBranchClick(n.branch!)"
+      @dblclick="onBranchDblClick(n.branch!)"
       @contextmenu.prevent="emit('menu', n.branch!, $event.clientX, $event.clientY)"
     >
       <span class="truncate">{{ n.branch!.name }}</span>
@@ -145,8 +163,9 @@ function toggle(path: string) {
         n.branch?.current && 'font-semibold text-primary',
       ]"
       :style="{ paddingLeft: TREE_BASE + (props.depth ?? 0) * STEP + LEAF_OFFSET + 'px', lineHeight: ROW_LEADING }"
-      :title="`${n.branch!.name}${n.branch!.current ? '（当前分支）' : '（单击切换 · 右键更多操作）'}`"
-      @click="!n.branch!.current && emit('switch', n.branch!)"
+      :title="branchTitle(n.branch!)"
+      @click="onBranchClick(n.branch!)"
+      @dblclick="onBranchDblClick(n.branch!)"
       @contextmenu.prevent="emit('menu', n.branch!, $event.clientX, $event.clientY)"
     >
       <span
