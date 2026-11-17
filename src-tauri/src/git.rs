@@ -2348,6 +2348,140 @@ pub async fn git_op_state(repo: String) -> Result<OpState, String> {
     .await
 }
 
+// ---------- 工作树（worktree）：只读 ----------
+//
+// 第一期只读：不建目录、不删目录、不动分支。前端拿到列表后只做展示与「切到该目录」，
+// 所以这里只有 list 一个 command；add / remove / prune 见 docs/DESIGN-WORKTREE.md 的 S3。
+
+#[derive(Serialize)]
+pub struct WorktreeEntry {
+    /// 工作树目录绝对路径（git 输出的原始形态，Windows 上是正斜杠）
+    path: String,
+    /// 该工作树 HEAD 的 40 位 hash；空仓库（无提交）是全 0
+    head: String,
+    /// 分支短名；空串 = 不在任何分支上（detached 或 unborn）
+    branch: String,
+    detached: bool,
+    locked: bool,
+    /// 锁定原因；空串 = 无。git 允许 lock 不带 reason，所以不能靠它判有没有锁
+    lock_reason: String,
+    /// git 认为这条记录已经失效（目录被外部删掉等），可 prune
+    prunable: bool,
+    prunable_reason: String,
+    /// 主工作树（= 仓库的原始 clone 目录）。git 保证它永远是第一条记录
+    is_main: bool,
+    /// 目录当前真的存在吗。git 的 prunable 判据是「.git/worktrees/<name>/gitdir」反向指针失效，
+    /// 只把目录改名（反向指针仍指向旧路径）时会漏判，所以自己再看一眼
+    missing: bool,
+}
+
+/// 解析 `git worktree list --porcelain`。
+///
+/// 格式：一条记录一个空行分隔，记录内每行 `key value`，只有 key 的行表示布尔/无值。
+///
+///     worktree C:/work/main          <- 第一条恒为主工作树
+///     HEAD 456a9fd...
+///     branch refs/heads/master
+///
+///     worktree C:/work/fix
+///     HEAD 456a9fd...
+///     detached                        <- 只有 key，没有 value
+///     locked experiment on usb        <- reason 可能为空
+///
+///     worktree C:/work/gone
+///     HEAD 456a9fd...
+///     branch refs/heads/old
+///     prunable gitdir file points to non-existent location
+///
+/// 不用 `-z`：run() 返回 String，按行解析可读可测；Windows 路径不允许内嵌换行，按行是安全的。
+fn parse_worktree_list(out: &str) -> Vec<WorktreeEntry> {
+    let mut entries: Vec<WorktreeEntry> = Vec::new();
+    // 当前正在拼的那条；遇到 "worktree " 且已有内容就先结账
+    let mut cur: Option<WorktreeEntry> = None;
+
+    fn flush(cur: &mut Option<WorktreeEntry>, entries: &mut Vec<WorktreeEntry>) {
+        if let Some(e) = cur.take() {
+            if !e.path.is_empty() {
+                entries.push(e);
+            }
+        }
+    }
+
+    for line in out.lines() {
+        if line.trim().is_empty() {
+            flush(&mut cur, &mut entries);
+            continue;
+        }
+        // 只切第一个空格：路径里可以有空格，reason 里也可以
+        let (key, value) = match line.split_once(' ') {
+            Some((k, v)) => (k, v),
+            None => (line, ""),
+        };
+        if key == "worktree" {
+            // 新记录开始：先把上一条结账（正常情况下已由空行结掉，这里兜底）
+            flush(&mut cur, &mut entries);
+            cur = Some(WorktreeEntry {
+                path: value.to_string(),
+                head: String::new(),
+                branch: String::new(),
+                detached: false,
+                locked: false,
+                lock_reason: String::new(),
+                prunable: false,
+                prunable_reason: String::new(),
+                is_main: entries.is_empty(),
+                missing: false,
+            });
+            continue;
+        }
+        let Some(e) = cur.as_mut() else {
+            continue; // 记录外的杂行，忽略
+        };
+        match key {
+            "HEAD" => e.head = value.to_string(),
+            // 完整引用名 -> 短名：refs/heads/feature/x -> feature/x
+            "branch" => {
+                e.branch = value
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(value)
+                    .to_string()
+            }
+            "detached" => e.detached = true,
+            "locked" => {
+                e.locked = true;
+                e.lock_reason = value.to_string();
+            }
+            "prunable" => {
+                e.prunable = true;
+                e.prunable_reason = value.to_string();
+            }
+            _ => {}
+        }
+    }
+    flush(&mut cur, &mut entries);
+    entries
+}
+
+/// 列出全部工作树。
+///
+/// 「分支被哪个目录占用」只能从这条命令拿：`git branch --format='%(worktree)'` 直接报
+/// `unknown field name`（git 2.47.1 实测），for-each-ref 也没有对应原子。
+/// 所以前端想标出「这分支已在别处检出」，就必须调它。
+#[tauri::command]
+pub async fn git_worktree_list(repo: String) -> Result<Vec<WorktreeEntry>, String> {
+    offload(move || {
+        let out = run(&repo, &["worktree", "list", "--porcelain"])?;
+        let mut entries = parse_worktree_list(&out);
+        // 目录是否真的还在：git 的 prunable 只看 gitdir 反向指针，
+        // 只改名（反向指针仍指旧路径）时会漏判，自己 stat 一次更准
+        for e in entries.iter_mut() {
+            e.missing = !std::path::Path::new(&e.path).is_dir();
+        }
+        Ok(entries)
+    })
+    .await
+}
+
 /// 继续完成 merge / cherry-pick / revert。
 ///
 /// 必须带 `-c core.editor=true`：`--continue` 会打开编辑器让人确认提交信息，而 GUI 里
@@ -2461,6 +2595,83 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    // ---------- 工作树解析 ----------
+
+    #[test]
+    fn parse_worktree_list_covers_all_shapes() {
+        // 四种记录形态各来一条：普通 / detached / locked（带 reason）/ prunable。
+        // 路径含空格与中文，确认 split_once(' ') 没把它们切坏
+        let out = "\
+worktree C:/work/my app
+HEAD 456a9fd3ca706b0c96d39d2760a2e024c72b1f00
+branch refs/heads/master
+
+worktree C:/work/工作 树
+HEAD 456a9fd3ca706b0c96d39d2760a2e024c72b1f00
+branch refs/heads/feature/x
+
+worktree C:/work/fix
+HEAD 0000000000000000000000000000000000000000
+detached
+locked experiment on usb
+
+worktree C:/work/gone
+HEAD 456a9fd3ca706b0c96d39d2760a2e024c72b1f00
+branch refs/heads/old
+prunable gitdir file points to non-existent location
+";
+        let e = parse_worktree_list(out);
+        assert_eq!(e.len(), 4, "四条记录");
+
+        // 主工作树：第一条，路径里的空格不能被切开
+        assert_eq!(e[0].path, "C:/work/my app");
+        assert_eq!(e[0].branch, "master", "refs/heads/ 必须剥掉");
+        assert!(e[0].is_main);
+        assert!(!e[0].detached && !e[0].locked && !e[0].prunable);
+
+        // 中文路径 + 嵌套分支短名
+        assert_eq!(e[1].path, "C:/work/工作 树");
+        assert_eq!(e[1].branch, "feature/x", "只剥第一层前缀");
+        assert!(!e[1].is_main, "is_main 只有第一条");
+
+        // detached：只有 key 没有 value，且不能因此丢掉后面的 locked reason
+        assert!(e[2].detached);
+        assert!(e[2].branch.is_empty(), "detached 没有分支");
+        assert!(e[2].locked);
+        assert_eq!(e[2].lock_reason, "experiment on usb");
+        assert_eq!(e[2].head, "0000000000000000000000000000000000000000");
+
+        // prunable：reason 里同样有空格
+        assert!(e[3].prunable);
+        assert_eq!(e[3].prunable_reason, "gitdir file points to non-existent location");
+        assert_eq!(e[3].branch, "old");
+    }
+
+    #[test]
+    fn parse_worktree_list_handles_empty_and_partial_records() {
+        // 空输出（不该 panic，返回空表）
+        assert!(parse_worktree_list("").is_empty());
+        // 只有空行
+        assert!(parse_worktree_list("\n\n").is_empty());
+        // 最后一条没有结尾空行也要收进来
+        let e = parse_worktree_list("worktree /a\nHEAD abc\nbranch refs/heads/main");
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].branch, "main");
+        // 记录外杂行（理论上不会有）忽略而不是崩
+        let e = parse_worktree_list("orphan line\nworktree /a\nHEAD abc\n");
+        assert_eq!(e.len(), 1);
+        assert_eq!(e[0].path, "/a");
+    }
+
+    #[test]
+    fn parse_worktree_list_keeps_empty_lock_reason() {
+        // git 允许 lock 不带 reason：locked 只有 key，此时 reason 是空串
+        let e = parse_worktree_list("worktree /a\nHEAD abc\nlocked\n");
+        assert_eq!(e.len(), 1);
+        assert!(e[0].locked);
+        assert_eq!(e[0].lock_reason, "");
     }
 
     // ---------- 纯函数 ----------

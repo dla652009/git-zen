@@ -65,6 +65,7 @@ pub fn run() {
             git::git_reset_clean,
             git::git_op_state,
             git::git_op_continue,
+            git::git_worktree_list,
             git::git_squash_recent,
             git::git_squash_range
         ])

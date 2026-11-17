@@ -73,6 +73,7 @@ import WorkflowConfirmDialog from "./components/WorkflowConfirmDialog.vue";
 import WorkflowRunDialog from "./components/WorkflowRunDialog.vue";
 import WorkflowRunBatchDialog from "./components/WorkflowRunBatchDialog.vue";
 import ReflogModal from "./components/ReflogModal.vue";
+import WorktreeModal from "./components/WorktreeModal.vue";
 import ReposOverviewModal from "./components/ReposOverviewModal.vue";
 import type { RepoOverviewRow } from "./components/ReposOverviewModal.vue";
 import OpenRepoDialog from "./components/OpenRepoDialog.vue";
@@ -143,10 +144,21 @@ import { usePalette, type PaletteResult } from "./composables/usePalette";
 import { useWorkflowRun } from "./composables/useWorkflowRun";
 import { useAiPanel } from "./composables/useAiPanel";
 import { useRepoSession } from "./composables/useRepoSession";
+import { branchOwners, findSelf, normPath, toRows } from "./lib/worktree";
+import type { WorktreeEntry } from "./gitApi";
 
 // ---- 仓库数据 LRU 缓存：切回最近访问的仓库秒开，容量可在设置-个性化调节 ----
 // 实现见 src/composables/useRepoCache.ts
 const { cacheGet, cachePeek, cachePut, cacheDrop } = useRepoCache();
+
+// ---- 工作树（worktree）：只读表 + 切换。设计见 docs/DESIGN-WORKTREE.md ----
+// 数据由 useRepoSession 的 refresh/activate 统一拉（git worktree list 是纯本地读，与 status
+// 同级开销），这里只放空初值，注入 session 后用它派生弹窗行与「分支被谁占用」。
+const worktrees = ref<WorktreeEntry[]>([]);
+const worktreeRows = computed(() => toRows(worktrees.value));
+// 分支名 → 占用它的工作树路径。切分支前就能判断「这分支在别处已检出」，
+// 不必等 checkout 抛 fatal 才知道
+const worktreeOwners = computed(() => branchOwners(worktrees.value));
 
 // 历史视图范围：当前分支 / 所有分支
 const historyMode = ref<"current" | "all">("current");
@@ -1650,6 +1662,7 @@ const {
   commits,
   branchList,
   tags,
+  worktrees,
   busy,
   historyMode,
   historyFilePath,
@@ -1890,6 +1903,65 @@ function askDiscardUnpushed() {
   });
 }
 
+// ---- 工作树：打开列表 / 切到某个工作目录 ----
+// 第一期只读：不建目录、不删目录。打开时重新拉一次列表，因为用户完全可能在
+// 资源管理器或终端里建/删工作树 —— 缓存里那份只用于首屏不闪空。
+const showWorktree = ref(false);
+const worktreeLoading = ref(false);
+
+async function openWorktree() {
+  if (!repo.value) return;
+  showWorktree.value = true;
+  worktreeLoading.value = true;
+  const path = repo.value;
+  try {
+    const list = await api.worktreeList(path);
+    // 读取期间可能已切走仓库：上一仓库的工作树列表挂在新仓库上会点错目录
+    if (repo.value === path) worktrees.value = list;
+  } catch (e) {
+    showError(String(e));
+    showWorktree.value = false;
+  } finally {
+    worktreeLoading.value = false;
+  }
+}
+
+// 切到某个工作目录：已作为选项卡打开就切过去，没打开就先加进选项卡再切。
+// 与 git_clone 完成后的行为一致 —— 用户不需要关心「它有没有被打开过」。
+function openWorktreeAt(path: string) {
+  showWorktree.value = false;
+  // 列表里的路径是 git 输出的绝对路径，按归一化比对找已打开的选项卡
+  const t = normPath(path);
+  const known = repos.value.find((r) => normPath(r.path) === t);
+  if (!known) addRepo(path);
+  switchRepo(known ? known.path : path);
+}
+
+// 弹窗里判「这行是否已经开在选项卡里」：按归一化路径，斜杠方向不同也算同一个
+const worktreeOpenedPaths = computed(
+  () => new Set(repos.value.map((r) => normPath(r.path))) as ReadonlySet<string>,
+);
+// 标签栏用：从属工作树 → 它的主工作树路径（只收非主工作树，主工作树不标识）
+const worktreeMainMap = computed(() => {
+  const main = worktrees.value.find((w) => w.is_main);
+  const map = new Map<string, string>();
+  if (!main) return map;
+  for (const w of worktrees.value) {
+    if (!w.is_main) map.set(normPath(w.path), main.path);
+  }
+  return map;
+});
+// 选项卡右键里的「工作树…」：目标可能不是当前仓库。切过去再打开是最省事的语义
+// （用户点的是那个 tab 的菜单，期待看到的就是它的工作树），但切仓库是导航、不是写操作，
+// 不需要确认。切完立刻查列表，避免用户看到上一个仓库的残留行。
+async function openWorktreeOf(path: string) {
+  if (path !== repo.value) switchRepo(path);
+  await openWorktree();
+}
+
+// 工作树选项卡的身份色：键是归一化路径，tab 栏与弹窗共用
+const worktreePathSet = computed(() => new Set(worktrees.value.map((w) => normPath(w.path))));
+
 // ---- 时间线（reflog）：reset / amend / 覆盖掉的提交都还留在这里，是界面内的后悔药 ----
 const showReflog = ref(false);
 const reflogEntries = ref<ReflogEntry[]>([]);
@@ -2041,6 +2113,15 @@ const paletteItems = computed<PaletteResult[]>(() => {
       icon: LayoutGrid,
       disabled: !hasRepo,
       run: openReposOverview,
+    },
+    {
+      kind: "action",
+      id: "action:worktree",
+      label: "工作树",
+      detail: "查看全部工作目录并切换",
+      icon: GitBranch,
+      disabled: !hasRepo,
+      run: openWorktree,
     },
     {
       kind: "action",
@@ -2385,6 +2466,7 @@ const overlayLayers: Record<OverlayName, OverlayLayer> = {
     close: () => (fileHistoryModal.value = null),
   },
   reflog: { open: () => showReflog.value, close: () => (showReflog.value = false) },
+  worktree: { open: () => showWorktree.value, close: () => (showWorktree.value = false) },
   repos: { open: () => showRepos.value, close: () => (showRepos.value = false) },
   rangeDiff: { open: () => !!rangeDiff.value, close: () => (rangeDiff.value = null) },
   diff: { open: () => !!diffState.value, close: () => (diffState.value = null) },
@@ -2625,6 +2707,7 @@ onUnmounted(() => {
       :is-group-active="isGroupActive"
       :folder-highlighted="folderHighlighted"
       :on-bar-move="onBarMove"
+      :worktree-of="worktreeMainMap"
       @switch-repo="switchRepo"
       @close-tab="askCloseTab"
       @folder-toggle="toggleFolder"
@@ -3216,6 +3299,8 @@ onUnmounted(() => {
       :y="tabCtx.y"
       :items="[
         { label: '重命名…', fn: openRenameModal },
+        { label: '工作树…', fn: () => openWorktreeOf(tabCtx!.path) },
+        { separator: true, label: '' },
         { label: '关闭', danger: true, fn: () => askCloseTab(tabCtx!.path) },
         { label: '关闭其他', fn: () => askCloseOthers(tabCtx!.path) },
       ]"
@@ -3412,6 +3497,17 @@ onUnmounted(() => {
       :entries="reflogEntries"
       :loading="reflogLoading"
       @pick="askResetTo"
+    />
+
+    <!-- 工作树：只读列表 + 切换（本期不建不删） -->
+    <WorktreeModal
+      v-model:open="showWorktree"
+      :rows="worktreeRows"
+      :loading="worktreeLoading"
+      :current-repo="repo"
+      :opened-paths="worktreeOpenedPaths"
+      @open-worktree="openWorktreeAt"
+      @refresh="openWorktree"
     />
 
     <!-- 所有仓库总览：渲染在 ReposOverviewModal.vue -->

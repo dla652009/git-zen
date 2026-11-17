@@ -278,3 +278,29 @@ export const squashRecent = (repo: string, count: number, message: string) =>
 // 把 base 之上的连续提交压成一条：base 是这批提交的父提交（soft reset 的目标）
 export const squashRange = (repo: string, baseHash: string, message: string) =>
   invoke<void>("git_squash_range", { repo, baseHash, message });
+
+// 工作树（worktree）：只读列表。字段与 git.rs 的 WorktreeEntry 一一对应。
+// 第一期只有 list —— 新建/移除/prune 见 docs/DESIGN-WORKTREE.md 的 S3，尚未实现。
+export interface WorktreeEntry {
+  /** 工作树目录绝对路径（git 原样输出，Windows 上是正斜杠） */
+  path: string;
+  /** 该工作树 HEAD 的 40 位 hash；空仓库为全 0 */
+  head: string;
+  /** 分支短名；空串 = 不在任何分支上（detached 或 unborn） */
+  branch: string;
+  detached: boolean;
+  locked: boolean;
+  /** 锁定原因；空串 = 无 */
+  lock_reason: string;
+  /** git 认为记录已失效（目录被外部删掉等），可 prune */
+  prunable: boolean;
+  prunable_reason: string;
+  /** 主工作树（原始 clone 目录），git 保证是第一条 */
+  is_main: boolean;
+  /** 目录当前实际不存在 */
+  missing: boolean;
+}
+
+/** 列出仓库的全部工作树。「分支被哪个目录占用」只有这条命令能回答 */
+export const worktreeList = (repo: string) =>
+  invoke<WorktreeEntry[]>("git_worktree_list", { repo });

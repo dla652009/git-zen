@@ -1307,7 +1307,7 @@
 
 - i18n 英文界面
 - 自定义主题色（目前固定紫罗兰）
-- worktree 支持（列出/切换工作树）
+- ~~worktree 支持（列出/切换工作树）~~ → 见 M28
 - GitHub/GitLab 集成：PR 列表、CI 状态徽标（需 token，较重）
 - [-] ~~多窗口展示~~（明确不做：状态全是模块级单例——repoCache/activateSeq/settings watcher，
   多窗口=第二份 JS 上下文需 store 重构，且违背「轻」定位；多仓库跳转由 Ctrl+P 切换器 +
@@ -1478,3 +1478,45 @@ Win7 主题下是 Aero caption，其它主题是中性样式（`decorations` 是
 - [x] 仓库切换守卫：diff / log / AI 三步后都校验发起时仓库快照，切走即停止并提示
 - [x] 验证：`cargo check`、`check-contract`、`mrUrl.test.ts`、`vue-tsc`、
       `vite build`、`pnpm verify` 全绿
+
+## M28 工作树（worktree）支持
+
+设计见 `docs/DESIGN-WORKTREE.md`（已实测 `worktree list --porcelain` 的四种形态）。
+核心判断：**worktree 就是另一个仓库 tab**，不新增面板，复用 LRU 缓存、分组、Ctrl+P、
+仓库总览与工作流批量执行。
+
+**第一期（已交付，2026-11-17）：只读 + 切换**。本轮没有任何写操作 —— 不建目录、
+不删目录、不动分支。
+
+- [x] 后端 `WorktreeEntry` + `parse_worktree_list` 纯函数 + `git_worktree_list`。
+      解析覆盖：普通 / detached / locked（带与不带 reason）/ prunable；路径含空格与中文；
+      空输出与无结尾空行。3 个 Rust 单测（`cargo test --lib` 68 项全过）
+- [x] `git_worktree_list` 额外 `stat` 每个目录填 `missing`：git 的 prunable 只看
+      `.git/worktrees/<name>/gitdir` 反向指针，只改名时会漏判
+- [x] 命令注册进 `lib.rs` + `gitApi.ts` 镜像（check-contract：61 个命令 / 13 个结构体）
+- [x] `src/lib/worktree.ts`：`toRows` / `branchOwners` / `findSelf` / `samePath` /
+      `normPath` / `tailName` / `FLAG_LABEL`，配 `worktree.test.ts`（已同步 tsconfig
+      exclude 与 package.json verify）。守的三件事：路径判等吃斜杠方向与盘符大小写、
+      detached 与空仓库不显示成 0000000 / 分支、branchOwners 撞键不崩
+- [x] `components/WorktreeModal.vue`：只读列表（当前 / 主 / 已锁定 / 目录已丢失），
+      失效记录单独一栏并说明「它占着的分支需要清理后才能用」
+- [x] 入口三处：命令面板「工作树」、选项卡右键「工作树…」（先切到该 tab 再查）、
+      后续再加分支右键；浮层 `worktree` 已进 `overlays.ts` 与 `overlayLayers`
+- [x] `useRepoSession` 的 `refresh` / `activate` 统一拉 worktree list，
+      `RepoCache` 快照加 `worktrees` 字段（切回 tab 不闪空）
+- [x] tab 标识：`RepoBar` 从属工作树显示分支图标，tooltip 点明归属主工作树；
+      不自动归组（用户亲手排的顺序不该被猜）
+- [x] 验证：`cargo test --lib`、`pnpm verify`（契约 + 对比度 + vue-tsc + 13 个前端自检
+      + vite build）全绿；另用真实多工作树仓库跑了一遍「真实 git 输出 → toRows →
+      branchOwners」的端到端断言
+
+**后续（未开始）**
+
+- [ ] S3 写操作：`git_worktree_add` / `git_worktree_remove` / `git_worktree_prune`。
+      注意实测坑：`add -b <新分支> <已存在目录>` 会**先建分支再失败**，留下孤儿分支，
+      必须提前拦 + 失败后回收
+- [ ] S3 `suggestWorktreePath`：默认落在主仓库同级目录，重名自动加序号
+- [ ] S4 分支占用：分支树标出「已在 <目录> 检出」；`switchBranch` 前置拦截，
+      不再等 `fatal: ... is already used by worktree at ...`
+- [ ] `lib/errors.ts` 仍未修的错配：`/used (as|by) worktree/` 的文案是给**删分支**写的
+      （「先切到别的分支再删」），切分支时被占用看到这句会误导。属 S4 一起改

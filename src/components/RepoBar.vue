@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 仓库选项卡栏（M16 16.2 拆出）：分组文件夹 + 未分组仓库，可拖动排序；最右侧是总览 / 分组管理入口。
 // 顺序（gz.barOrder）、分组数据、拖拽命中判定都留在 App.vue：这里只渲染并把交互 emit 回去。
-import { ChevronDown, Folder, FolderPlus, LayoutGrid, X } from "@lucide/vue";
+import { ChevronDown, Folder, FolderPlus, GitBranch, LayoutGrid, X } from "@lucide/vue";
 import { VueDraggable } from "vue-draggable-plus";
 import { Button, Tooltip } from "@/components/ui";
 
@@ -42,6 +42,9 @@ const props = defineProps<{
   // Vue 的 emit 会丢掉监听器返回值，这一项必须当函数 prop 直接调用，
   // 返回值才能经 VueDraggable 的 @move 回到 Sortable
   onBarMove: (evt: BarMoveEvent) => boolean | void;
+  /** 工作树 → 主工作树路径（归一化后的键）。命中说明这个 tab 是一个从属工作树，
+   *  显示分支图标并在 tooltip 里点明归属 —— 不自动归组，用户亲手排的顺序不该被猜 */
+  worktreeOf: ReadonlyMap<string, string>;
 }>();
 
 const emit = defineEmits<{
@@ -126,7 +129,12 @@ const barOrder = defineModel<BarEntry[]>("barOrder", { required: true });
             class="size-1.5 shrink-0 rounded-full"
             :class="item.path === currentRepo ? 'bg-primary' : 'bg-border group-hover/tab:bg-muted-foreground'"
           />
-          <Tooltip :text="item.path">
+          <GitBranch
+            v-if="worktreeOf.has(item.path)"
+            class="size-3 shrink-0 opacity-60"
+            aria-hidden="true"
+          />
+          <Tooltip :text="worktreeOf.get(item.path) ? `${item.path}\n工作树 · 属于 ${worktreeOf.get(item.path)}` : item.path">
             <span class="max-w-[120px] truncate">{{ repoByPath.get(item.path)?.name }}</span>
           </Tooltip>
           <X

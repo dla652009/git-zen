@@ -3,13 +3,15 @@
 
 import { watch } from "vue";
 import { settings } from "../settings";
-import type { Branch, LogEntry, Status, TagEntry } from "../gitApi";
+import type { Branch, LogEntry, Status, TagEntry, WorktreeEntry } from "../gitApi";
 
 export interface RepoCache {
   status: Status;
   commits: LogEntry[];
   branchList: Branch[];
   tags: TagEntry[];
+  /** 工作树列表：切回选项卡时不必等一次 git 调用，列表也不会闪空 */
+  worktrees: WorktreeEntry[];
 }
 
 export function useRepoCache() {

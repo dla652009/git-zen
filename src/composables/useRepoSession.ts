@@ -5,7 +5,7 @@
 import { nextTick, ref } from "vue";
 import type { Ref } from "vue";
 import * as api from "../gitApi";
-import type { Branch, LogEntry, Status, TagEntry } from "../gitApi";
+import type { Branch, LogEntry, Status, TagEntry, WorktreeEntry } from "../gitApi";
 import { readJsonObject } from "../lib/safeJson";
 
 import type { RepoCache } from "./useRepoCache";
@@ -16,6 +16,7 @@ export function useRepoSession(opts: {
   commits: Ref<LogEntry[]>;
   branchList: Ref<Branch[]>;
   tags: Ref<TagEntry[]>;
+  worktrees: Ref<WorktreeEntry[]>;
   busy: Ref<boolean>;
   historyMode: Ref<"current" | "all">;
   historyFilePath: Ref<string | null>;
@@ -36,6 +37,7 @@ export function useRepoSession(opts: {
     commits,
     branchList,
     tags,
+    worktrees,
     busy,
     historyMode,
     historyFilePath,
@@ -96,12 +98,15 @@ export function useRepoSession(opts: {
     }
     remoteLink.value = readJsonObject<Record<string, string>>("gz.remoteLinks", {})[path] ?? "";
     try {
-      const [s, l, b, tg, o] = await Promise.all([
+      const [s, l, b, tg, o, wt] = await Promise.all([
         api.status(path),
         fetchLog(0, path),
         api.branches(path),
         api.tagList(path),
         api.opState(path),
+        // 工作树列表：分支被哪个目录占用只有这条命令能回答（branch --format 没有对应原子），
+        // 所以它必须跟 status 一起刷新 —— 否则分支树上的占用标识会停在旧快照
+        api.worktreeList(path),
       ]);
       // 结果属于已切走的仓库：丢弃，别写进新仓库的视图与 LRU 槽（否则切回来还是错数据）
       // seq 过期同理丢弃：已有更新的一次刷新在跑，它的结果才是真相
@@ -111,8 +116,9 @@ export function useRepoSession(opts: {
       branchList.value = b;
       tags.value = tg;
       op.value = o;
+      worktrees.value = wt;
       canLoadMore.value = l.length >= 300;
-      cachePut(path, { status: s, commits: l, branchList: b, tags: tg });
+      cachePut(path, { status: s, commits: l, branchList: b, tags: tg, worktrees: wt });
     } catch (e) {
       if (repo.value === path && seq === refreshSeq) showError(String(e));
     }
@@ -184,6 +190,7 @@ export function useRepoSession(opts: {
     commits.value = [];
     branchList.value = [];
     tags.value = [];
+    worktrees.value = [];
     canLoadMore.value = false;
     fileHistoryModal.value = null;
     historyFilePath.value = null;
@@ -197,6 +204,7 @@ export function useRepoSession(opts: {
       commits.value = cached.commits;
       branchList.value = cached.branchList;
       tags.value = cached.tags;
+      worktrees.value = cached.worktrees;
       canLoadMore.value = cached.commits.length >= 300;
       fetchOnce();
       api.branches(path)
@@ -212,17 +220,19 @@ export function useRepoSession(opts: {
     await nextTick();
     if (seq !== activateSeq) return;
     try {
-      const [s, b, tg, o] = await Promise.all([
+      const [s, b, tg, o, wt] = await Promise.all([
         api.status(path),
         api.branches(path),
         api.tagList(path),
         api.opState(path),
+        api.worktreeList(path).catch(() => [] as WorktreeEntry[]),
       ]);
       if (seq !== activateSeq) return;
       status.value = s;
       branchList.value = b;
       tags.value = tg;
       op.value = o;
+      worktrees.value = wt;
       commits.value = [];
       canLoadMore.value = false;
       await nextTick();
@@ -240,6 +250,7 @@ export function useRepoSession(opts: {
 
   return {
     refreshing,
+    worktrees,
     doRefresh,
     fetchLog,
     refresh,

@@ -30,6 +30,7 @@ export const overlayOrder = [
   "settings",
   "fileHistory",
   "reflog",
+  "worktree",
   "repos",
   "rangeDiff",
   "diff",
