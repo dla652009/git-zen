@@ -65,6 +65,17 @@ export function useWorkflowRun(opts: {
   refresh: () => Promise<void>;
   /** 批次跑完后回调（App 用来重取「所有仓库」总览行；单仓库入口不需要） */
   onBatchDone?: () => void | Promise<void>;
+  /**
+   * 打开新建 MR 页。构造 URL、判断主机是否认识都在 App 侧（`buildMrUrl` + origin 都在那儿），
+   * 这里只传「哪个仓库、哪两个分支、标题是什么」，返回值决定这一步算成功还是失败。
+   * 抛错 = 主机认不出来（该报错）；正常返回 = 页面已交给系统浏览器。
+   */
+  openMr?: (p: {
+    repo: string;
+    src: string;
+    dst: string;
+    title?: string;
+  }) => void | Promise<void>;
 }) {
   // 执行确认：解析步骤预览 + 运行时输入当场填；起始分支在执行开始时记录。
   // 每个需要输入的步骤各占一个输入框 —— 早前所有步骤共用同一个值，
@@ -367,6 +378,18 @@ export function useWorkflowRun(opts: {
         if (p && !name.startsWith(p)) name = p + name;
         await api.branchCreate(path, name);
         return {};
+      }
+      case "createMr": {
+        if (!opts.openMr) throw new Error("未接入 MR 入口，无法打开新建页");
+        const dst = step.dst.trim();
+        if (!dst) throw new Error("提 MR：目标分支不能为空");
+        // src 留空 = 当前分支。现读而不是用 status.value：流程里前面的 checkout 已经切走了，
+        // 那个 ref 还停在流程开始时的分支上（与 push 步骤同一个坑）
+        const src = step.src?.trim() || (await api.status(path)).branch;
+        if (!src) throw new Error("提 MR：取不到当前分支（仓库可能处于游离 HEAD）");
+        // App 侧构造不出 URL 时会抛错，让这一步如实失败，而不是静默开个首页
+        await opts.openMr({ repo: path, src, dst, title: step.title?.trim() || undefined });
+        return { note: `已在浏览器打开 MR 页：${src} → ${dst}（需手动点 Create）` };
       }
       case "switchBack": {
         // 起始分支可能已经被前面的「删除分支」步骤删掉：那时 checkout 只会甩一句英文

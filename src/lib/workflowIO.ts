@@ -35,6 +35,7 @@ const STEP_KINDS = [
   "deleteBranch",
   "deleteRemoteBranch",
   "switchBack",
+  "createMr",
   "commitPush",
 ] as const;
 
@@ -78,6 +79,19 @@ function parseStep(v: unknown): WorkflowStep | null {
     case "checkoutRemote": {
       const name = str(v.name)?.trim();
       return name ? { kind: "checkoutRemote", name } : null;
+    }
+    case "createMr": {
+      // 目标分支必填（没有目标的 MR 页没有意义）；src / title 可选，空就直接不写
+      const dst = str(v.dst)?.trim();
+      if (!dst) return null;
+      const src = str(v.src)?.trim();
+      const title = str(v.title)?.trim();
+      return {
+        kind: "createMr",
+        dst,
+        ...(src ? { src } : {}),
+        ...(title ? { title } : {}),
+      };
     }
     case "pull":
       return { kind: "pull" };

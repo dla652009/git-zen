@@ -1680,3 +1680,33 @@ RepoBar 用的是 `v-model:bar-order`，Sortable 直接读写这个数组。所�
 - 重命名分组时迁移隐藏标记：否则正在隐藏的分组改名后会突然现身
 - 隐藏的分组里含当前仓库时给一句 toast：组内仓库不占标签栏，隐藏文件夹等于
   连当前仓库的入口一起没了
+
+## 工作流新增「提 MR」节点（打开预填页，不是创建）
+
+**能力边界必须先说清**：平台创建 MR 要走 REST API + OAuth/PAT 授权，
+而本应用只用系统 git 凭据（SSH key / credential helper），拿不到 API token。
+所以这一步是「打开预填好的新建页」，最后那下 Create 仍由用户点。
+
+`createMr { dst, src?, title? }`：
+- `dst` 必填（没有目标的 MR 页没意义），`src` 留空 = 当前分支
+- `src` 现读 `status()` 而不是用 `status.value`：流程里前面的 checkout 已经切走了，
+  那个 ref 还停在流程开始时的分支（与 push 步骤同一个坑）
+- `title` 可选，留空由 MR 页自己取默认（通常就是分支名或首个提交）
+
+### 为什么 openMr 是注入的回调
+
+`buildMrUrl` 和 origin 都在 App 侧（`gitApi.remoteUrl`），执行器只该知道
+「拿哪个仓库、哪两个分支、什么标题」。所以 `useWorkflowRun` 收一个
+`openMr({repo, src, dst, title})`，异步、可抛错。
+
+**不能复用 `remoteRaw`**：那只是当前仓库的 origin。批量跑别的仓库时会拼错地址，
+所以按 `p === repo.value` 才走缓存，否则现读 `api.remoteUrl(p)`。
+
+认不出的主机（自建 Gitea 等）→ `buildMrUrl` 返回 null → 抛错让步骤如实失败，
+不静默打开一个仓库首页（那看起来像成功了）。
+
+### 指派人：暂不做
+
+各平台 URL 预填指派人的支持都很差（GitHub 官方明确没有 assignee 参数；
+GitLab 要数字 ID）。要么接 API，要么只能复制到剪贴板 + 提示 —— 都留到接了
+API 之后再说。

@@ -1785,7 +1785,27 @@ const {
   retryBatchRow,
   resumeBatchSkipped,
   closeWfBatch,
-} = useWorkflowRun({ repo, status, busy, runningAction, refresh, onBatchDone: loadRepoRows });
+} = useWorkflowRun({
+  repo,
+  status,
+  busy,
+  runningAction,
+  refresh,
+  onBatchDone: loadRepoRows,
+  // 工作流里的「提 MR」节点：按该仓库自己的 origin 构造新建页。
+  // 不能复用 remoteRaw —— 那个只存当前仓库的 origin，批量跑别人家仓库时会拼错地址。
+  openMr: async ({ repo: p, src, dst, title }) => {
+    // 当前仓库能省一次 git 调用；别的仓库（批量）才真去读
+    const origin = p === repo.value && remoteRaw.value ? remoteRaw.value : await api.remoteUrl(p);
+    const url = buildMrUrl({ originUrl: origin, srcBranch: src, dstBranch: dst, title });
+    if (!url) {
+      throw new Error(
+        "认不出这个远程主机，无法新建 MR（支持 GitHub / GitLab / Gitee / Bitbucket）",
+      );
+    }
+    await openUrl(url.url).catch(() => {});
+  },
+});
 
 // 「所有仓库」总览里勾选仓库后跑工作流：名字 → Workflow，path → 行里的显示名
 function runWorkflowOnRepos(name: string, paths: string[]) {

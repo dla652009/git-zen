@@ -66,6 +66,7 @@ const allKinds = parseWorkflowFile(
         { kind: "deleteBranch", name: "feat/x", skipIfMissing: true },
         { kind: "deleteRemoteBranch", name: "feat/x" },
         { kind: "switchBack" },
+        { kind: "createMr", dst: "dev" },
         { kind: "commitPush", msgSource: "ai" },
         { kind: "commitPush", msgSource: "fixed", message: "chore: x" },
       ],
@@ -73,7 +74,7 @@ const allKinds = parseWorkflowFile(
   ]),
   makeId,
 );
-assert(allKinds.ok && allKinds.workflows[0]!.steps.length === 11, "全部步骤类型都能导入");
+assert(allKinds.ok && allKinds.workflows[0]!.steps.length === 12, "全部步骤类型都能导入");
 // 旧文件里的 skipIfMissing 已不是配置项（语义写死为「不存在就跳过」），
 // 但多一个字段不该让导入失败——兼容旧导出文件
 if (allKinds.ok) {
@@ -179,6 +180,40 @@ if (crRound.ok) {
   assert.equal(s.kind, "checkoutRemote", "类型保留");
   assert.equal((s as { name: string }).name, "release/dev", "分支名保留");
 }
+
+// ---- createMr 往返：dst 必填，src/title 可选且空值不写进结果 ----
+const mrRound = parseWorkflowFile(
+  toFileText([
+    {
+      id: "x",
+      name: "mr",
+      steps: [
+        { kind: "createMr", dst: "dev", src: "feat/x", title: "feat: 加登录" },
+        { kind: "createMr", dst: "master" },
+      ],
+    },
+  ]),
+  makeId,
+);
+assert(mrRound.ok, "createMr 往返成功");
+if (mrRound.ok) {
+  const [full, minimal] = mrRound.workflows[0]!.steps as {
+    kind: string;
+    dst: string;
+    src?: string;
+    title?: string;
+  }[];
+  assert(full!.dst === "dev" && full!.src === "feat/x" && full!.title === "feat: 加登录", "完整字段保留");
+  assert(minimal!.dst === "master" && minimal!.src === undefined, "可选字段缺省不脑补");
+}
+// 没有目标分支的 MR 步骤判非法
+assert(
+  !parseWorkflowFile(
+    JSON.stringify([{ name: "x", steps: [{ kind: "createMr", dst: "  " }] }]),
+    makeId,
+  ).ok,
+  "createMr 缺目标分支被挡",
+);
 
 // ---- 名字去重 ----
 assert.equal(uniqueName("a", []), "a", "无冲突不变");

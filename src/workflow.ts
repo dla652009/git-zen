@@ -34,6 +34,11 @@ export type WorkflowStep =
   | { kind: "deleteBranch"; name: string }
   // 远程删除固定走 origin：多远程的仓库极少见，需要时先手动 fetch 确认
   | { kind: "deleteRemoteBranch"; name: string }
+  // 打开新建 MR 页（预填源/目标分支，可选预填标题）。
+  // 注意这不是「创建」：平台创建 MR 要走 API + token 授权，本应用只用系统 git 凭据，
+  // 拿不到 API token。所以这一步把预填好的页面打开，最后一步的「Create」由用户点。
+  // src 留空 = 用当前分支（流程里前面的 checkout 已经切过去了）。
+  | { kind: "createMr"; dst: string; src?: string; title?: string }
   | { kind: "switchBack" };
 
 export interface Workflow {
@@ -83,6 +88,12 @@ export function describeStep(s: WorkflowStep, startBranch?: string): string {
       // 名字已带 origin/ 就原样显示：拼两遍会写成 origin/origin/foo，看着像删错了对象
       const full = name.startsWith("origin/") ? name : `origin/${name}`;
       return `删除远程分支 ${name ? full : "（未填分支名）"}（不存在则跳过）`;
+    }
+    case "createMr": {
+      const dst = s.dst.trim();
+      const src = s.src?.trim();
+      const from = src ? src : "当前分支";
+      return `打开新建 MR 页：${from} → ${dst || "（未填目标分支）"}`;
     }
     case "commitPush":
       return s.msgSource === "ai"

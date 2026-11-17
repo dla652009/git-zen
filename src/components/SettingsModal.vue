@@ -3,7 +3,7 @@ import { computed, reactive, ref, nextTick, onMounted, watch, type Component } f
 import {
   X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe, Workflow as WorkflowIcon, ChevronDown,
   GripVertical, Pin, Pencil, Trash2, TriangleAlert, Copy,
-  GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload, CloudOff, CloudDownload,
+  GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload, CloudOff, CloudDownload, GitPullRequestCreate,
   FileDown,
 } from "@lucide/vue";
 import { VueDraggable } from "vue-draggable-plus";
@@ -264,6 +264,7 @@ const STEP_ICONS: Record<WorkflowStep["kind"], Component> = {
   merge: GitMerge,
   createBranch: GitBranchPlus,
   switchBack: Undo2,
+  createMr: GitPullRequestCreate,
   commitPush: Upload,
   deleteBranch: Trash2,
   deleteRemoteBranch: CloudOff,
@@ -313,6 +314,7 @@ function missingHint(): string {
     return "请先填要检出的远程分支名（不带 origin/）";
   if (k === "checkoutRemote" && isRefspec(newStepName.value))
     return "只填分支名本身（如 release/dev），不要写 refs/… / +… / foo:bar";
+  if (k === "createMr" && !newStepName.value.trim()) return "请先填 MR 的目标分支（如 dev）";
   return "当前配置不完整，请检查后再添加";
 }
 function addStep(w: Workflow) {
@@ -357,6 +359,14 @@ function buildDraftStep(): WorkflowStep | null {
       const name = newStepName.value.trim();
       return name ? { kind: "checkoutRemote", name } : null;
     }
+    case "createMr": {
+      // newStepName = 目标分支，newStepLabel = 可选标题（复用现有两个输入框，
+      // 不为一个节点再加一套字段）
+      const dst = newStepName.value.trim();
+      if (!dst) return null;
+      const title = newStepLabel.value.trim();
+      return { kind: "createMr", dst, ...(title ? { title } : {}) };
+    }
     case "pull":
       return { kind: "pull" };
     case "push":
@@ -395,6 +405,7 @@ const KIND_LABELS: Record<WorkflowStep["kind"], string> = {
   merge: "合并",
   createBranch: "新建分支",
   switchBack: "切回起始分支",
+  createMr: "提 MR",
   deleteBranch: "删除分支",
   deleteRemoteBranch: "删除远程分支",
 };
@@ -1002,6 +1013,22 @@ const NAV = [
                             placeholder="远程分支名（不带 origin/，如 release/dev）"
                             @update:model-value="(v: string | number) => (s.name = String(v))"
                           />
+                          <template v-else-if="s.kind === 'createMr'">
+                            <Input
+                              :model-value="s.dst"
+                              class="h-7 min-w-0 flex-1 text-xs"
+                              placeholder="目标分支"
+                              @update:model-value="(v: string | number) => (s.dst = String(v))"
+                            />
+                            <Input
+                              :model-value="s.title ?? ''"
+                              class="h-7 min-w-0 flex-1 text-xs"
+                              placeholder="标题（可选）"
+                              @update:model-value="
+                                (v: string | number) => (s.title = String(v) || undefined)
+                              "
+                            />
+                          </template>
                           <span
                             v-else
                             class="min-w-0 flex-1 text-xs text-muted-foreground"
@@ -1093,6 +1120,18 @@ const NAV = [
                           v-model="newStepName"
                           class="h-8 min-w-0 flex-1 text-xs"
                           placeholder="远程分支名（不带 origin/，如 release/dev）"
+                        />
+                      </template>
+                      <template v-else-if="newStepKind === 'createMr'">
+                        <Input
+                          v-model="newStepName"
+                          class="h-8 min-w-0 flex-1 text-xs"
+                          placeholder="目标分支（如 dev / master）"
+                        />
+                        <Input
+                          v-model="newStepLabel"
+                          class="h-8 min-w-0 flex-1 text-xs"
+                          placeholder="标题（可选，留空由 MR 页自己取）"
                         />
                       </template>
                       <Button variant="default" size="sm" class="ml-auto h-8 shrink-0" @click="addStep(w)">

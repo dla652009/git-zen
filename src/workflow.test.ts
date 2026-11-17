@@ -43,6 +43,16 @@ assert(
   "createBranch 固定名带前缀",
 );
 assert(d({ kind: "switchBack" }, "feat/a") === "切回起始分支（feat/a）", "switchBack");
+// 提 MR：src 留空时显示成「当前分支」——用户要能一眼看出这条用的是谁
+assert(
+  d({ kind: "createMr", dst: "dev" }) === "打开新建 MR 页：当前分支 → dev",
+  "createMr 默认源",
+);
+assert(
+  d({ kind: "createMr", src: "feat/x", dst: "dev" }) === "打开新建 MR 页：feat/x → dev",
+  "createMr 指定源",
+);
+assert(d({ kind: "createMr", dst: "  " }).includes("未填目标分支"), "createMr 空目标");
 // 检出远程分支：展示成 origin/xxx，并说清「先拉取、落后快进」的语义 ——
 // 用户要靠这句话区分它与普通的「切换到」
 assert(
