@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const STYLE_CSS = join(ROOT, "src", "style.css");
 const GRAPH_TS = join(ROOT, "src", "graph.ts");
+const SETTINGS_TS = join(ROOT, "src", "settings.ts");
 
 // ---------- 颜色工具 ----------
 
@@ -133,6 +134,42 @@ const themes = parseThemes(readFileSync(STYLE_CSS, "utf8"));
 const laneColors = parseLaneColors(readFileSync(GRAPH_TS, "utf8"));
 
 const fatal = [];
+
+// 设置页主题卡片上画的色块必须与 style.css 里该主题的真实变量一致。
+// 这条不检查的后果是「卡片看着是一套、选中后是另一套」—— 而且不会报错，
+// 只能靠用户发现。色块顺序约定：background / card / primary / foreground / c-add / c-mod
+{
+  const src = readFileSync(SETTINGS_TS, "utf8");
+  const block = src.match(/export const THEME_SCHEMES[\s\S]*?\n\];/);
+  if (!block) {
+    fatal.push("src/settings.ts 里找不到 THEME_SCHEMES，主题卡片色值检查失效。");
+  } else {
+    const entries = [...block[0].matchAll(/id:\s*"([^"]+)"[\s\S]*?swatches:\s*\[([^\]]+)\]/g)];
+    for (const [, id, raw] of entries) {
+      const swatches = raw.split(",").map((s) => s.trim().replace(/^"|"$/g, "").toLowerCase());
+      const t = themes.get(id);
+      if (!t) {
+        fatal.push(`THEME_SCHEMES 里的「${id}」在 style.css 中找不到对应主题块。`);
+        continue;
+      }
+      // themes 的值是 Map，键带 -- 前缀
+      const expect = ["--background", "--card", "--primary", "--foreground", "--c-add", "--c-mod"];
+      if (swatches.length !== expect.length) {
+        fatal.push(`「${id}」的色块数量是 ${swatches.length}，约定为 ${expect.length} 个（${expect.join(" / ")}）。`);
+        continue;
+      }
+      expect.forEach((key, i) => {
+        const actual = (t.get(key) ?? "").toLowerCase();
+        if (actual && actual !== swatches[i]) {
+          fatal.push(
+            `「${id}」的色块[${i}] ${key} 是 ${swatches[i]}，但 style.css 里是 ${actual} —— 卡片与真实主题不一致。`,
+          );
+        }
+      });
+    }
+    if (entries.length === 0) fatal.push("THEME_SCHEMES 解析出 0 个方案，正则可能失效。");
+  }
+}
 
 // 解析器先把「解析出来的条目数」断言掉：漏认一个主题块会让整张表静默少一套主题（假绿）
 const EXPECTED_THEMES = 6; // settings.ts THEMES 里除 system 外：dark + light + catppuccin-mocha + catppuccin-latte + win7 + xp

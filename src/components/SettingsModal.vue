@@ -3,7 +3,7 @@ import { computed, reactive, ref, nextTick, onMounted, watch, type Component } f
 import {
   X, Palette, UserCog, Keyboard, User, Bot, Plus, Globe, Workflow as WorkflowIcon, ChevronDown,
   GripVertical, Pin, Pencil, Trash2, TriangleAlert, Copy,
-  GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload, CloudOff, CloudDownload, GitPullRequestCreate, Info, RefreshCw, Download,
+  GitBranch, GitBranchPlus, GitMerge, ArrowDownToLine, ArrowUpFromLine, Undo2, Upload, CloudOff, CloudDownload, GitPullRequestCreate, Info, RefreshCw, Download, Sun, Moon, Monitor, Check,
   FileDown,
 } from "@lucide/vue";
 import { VueDraggable } from "vue-draggable-plus";
@@ -11,6 +11,10 @@ import {
   THEMES,
   settings,
   clampFontSize,
+  schemesForMode,
+  modeOfTheme,
+  resolveScheme,
+  type ThemeMode,
   previewAppearance,
   restoreSettings,
   parseBranchPrefixes,
@@ -60,17 +64,64 @@ const draft = reactive<Settings>({ ...settings });
 // ---- 外观实时预览 ----
 // 主题/字体/字号改动立刻画到 DOM，但**不写 settings**（那会被 deep watch 持久化，
 // 点错一次就改不回来）。取消或关闭一律还原成已保存的值。
-// 只监听这三个字段：其它设置项（AI Key、工作流等）改动跟界面观感无关。
+// 只监听这四个字段：其它设置项（AI Key、工作流等）改动跟界面观感无关。
 watch(
-  () => [draft.theme, draft.fontFamily, draft.fontSize],
+  () => [draft.themeMode, draft.themeScheme, draft.fontFamily, draft.fontSize],
   () => {
     previewAppearance({
-      theme: draft.theme,
+      themeMode: draft.themeMode,
+      themeScheme: draft.themeScheme,
       fontFamily: draft.fontFamily,
       fontSize: draft.fontSize,
     });
   },
 );
+
+// ---- 模式 × 配色方案 ----
+const MODE_OPTIONS: { id: Settings["themeMode"]; label: string; icon: Component }[] = [
+  { id: "light", label: "浅色", icon: Sun },
+  { id: "dark", label: "深色", icon: Moon },
+  { id: "system", label: "跟随系统", icon: Monitor },
+];
+
+/** 当前生效的明暗（跟随系统时按系统偏好）—— 决定列出哪一组方案 */
+const previewMode = computed<ThemeMode>(() =>
+  draft.themeMode === "system"
+    ? window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light"
+    : draft.themeMode,
+);
+const visibleSchemes = computed(() => schemesForMode(previewMode.value));
+
+/**
+ * 卡片是否高亮。跟随系统时两组的「第一个方案」都算选中 ——
+ * 否则切到跟随系统后，当前用着的那套方案会没有任何一张卡片被选中，看起来像丢了配置。
+ */
+function isSchemeActive(id: string): boolean {
+  if (draft.themeMode !== "system") return draft.themeScheme === id;
+  return resolveScheme(previewMode.value, draft.themeScheme) === id;
+}
+
+/**
+ * 切模式：如果当前方案不属于新模式，顺手换成新模式的第一套。
+ * 不做这一步的话，深色模式下会留着一个浅色方案 id，界面靠 resolveScheme 兜底，
+ * 但用户看到的选中态与自己点过的对不上。
+ */
+function pickMode(mode: Settings["themeMode"]) {
+  draft.themeMode = mode;
+  if (mode === "system") return; // 跟随系统保留用户原来的方案，运行时按系统明暗解析
+  if (modeOfTheme(draft.themeScheme) !== mode) {
+    draft.themeScheme = schemesForMode(mode)[0]?.id ?? draft.themeScheme;
+  }
+}
+function pickScheme(id: string) {
+  draft.themeScheme = id;
+  // 在浅色模式里点了深色方案（理论上卡片已过滤，防御一下）：模式跟着走，
+  // 否则会存进一个「深色方案 + 浅色模式」的组合，界面与选中态不一致
+  const m = modeOfTheme(id);
+  if (m && draft.themeMode !== "system") draft.themeMode = m;
+}
 /** 关窗时还原。取消按钮、X、Esc 都走这里 —— 三条路只留一个出口才不会漏 */
 function closeWithoutSaving() {
   restoreSettings();
@@ -730,22 +781,69 @@ const NAV = [
           <!-- 外观 -->
           <template v-else-if="tab === 'appearance'">
             <section>
-              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">主题</h3>
-              <div class="grid grid-cols-4 gap-1.5">
+              <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">模式</h3>
+              <div class="grid grid-cols-3 gap-1.5">
                 <button
-                  v-for="t in THEMES"
-                  :key="t.id"
+                  v-for="m in MODE_OPTIONS"
+                  :key="m.id"
                   :class="[
-                    'cursor-pointer rounded-md border px-2 py-1.5 text-xs transition-colors duration-fast',
-                    draft.theme === t.id
+                    'flex cursor-pointer items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-xs transition-colors duration-fast',
+                    draft.themeMode === m.id
                       ? 'border-primary/60 bg-primary-soft text-primary'
                       : 'border-border hover:bg-hover',
                   ]"
-                  @click="draft.theme = t.id"
+                  @click="pickMode(m.id)"
                 >
-                  {{ t.label }}
+                  <component :is="m.icon" class="size-3.5" />
+                  {{ m.label }}
                 </button>
               </div>
+            </section>
+
+            <section class="mt-5">
+              <div class="mb-2 flex items-baseline gap-2">
+                <h3 class="text-xs tracking-wide text-muted-foreground">配色方案</h3>
+                <span class="text-2xs text-muted-foreground">
+                  {{ draft.themeMode === "system" ? "跟随系统时按系统明暗自动选择" : "" }}
+                </span>
+              </div>
+              <!-- 卡片列出核心配色：纯文字标签认不出「这套是什么感觉」，
+                   而选主题这件事本来就是看颜色决定的 -->
+              <div class="grid grid-cols-2 gap-2">
+                <button
+                  v-for="s in visibleSchemes"
+                  :key="s.id"
+                  :class="[
+                    'group relative cursor-pointer rounded-lg border p-2.5 text-left transition-colors duration-fast',
+                    isSchemeActive(s.id)
+                      ? 'border-primary/60 bg-primary-soft'
+                      : 'border-border hover:bg-hover',
+                  ]"
+                  :aria-pressed="isSchemeActive(s.id)"
+                  @click="pickScheme(s.id)"
+                >
+                  <!-- 色块：画布 / 卡片 / 主色 / 前景 / 成功 / 修改 -->
+                  <div class="flex items-center gap-1">
+                    <span
+                      v-for="(c, i) in s.swatches"
+                      :key="i"
+                      class="size-3.5 rounded-full ring-1 ring-inset ring-black/10"
+                      :style="{ background: c }"
+                    />
+                  </div>
+                  <div class="mt-2 flex items-center gap-1">
+                    <span class="min-w-0 flex-1 truncate text-xs font-medium">{{ s.label }}</span>
+                    <Check
+                      v-if="isSchemeActive(s.id)"
+                      class="size-3.5 shrink-0 text-primary"
+                      aria-hidden="true"
+                    />
+                  </div>
+                </button>
+              </div>
+              <p v-if="!visibleSchemes.length" class="py-6 text-center text-xs text-muted-foreground">
+                该模式暂无可选配色方案。
+              </p>
             </section>
 
             <section>
