@@ -8,12 +8,15 @@ name: Release
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD —— 生成时设的密码（空密码就留空字符串）
 # 没有这两个，构建出的包没有签名，updater 会拒绝安装（这是官方的强制校验）。
 
+# 只认 tag 推送，**不提供 workflow_dispatch**。
+# 原因：手动触发时 `github.ref_name` 是分支名（feature/0.1），而 tauri-action 会拿它
+# 当 tagName 去建 Release —— 于是在本地留下一个与分支同名的 tag。
+# 后果不只是垃圾：`git checkout feature/0.1` 会因同名 tag 报「refname is ambiguous」，
+# 解析到错误的对象就可能把 HEAD 弄成游离状态。
 on:
   push:
     tags:
       - "v*"
-  # 手动触发，方便先验证一遍流程
-  workflow_dispatch:
 
 jobs:
   release:
@@ -53,12 +56,8 @@ jobs:
         id: notes
         shell: bash
         run: |
-          # workflow_dispatch 下 GITHUB_REF_NAME 是分支名，从里面取不到版本号。
-          # 这种情况下退回读 package.json 的 version（tag 触发的正常路径不会走到）
-          case "$GITHUB_REF_NAME" in
-            v[0-9]*) VERSION="${GITHUB_REF_NAME#v}" ;;
-            *) VERSION=$(node -p "require('./package.json').version") ;;
-          esac
+          # 只由 tag 推送触发，GITHUB_REF_NAME 一定是 vX.Y.Z
+          VERSION="${GITHUB_REF_NAME#v}"
           FILE="docs/RELEASE-${VERSION}.md"
           # 只产出一份「纯文本 notes」：tauri-action 的 releaseBody 会被原样写进
           # latest.json 的 notes，而应用里的更新弹窗是纯文本展示 ——

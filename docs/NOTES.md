@@ -1767,3 +1767,26 @@ API 之后再说。
 该主题的真实变量逐个比对。不一致就报「卡片与真实主题不一致」。
 这条不能靠肉眼 —— 卡片画错只会让用户困惑「为什么选中后变了」，不会报任何错。
 （实测：故意把 light 的 background 改成 #000000，脚本立刻点名报错。）
+
+## 游离 HEAD 事故：`heads/feature/0.1` 那层多余嵌套
+
+症状：分支树里出现 `HEAD (detached at refs 1) → heads 1 → feature 1 → 0.1`，
+分支短名从 `feature/0.1` 变成 `heads/feature/0.1`，HEAD 不在任何分支上。
+
+### 两个叠加的成因
+
+1. **`workflow_dispatch` 会留下与分支同名的 tag**。手动触发 Release workflow 时
+   `github.ref_name` 是分支名（`feature/0.1`），而 `tauri-action` 拿它当 `tagName`
+   去建 Release —— 本地就有了 `refs/tags/feature/0.1`，与 `refs/heads/feature/0.1` 同名。
+   于是 `git checkout feature/0.1` 报 `refname is ambiguous`，解析到错误对象就可能游离。
+2. **完整引用名 checkout**。`git checkout refs/heads/feat/x` 不会切到分支，
+   而是把 HEAD 指向那个提交（游离）。之后 `git branch --format=%(refname:short)`
+   把它显示成 `heads/feat/x`，按 `/` 切就多一层。
+
+### 修复（三处）
+
+- 本地删掉同名垃圾 tag，`git checkout feature/0.1` 恢复符号引用
+- **workflow 去掉 `workflow_dispatch`**：只认 tag 推送。手动触发的代价（留下同名 tag
+  并引发歧义）远大于「先验证一遍流程」的便利
+- **Rust 侧 `reject_full_ref()`**：`git_checkout` 拒绝 `refs/` 开头的输入，
+  并提示改用短名。这类输入只可能来自脚本或手滑粘贴

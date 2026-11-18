@@ -886,12 +886,28 @@ pub async fn git_pull(repo: String) -> Result<(), String> {
     offload(move || run(&repo, &["pull", "--no-edit"]).map(|_| ())).await
 }
 
+/// 拒绝以 `refs/` 开头的完整引用名。
+///
+/// `git checkout refs/heads/feat/x` 不会切到分支，而是把 HEAD 弄成**游离状态**
+/// （直接指向那个提交）。更麻烦的是之后 `git branch --format=%(refname:short)`
+/// 会把它显示成 `heads/feat/x` —— 分支树里凭空多一层嵌套，用户会以为分支坏了。
+/// 这类名字只可能来自脚本或手滑粘贴，界面上永远给的是短名。
+fn reject_full_ref(what: &str, s: &str) -> Result<(), String> {
+    if s.starts_with("refs/") {
+        return Err(format!(
+            "{what}「{s}」是完整引用名，直接检出会让仓库进入游离 HEAD 状态。请改用短名（去掉 refs/heads/ 前缀）"
+        ));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn git_checkout(repo: String, name: String) -> Result<(), String> {
     offload(move || {
         // checkout 支持 --end-of-options：-f 之类会被当成分支名而不是选项（实测 2.47）
         let name = name.trim();
         check_positional("分支名", name)?;
+        reject_full_ref("分支名", name)?;
         run(&repo, &["checkout", "--end-of-options", name]).map(|_| ())
     })
     .await
@@ -2796,6 +2812,18 @@ prunable gitdir file points to non-existent location
         }
         for ok in ["feature/x", "中文分支", "release-1.0"] {
             assert!(check_positional("分支名", ok).is_ok(), "不应拒绝: {ok:?}");
+        }
+    }
+
+    #[test]
+    fn reject_full_ref_blocks_literal_refs() {
+        // 完整引用名 checkout 会让 HEAD 游离，且短名会变成 heads/xxx
+        for bad in ["refs/heads/feature/0.1", "refs/remotes/origin/main", "refs/tags/v1"] {
+            assert!(reject_full_ref("分支名", bad).is_err(), "应当拒绝: {bad:?}");
+        }
+        // 短名必须放行（含看起来像路径的、含点号的）
+        for ok in ["feature/0.1", "origin/main", "release-1.0", "main"] {
+            assert!(reject_full_ref("分支名", ok).is_ok(), "不应拒绝: {ok:?}");
         }
     }
 
