@@ -1790,3 +1790,32 @@ API 之后再说。
   并引发歧义）远大于「先验证一遍流程」的便利
 - **Rust 侧 `reject_full_ref()`**：`git_checkout` 拒绝 `refs/` 开头的输入，
   并提示改用短名。这类输入只可能来自脚本或手滑粘贴
+
+## 安装包：中文界面 + 应用图标
+
+`bundle.windows.nsis` 原本没有任何配置，走的是 Tauri 默认值 —— 语言只有 English。
+
+```json
+"windows": {
+  "nsis": {
+    "languages": ["SimpChinese"],
+    "displayLanguageSelector": false,
+    "installerIcon": "icons/icon.ico",
+    "uninstallerIcon": "icons/icon.ico"
+  }
+}
+```
+
+三点说明：
+
+- **不用自己写翻译**。Tauri 自带 `SimpChinese.nsh`（含「已安装」「选择你想要安装的方式」等
+  自定义文案），bundler 会按 `languages` 自动 include。
+- **`displayLanguageSelector: false`**：只有一种语言时不弹选择框。实测生成的
+  `installer.nsi` 里 `DISPLAYLANGUAGESELECTOR "false"`，`MUI_LANGDLL_DISPLAY` 被 `!if` 包住不生效。
+- **图标**：`installerIcon` / `uninstallerIcon` 指到同一个 `icon.ico`（内含 16→256 共 7 档），
+  NSIS 会挑合适尺寸。安装包 exe 自身的图标与安装器窗口图标都用它。
+
+验证方式：本地跑 `tauri build --bundles nsis`，然后检查 bundler 产出的
+`target/release/nsis/x64/installer.nsi`（这才是真正交给 makensis 的脚本）——
+看 `MUI_LANGUAGE` 只 insert 了 SimpChinese、`MUI_ICON` 指对路径。
+直接 grep exe 二进制找不到字符串，NSIS 的字符串段是压缩的。
