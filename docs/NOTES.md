@@ -1710,3 +1710,31 @@ RepoBar 用的是 `v-model:bar-order`，Sortable 直接读写这个数组。所�
 各平台 URL 预填指派人的支持都很差（GitHub 官方明确没有 assignee 参数；
 GitLab 要数字 ID）。要么接 API，要么只能复制到剪贴板 + 提示 —— 都留到接了
 API 之后再说。
+
+## 外观设置：点击即预览，保存才生效
+
+主题 / 字体 / 字号改动立刻画到 DOM，但**不写 `settings`**。
+
+为什么不能直接写 `settings`：它挂着一个 deep watch，任何字段变更都会
+`persist()` + `applySettings()` —— 点错一个主题就进了 localStorage，取消也回不去。
+
+所以拆成两个函数（`settings.ts`）：
+- `previewAppearance({theme, fontFamily, fontSize})` —— 只改 `documentElement` 的
+  `dataset.theme` / `style.fontFamily` / `style.fontSize`
+- `restoreSettings()` —— 用已保存的 `settings` 覆盖回去
+
+预览的 `theme` 判定要和 `resolvedTheme()` 一致：`system` 与「不认识的 id」都取
+`matchMedia("(prefers-color-scheme: dark)")` 的结果。
+
+### 关闭的三条路都得还原
+
+取消按钮、右上角 X、点遮罩 → 组件内统一走 `closeWithoutSaving()`。
+**Esc 走的是 App 的 overlay 链**，不经过组件，所以在 `overlayLayers.settings.close`
+里也调 `restoreSettings()` —— 漏了这一条，按 Esc 会留下一个不会被持久化的样式，
+看起来像「改了又自己变回去」。
+
+### 保存时再画一次
+
+`Object.assign(settings, draft)` 之后显式 `restoreSettings()`：settings 的 watcher 只在
+「值真的变了」时触发，而预览场景下它可能认为没变（预览成 A → 点回 B → 保存时
+`settings` 本来就是 B，watcher 不触发，但 DOM 上还留着 A 的痕迹）。

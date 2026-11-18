@@ -33,7 +33,7 @@ import {
 import * as api from "./gitApi";
 import { AI_PROMPTS, abortAi, aiComplete, aiUnavailableReason, clipForAI, isAbortError } from "./ai";
 import type { Status, LogEntry, Branch, TagEntry, ReflogEntry } from "./gitApi";
-import { parseBranchPrefixes, settings } from "./settings";
+import { parseBranchPrefixes, restoreSettings, settings } from "./settings";
 import { workflows } from "./workflowStore";
 import {
   Button,
@@ -2630,7 +2630,15 @@ const overlayLayers: Record<OverlayName, OverlayLayer> = {
   flowRun: { open: () => wfRunOpen.value, close: () => closeWfRun() },
   // 批次弹窗同理：执行中 Esc 只收起，不置空 wfBatch
   flowBatch: { open: () => wfBatchOpen.value, close: () => closeWfBatch() },
-  settings: { open: () => showSettings.value, close: () => (showSettings.value = false) },
+  // Esc 关设置 = 取消：外观预览（主题/字体改了但没保存）要还原，
+  // 否则界面会停在一个不会被持久化的样子上，看起来像「改了又变回去」
+  settings: {
+    open: () => showSettings.value,
+    close: () => {
+      restoreSettings();
+      showSettings.value = false;
+    },
+  },
   fileHistory: {
     open: () => !!fileHistoryModal.value,
     close: () => (fileHistoryModal.value = null),

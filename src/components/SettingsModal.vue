@@ -11,6 +11,8 @@ import {
   THEMES,
   settings,
   clampFontSize,
+  previewAppearance,
+  restoreSettings,
   parseBranchPrefixes,
   FONT_SIZE_MIN,
   FONT_SIZE_MAX,
@@ -54,6 +56,26 @@ const emit = defineEmits<{
 
 // 草稿编辑，保存才写回（写回后 watcher 自动持久化+生效）
 const draft = reactive<Settings>({ ...settings });
+
+// ---- 外观实时预览 ----
+// 主题/字体/字号改动立刻画到 DOM，但**不写 settings**（那会被 deep watch 持久化，
+// 点错一次就改不回来）。取消或关闭一律还原成已保存的值。
+// 只监听这三个字段：其它设置项（AI Key、工作流等）改动跟界面观感无关。
+watch(
+  () => [draft.theme, draft.fontFamily, draft.fontSize],
+  () => {
+    previewAppearance({
+      theme: draft.theme,
+      fontFamily: draft.fontFamily,
+      fontSize: draft.fontSize,
+    });
+  },
+);
+/** 关窗时还原。取消按钮、X、Esc 都走这里 —— 三条路只留一个出口才不会漏 */
+function closeWithoutSaving() {
+  restoreSettings();
+  emit("close");
+}
 const tab = ref<
   "user" | "ai" | "appearance" | "personal" | "workflow" | "remote" | "shortcuts" | "about"
 >(
@@ -128,6 +150,10 @@ function save() {
   // 保存不再顺手做网络验通：断网时连主题、字号都改不了是本末倒置，
   // 连通性交给 AI 页的「测试连接」按钮，结果就地显示。
   Object.assign(settings, draft);
+  // 外观可能早被 previewAppearance 画上去了，这里用权威值再画一次：
+  // settings 的 watcher 只在「值真的变了」时触发，预览过的情况下它可能认为没变
+  // （比如预览成 A → 又点回 B → 保存时 settings 里本来也是 B）
+  restoreSettings();
   if (props.repo && (userName.value.trim() || userEmail.value.trim())) {
     api.configUser(props.repo, userName.value.trim(), userEmail.value.trim()).catch(() => {});
   }
@@ -574,7 +600,7 @@ const NAV = [
     role="dialog"
     aria-modal="true"
     aria-labelledby="dlg-settings-title"
-    @click.self="emit('close')"
+    @click.self="closeWithoutSaving()"
   >
     <!-- 880x520：热力图满幅 + 各页留白；窗口过小时回退 95vw/95vh（热力图横向滚动，内容区滚动） -->
     <div class="pop-in surface flex h-[520px] max-h-[95vh] w-[880px] max-w-[95vw] overflow-hidden rounded-lg">
@@ -599,7 +625,7 @@ const NAV = [
         <header class="flex shrink-0 items-center border-b border-border px-4 py-2.5">
           <span id="dlg-settings-title" class="font-medium">设置</span>
           <span class="flex-1" />
-          <Button variant="ghost" size="icon" @click="emit('close')"><X class="size-4" /></Button>
+          <Button variant="ghost" size="icon" @click="closeWithoutSaving()"><X class="size-4" /></Button>
         </header>
 
         <div class="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
@@ -1291,7 +1317,7 @@ const NAV = [
 
         <!-- 底部操作条 -->
         <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-2.5">
-          <Button variant="ghost" size="sm" @click="emit('close')">取消</Button>
+          <Button variant="ghost" size="sm" @click="closeWithoutSaving()">取消</Button>
           <Button variant="default" size="sm" @click="save">保存</Button>
         </footer>
       </div>

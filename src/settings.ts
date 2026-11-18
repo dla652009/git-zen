@@ -176,6 +176,27 @@ export function applySettings() {
   ].forEach((k) => root.style.removeProperty(k));
 }
 
+/**
+ * 把一组「外观」值直接画到 DOM 上，**不写 settings**。
+ *
+ * 用途是设置页的实时预览：用户点一下主题/字体就该马上看到效果，但不能因为点错了
+ * 就被持久化 —— settings 的 deep watch 会把任何变更立刻写进 localStorage。
+ * 所以预览只碰 DOM，取消时调 restoreSettings() 用已保存的值覆盖回去。
+ */
+export function previewAppearance(p: Pick<Settings, "theme" | "fontFamily" | "fontSize">) {
+  const root = document.documentElement;
+  const fallback = mql.matches ? "dark" : "light";
+  root.dataset.theme =
+    p.theme === "system" || !THEMES.some((t) => t.id === p.theme) ? fallback : p.theme;
+  root.style.fontFamily = p.fontFamily;
+  root.style.fontSize = clampFontSize(p.fontSize) + "px";
+}
+
+/** 用已保存的 settings 覆盖 DOM —— 取消预览时调 */
+export function restoreSettings() {
+  applySettings();
+}
+
 function applyTheme() {
   document.documentElement.dataset.theme = resolvedTheme();
 }
