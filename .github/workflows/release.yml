@@ -46,6 +46,35 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Release 正文与 latest.json 的 notes 是同一份文本：tauri-action 会把 releaseBody
+      # 原样写进 notes，所以这里取 docs/RELEASE-<版本>.md。
+      # 版本号从 tag 里剥掉前缀 v（v0.5.1 → 0.5.1）。
+      - name: 读取发布说明
+        id: notes
+        shell: bash
+        run: |
+          # workflow_dispatch 下 GITHUB_REF_NAME 是分支名，从里面取不到版本号。
+          # 这种情况下退回读 package.json 的 version（tag 触发的正常路径不会走到）
+          case "$GITHUB_REF_NAME" in
+            v[0-9]*) VERSION="${GITHUB_REF_NAME#v}" ;;
+            *) VERSION=$(node -p "require('./package.json').version") ;;
+          esac
+          FILE="docs/RELEASE-${VERSION}.md"
+          if [ -f "$FILE" ]; then
+            # 用 heredoc 写进 GITHUB_OUTPUT：直接 echo 会因为正文里的换行和特殊字符被截断
+            {
+              echo "body<<RELEASE_EOF"
+              cat "$FILE"
+              echo "RELEASE_EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "已读取 $FILE"
+          else
+            echo "body<<RELEASE_EOF"
+            echo "更新说明见仓库 docs/ 目录。"
+            echo "RELEASE_EOF"
+            echo "::warning::找不到 $FILE，Release 正文将使用占位文案"
+          fi
+
       - name: 构建并发布
         uses: tauri-apps/tauri-action@v0
         env:
@@ -55,8 +84,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "git-zen ${{ github.ref_name }}"
-          # 从 docs/RELEASE-<版本号>.md 取正文；文件不存在时为空白（不至于因此失败）
-          releaseBody: ""
+          releaseBody: ${{ steps.notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           # tauri-action 会生成 latest.json 并一并上传，updater 的 endpoint 就指着它
