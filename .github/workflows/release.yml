@@ -72,7 +72,13 @@ jobs:
                 -e 's/\*\*([^*]+)\*\*/\1/g' \
                 -e 's/`([^`]+)`/\1/g' \
                 -e 's/^[[:space:]]*[-*][[:space:]]+/· /' \
-                "$FILE" | cat -s
+                "$FILE" \
+                | awk 'NR==1 && /^git-zen[[:space:]]+[0-9]/ {next} {print}' \
+                | cat -s \
+                | sed -E '/./,$!d'
+              # 上面两条的顺序很重要：井号必须先剥掉，awk 才能认出
+              # 「git-zen 0.5.2」是重复标题（原文是「# git-zen 0.5.2」）。
+              # 弹窗标题已经显示版本号了，正文再重复一遍很啰嗦。
             else
               echo "本次更新没有附说明。"
               echo "::warning file=$FILE::找不到发布说明，Release 正文使用占位文案"

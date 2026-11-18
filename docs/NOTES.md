@@ -1819,3 +1819,25 @@ API 之后再说。
 `target/release/nsis/x64/installer.nsi`（这才是真正交给 makensis 的脚本）——
 看 `MUI_LANGUAGE` 只 insert 了 SimpChinese、`MUI_ICON` 指对路径。
 直接 grep exe 二进制找不到字符串，NSIS 的字符串段是压缩的。
+
+## Release 说明的两处细节（0.5.2 踩到）
+
+### 重复标题
+
+发布说明首行是 `# git-zen 0.5.2`，剥掉井号后变成 `git-zen 0.5.2`，
+而更新弹窗的标题已经显示版本号 —— 正文再重复一遍很啰嗦。
+
+删它有个顺序要求：**必须先剥井号，再判断首行**。反过来 awk 匹配 `^git-zen`
+永远不命中（原文开头是 `#`）。处理的管道是：
+
+    sed 剥标记 → awk 跳过重复首行 → cat -s 压空行 → sed 去前导空行
+
+最后那步不能省：awk `next` 掉首行后会留下一个空行开头，`cat -s` 只压连续空行，
+管不到开头这一个。
+
+### 垃圾 tag 会从远程复活
+
+本地 `git tag -d feature/0.1` 删掉后，下次 `git fetch --tags` 又会拉回来 ——
+因为 0.5.0 那次 `workflow_dispatch` 产生的 tag 早已推到远程了。
+彻底清除要连远程一起删（API `DELETE /git/refs/tags/<name>`），否则它会一直
+让 `feature/0.1` 这个 refname 歧义。
