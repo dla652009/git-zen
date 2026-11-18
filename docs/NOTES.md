@@ -1841,3 +1841,29 @@ API 之后再说。
 因为 0.5.0 那次 `workflow_dispatch` 产生的 tag 早已推到远程了。
 彻底清除要连远程一起删（API `DELETE /git/refs/tags/<name>`），否则它会一直
 让 `feature/0.1` 这个 refname 歧义。
+
+## 禁用 WebView 默认右键菜单
+
+桌面应用弹出「重新加载 / 检查元素 / 另存为」是明显的浏览器感。
+
+Tauri 2.12 没有把这个开关透出来（`wry` 有 `with_default_context_menus`，
+但 `tauri` crate 里搜不到对应字段），所以只能在 `main.ts` 里全局拦。
+
+### 必须放行输入框
+
+无条件 `preventDefault` 会让提交信息框、搜索框、设置里的输入项全部失去
+剪切/复制/粘贴/全选 —— 尤其**右键粘贴**是很多人的习惯操作。
+所以按 `composedPath()` 判断链路上有没有 `input` / `textarea` / `contenteditable`，
+命中就放行，保留原生编辑菜单。
+
+用 `composedPath()` 而非 `e.target`：元素在 Shadow DOM 里时 `target` 会被重定向到宿主，
+拿不到真实的焦点元素。
+
+### 不影响应用自己的右键菜单
+
+在 `window` 上用 `{ capture: true }` 拦，但 `preventDefault()` **不阻止事件继续传播** ——
+组件上的 `@contextmenu.prevent="openMenu()"` 照样会执行（冒泡阶段）。
+实测顺序：`window捕获: preventDefault → 组件处理: 打开自定义菜单`。
+
+验证用一个同构页面跑真实事件（普通 div / input / textarea / contenteditable / body），
+五种目标的结果与预期一致。
