@@ -60,20 +60,26 @@ jobs:
             *) VERSION=$(node -p "require('./package.json').version") ;;
           esac
           FILE="docs/RELEASE-${VERSION}.md"
-          if [ -f "$FILE" ]; then
-            # 用 heredoc 写进 GITHUB_OUTPUT：直接 echo 会因为正文里的换行和特殊字符被截断
-            {
-              echo "body<<RELEASE_EOF"
-              cat "$FILE"
-              echo "RELEASE_EOF"
-            } >> "$GITHUB_OUTPUT"
-            echo "已读取 $FILE"
-          else
-            echo "body<<RELEASE_EOF"
-            echo "更新说明见仓库 docs/ 目录。"
-            echo "RELEASE_EOF"
-            echo "::warning::找不到 $FILE，Release 正文将使用占位文案"
-          fi
+          # 只产出一份「纯文本 notes」：tauri-action 的 releaseBody 会被原样写进
+          # latest.json 的 notes，而应用里的更新弹窗是纯文本展示 ——
+          # 塞 markdown 会让用户看到一堆 ## 和 **，所以这里是剥过的版本。
+          # （Release 网页也因此不带格式，只少一点加粗，可接受。）
+          {
+            echo "notes<<NOTES_EOF"
+            if [ -f "$FILE" ]; then
+              sed -E \
+                -e 's/^#{1,6}[[:space:]]+//' \
+                -e '/^[[:space:]]*```/d' \
+                -e 's/\*\*([^*]+)\*\*/\1/g' \
+                -e 's/`([^`]+)`/\1/g' \
+                -e 's/^[[:space:]]*[-*][[:space:]]+/· /' \
+                "$FILE" | cat -s
+            else
+              echo "本次更新没有附说明。"
+              echo "::warning file=$FILE::找不到发布说明，Release 正文使用占位文案"
+            fi
+            echo "NOTES_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: 构建并发布
         uses: tauri-apps/tauri-action@v0
@@ -84,7 +90,10 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "git-zen ${{ github.ref_name }}"
-          releaseBody: ${{ steps.notes.outputs.body }}
+          # 用纯文本版：tauri-action 把 releaseBody 原样写进 latest.json 的 notes，
+          # 而应用里的更新弹窗是纯文本展示 —— 塞 markdown 会让用户看到一堆 ## 和 **。
+          # Release 页面因此也不带格式（只少一点加粗，可接受）。
+          releaseBody: ${{ steps.notes.outputs.notes }}
           releaseDraft: false
           prerelease: false
           # tauri-action 会生成 latest.json 并一并上传，updater 的 endpoint 就指着它
