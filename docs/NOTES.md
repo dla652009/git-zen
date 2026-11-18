@@ -1867,3 +1867,23 @@ Tauri 2.12 没有把这个开关透出来（`wry` 有 `with_default_context_menu
 
 验证用一个同构页面跑真实事件（普通 div / input / textarea / contenteditable / body），
 五种目标的结果与预期一致。
+
+## 改图标后 `tauri dev` 不生效（已修）
+
+`tauri-build` 只把 `tauri.conf.json` 登记成重编触发条件，**图标文件本身不会**。
+换掉 `icons/icon.ico` 之后 cargo 认为什么都没变，压根不重编 ——
+`tauri dev` 跑的还是旧 exe，图标自然没变（debug exe 里还是旧资源）。
+
+`build.rs` 里补上声明即可：
+
+```rust
+println!("cargo:rerun-if-changed=icons/icon.ico");
+println!("cargo:rerun-if-changed=tauri.conf.json");
+```
+
+验证方式：`touch icons/icon.ico` 后跑 `cargo build`，应当看到 `Compiling git-zen`
+而不是直接 `Finished`；再从 debug exe 的 `.rsrc` 段里逐档比对图标字节。
+
+另外 Windows 有图标缓存，换图标后任务栏可能仍显示旧的。清缓存：
+停 explorer → 删 `%LOCALAPPDATA%\IconCache.db` 与 `Microsoft\Windows\Explorer\iconcache_*.db`
+→ 重启 explorer。
