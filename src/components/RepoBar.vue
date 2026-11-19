@@ -102,13 +102,13 @@ const barOrder = defineModel<BarEntry[]>("barOrder", { required: true });
           role="button"
           aria-haspopup="menu"
           :aria-expanded="openFolder === item.name"
-          class="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors duration-fast select-none outline-none focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
+          class="flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border-x border-t-2 border-b-0 px-3 text-xs whitespace-nowrap transition-colors duration-fast select-none outline-none focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
           :class="[
             folderHighlighted(item.name)
-              ? 'border-primary/60 bg-primary/10 text-primary ring-1 ring-primary/40'
+              ? 'border-primary/60 border-t-primary bg-primary/10 text-primary ring-1 ring-primary/40'
               : isGroupActive(item.name)
-                ? 'border-border bg-background font-medium text-foreground'
-                : 'border-transparent text-muted-foreground transition-colors duration-fast hover:bg-hover',
+                ? 'border-border border-t-primary bg-background font-medium text-foreground'
+                : 'border-transparent text-muted-foreground hover:bg-hover hover:text-foreground',
           ]"
           :title="`分组「${item.name}」· ${groupCount(item.name)} 个仓库 · 点击展开；拖仓库到此处可收进分组，右键可重命名/删除`"
           @click.stop="emit('folder-toggle', item.name, $event)"
@@ -122,18 +122,19 @@ const barOrder = defineModel<BarEntry[]>("barOrder", { required: true });
           />
           <!-- 分组名长起来会挤爆标签栏：截断 + 成员数，让每个文件夹的宽度可预期 -->
           <span class="max-w-[140px] truncate">{{ item.name }}</span>
-          <span class="text-2xs text-muted-foreground">{{ groupCount(item.name) }}</span>
+          <span class="text-2xs text-muted-foreground tabular-nums">{{ groupCount(item.name) }}</span>
           <ChevronDown class="size-3 opacity-50" />
         </div>
-        <!-- 仓库选项卡 -->
+        <!-- 仓库选项卡：激活页签用「背景接回内容区 + 顶部 2px 主色条」表达，
+             不再靠整体提亮 —— 深色主题里提亮一档会把它读成按钮。 -->
         <div
           v-else
           :data-repo-path="item.path"
-          class="group/tab flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 text-xs whitespace-nowrap transition-colors duration-fast select-none"
+          class="group/tab flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border-x border-t-2 border-b-0 px-3 text-xs whitespace-nowrap transition-colors duration-fast select-none"
           :class="[
             item.path === currentRepo
-              ? 'border-border bg-background font-medium text-foreground'
-              : 'border-transparent text-muted-foreground transition-colors duration-fast hover:bg-hover',
+              ? 'border-border border-t-primary bg-background font-medium text-foreground'
+              : 'border-transparent text-muted-foreground hover:bg-hover hover:text-foreground',
           ]"
           @click="emit('switch-repo', item.path)"
           @contextmenu.prevent="emit('tab-menu', $event, item.path)"
@@ -164,8 +165,11 @@ const barOrder = defineModel<BarEntry[]>("barOrder", { required: true });
                 : 'bg-[var(--badge-info-bg)] text-[var(--badge-info-fg)]'
             "
           >{{ worktreeInfo.get(item.path)?.isMain ? "主" : "工作树" }}</span>
+          <!-- 关闭键始终占位（避免 hover 时才挤进来导致页签宽度跳动）；
+               当前页签常态可见但压低，其余页签悬停整行才出现。 -->
           <X
-            class="size-3 opacity-0 transition-opacity duration-fast group-hover/tab:opacity-60 hover:!opacity-100 hover:text-destructive"
+            class="size-3 shrink-0 transition-opacity duration-fast hover:text-destructive"
+            :class="item.path === currentRepo ? 'opacity-45 hover:!opacity-100' : 'pointer-events-none opacity-0 group-hover/tab:pointer-events-auto group-hover/tab:opacity-60 hover:!opacity-100'"
             aria-label="关闭仓库选项卡"
             @mousedown.stop
             @click.stop="emit('close-tab', item.path)"
@@ -177,7 +181,7 @@ const barOrder = defineModel<BarEntry[]>("barOrder", { required: true });
       <Button
         variant="ghost"
         size="icon"
-        class="mr-1 mb-0.5 h-6 w-6 shrink-0"
+        class="mr-1 h-7 w-7 shrink-0"
         aria-label="所有仓库总览"
         @click="emit('open-overview')"
       >
@@ -185,7 +189,7 @@ const barOrder = defineModel<BarEntry[]>("barOrder", { required: true });
       </Button>
     </Tooltip>
     <Tooltip text="管理分组">
-      <Button variant="ghost" size="icon" class="mr-1 mb-0.5 h-6 w-6 shrink-0" @click="emit('open-group-mgr')">
+      <Button variant="ghost" size="icon" class="mr-1 h-7 w-7 shrink-0" @click="emit('open-group-mgr')">
         <FolderPlus class="size-4" />
       </Button>
     </Tooltip>

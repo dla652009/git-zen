@@ -22,38 +22,41 @@ const imeConfirm = imeGuard(() => emit("confirm"));
 
 <template>
   <Transition name="dlg">
-  <div
-    v-if="open"
-    v-trap
-    class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="dlg-create-branch-title"
-    @click.self="open = false"
-  >
-    <div class="w-dlg-md surface rounded-lg p-5 pop-in">
-      <div id="dlg-create-branch-title" class="mb-3 text-base font-semibold">新建分支</div>
-      <div class="flex gap-2">
-        <Select
-          v-model="prefix"
-          class="w-32 shrink-0"
-          :options="[
-            { value: '', label: '无前缀' },
-            ...prefixes.map((p: string) => ({ value: p, label: p })),
-          ]"
-        />
-        <Input v-model="name" placeholder="分支名" @keydown.enter.prevent="imeConfirm" />
-      </div>
-      <p class="mt-2 text-xs text-muted-foreground">
-        基于当前分支 {{ status?.branch || "—" }} 创建并自动切换。
-      </p>
-      <div class="mt-5 flex justify-end gap-2">
-        <Button variant="ghost" size="sm" @click="open = false">取消</Button>
-        <Button variant="default" size="sm" :disabled="!name.trim() || busy" @click="emit('confirm')">
-          创建
-        </Button>
+    <div
+      v-if="open"
+      v-trap
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-create-branch-title"
+      @click.self="open = false"
+    >
+      <div class="dialog-shell w-dlg-md surface rounded-lg pop-in">
+        <header class="dialog-header">
+          <div id="dlg-create-branch-title" class="dialog-title">新建分支</div>
+        </header>
+        <div class="dialog-body space-y-4">
+          <div class="dialog-two-fields">
+            <label class="dialog-field text-xs">
+              <span class="font-medium">分支前缀</span>
+              <Select v-model="prefix" label="分支前缀" :options="[{ value: '', label: '无前缀' }, ...prefixes.map((p: string) => ({ value: p, label: p }))]" />
+            </label>
+            <label class="dialog-field text-xs">
+              <span class="font-medium">分支名称</span>
+              <Input v-model="name" placeholder="输入分支名称" @keydown.enter.prevent="imeConfirm" />
+            </label>
+          </div>
+          <div class="rounded-sm border border-border bg-muted p-3 text-xs leading-relaxed">
+            <span class="text-muted-foreground">基于当前分支</span>
+            <div class="mt-1 break-all font-mono">{{ status?.branch || '—' }}</div>
+            <p class="mt-1 text-muted-foreground">创建成功后自动切换到新分支。</p>
+          </div>
+        </div>
+        <footer class="dialog-footer">
+          <Button variant="ghost" size="sm" @click="open = false">取消</Button>
+          <Button variant="default" size="sm" :disabled="!name.trim() || busy" @click="emit('confirm')">创建分支</Button>
+        </footer>
       </div>
     </div>
-  </div>
   </Transition>
 </template>

@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
 const badgeVariants = cva(
   // 形状：不再用 rounded-full。实心药丸读起来像「按钮」，而徽标只是标注 —— 它该更像一枚标签。
   // 圆角走 rounded-xs（尺度表里 chip 那一档），保留一点圆润但明确是矩形。
-  "inline-flex items-center gap-1 rounded-xs px-1.5 py-0 text-xs font-medium whitespace-nowrap tabular-nums",
+  "inline-flex h-[1.2rem] min-w-[1.2rem] items-center justify-center gap-1 rounded-xs px-1.5 text-xs leading-none font-medium whitespace-nowrap tabular-nums",
   {
     variants: {
       variant: {

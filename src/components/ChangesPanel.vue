@@ -31,6 +31,7 @@ import { settings } from "../settings";
 import { humanizeMsg } from "../lib/errors";
 import { readCommitConvention } from "../lib/repoDocs";
 import { isUnmerged } from "../lib/conflict";
+import { relDateText } from "../lib/relDate";
 import { buildFileRows, displayPath, tailName, type FileRow } from "../lib/fileTree";
 import {
   Button,
@@ -120,6 +121,7 @@ const commitMenuItems = computed<MenuItem[]>(() => [
 // ---- stash（暂存架）：菜单打开时懒加载列表，收纳/恢复走 App.run() ----
 const stashMenuOpen = ref(false);
 const stashAnchor = ref({ x: 0, y: 0 });
+const stashMenuEl = ref<HTMLElement | null>(null);
 const stashEntries = ref<StashEntry[] | null>(null); // null = 加载中
 const stashErr = ref("");
 const stashPushOpen = ref(false);
@@ -128,6 +130,15 @@ const stashUntracked = ref(false);
 // 「恢复并删除」会丢掉 stash 记录，先弹确认（与 App.vue 的危险确认同款：焦点默认落「取消」）
 const stashPopConfirm = ref<StashEntry | null>(null);
 const stashPopCancelBtn = ref<{ $el: HTMLButtonElement } | null>(null);
+
+watch([stashMenuOpen, stashEntries, stashErr], async () => {
+  await nextTick();
+  if (!stashMenuOpen.value || !stashMenuEl.value) return;
+  stashAnchor.value = {
+    x: Math.max(8, Math.min(stashAnchor.value.x, window.innerWidth - stashMenuEl.value.offsetWidth - 8)),
+    y: Math.max(8, Math.min(stashAnchor.value.y, window.innerHeight - stashMenuEl.value.offsetHeight - 8)),
+  };
+});
 
 // 每次打开菜单都重取：stash 列表会被别处改动（终端里的 git stash、App 自己的删除）
 async function loadStash() {
@@ -184,14 +195,19 @@ function confirmStashPop() {
   stashPopConfirm.value = null;
   stashRestore(e.index, true);
 }
-function onStashPopKeydown(ev: KeyboardEvent) {
-  if (ev.key === "Escape") closeStashPop();
+function onStashDialogKeydown(ev: KeyboardEvent) {
+  if (ev.isComposing || ev.key !== "Escape") return;
+  if (!stashPopConfirm.value && !stashPushOpen.value) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  if (stashPopConfirm.value) closeStashPop();
+  else stashPushOpen.value = false;
 }
-// 这个弹窗不进 App.vue 的 overlayOrder（那是顶层浮层的表），Esc 自己收
-watch(stashPopConfirm, (open, _prev, onCleanup) => {
-  if (!open) return;
-  window.addEventListener("keydown", onStashPopKeydown);
-  onCleanup(() => window.removeEventListener("keydown", onStashPopKeydown));
+// 局部模态优先消费 Esc，避免同一次按键关闭下层窗口。
+watch([stashPopConfirm, stashPushOpen], ([pop, push], _prev, onCleanup) => {
+  if (!pop && !push) return;
+  window.addEventListener("keydown", onStashDialogKeydown, true);
+  onCleanup(() => window.removeEventListener("keydown", onStashDialogKeydown, true));
 });
 function openStashPush() {
   stashMenuOpen.value = false;
@@ -647,14 +663,16 @@ async function genCommitMsg() {
 
     <!-- 已暂存 -->
     <div class="flex shrink-0 items-center gap-2 px-3 pt-3 pb-1.5">
-      <span class="text-2xs font-semibold tracking-wide text-muted-foreground">已暂存</span>
-      <Badge v-if="staged.length" variant="default">{{ staged.length }}</Badge>
+      <span class="text-xs font-semibold tracking-wide text-muted-foreground">已暂存</span>
+      <!-- 计数只是数量，不是状态强调：暂存/未暂存都用中性徽标，
+           颜色留给冲突、删除等真正需要注意的行 -->
+      <Badge v-if="staged.length" variant="muted">{{ staged.length }}</Badge>
       <!-- 全部取消暂存 -->
       <Button
         v-if="staged.length"
         variant="ghost"
         size="sm"
-        class="ml-auto h-6 px-2 text-xs"
+        class="ml-auto h-6 px-1.5 text-xs font-medium text-muted-foreground hover:bg-hover hover:text-foreground"
         @click="
           emit('action', async () => {
             await api.unstage(repo, staged.map((f) => filePath(f)));
@@ -718,8 +736,8 @@ async function genCommitMsg() {
         <!-- 文件行：位置已经表达了目录，名字只显示文件名（完整路径在 tooltip 里） -->
         <li
           v-if="row.kind === 'file'"
-          class="group/li flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-sm py-1.5 pr-2 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
-          :class="selKey === row.key && 'bg-primary-soft'"
+          class="group/li flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-sm py-1.5 pr-2 whitespace-nowrap transition-colors duration-fast"
+          :class="selKey === row.key ? 'bg-row-selected' : 'hover:bg-hover'"
           :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
           @click="onRowClick(row.key, () => emit('openDiff', { path: row.path, cached: !isUnmerged(row.item), untracked: false, conflict: isUnmerged(row.item) }))"
           @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f: row.item, cached: true }"
@@ -728,7 +746,7 @@ async function genCommitMsg() {
           <Tooltip :text="`${statusMeta(row.item).desc} · ${row.item.path}`">
             <span class="truncate text-sm">
               <template v-if="renameNames(row.item)">
-                <span class="text-muted-foreground line-through">{{ renameNames(row.item)![0] }}</span>
+                <span class="line-through" :class="selKey === row.key ? 'text-foreground' : 'text-muted-foreground'">{{ renameNames(row.item)![0] }}</span>
                 → {{ renameNames(row.item)![1] }}
               </template>
               <template v-else>{{ row.label }}</template>
@@ -756,13 +774,14 @@ async function genCommitMsg() {
 
     <!-- 未暂存 -->
     <div class="mt-2 flex shrink-0 items-center gap-2 border-t border-border px-3 pt-3 pb-1.5">
-      <span class="text-2xs font-semibold tracking-wide text-muted-foreground">未暂存</span>
-      <Badge v-if="unstaged.length" variant="danger">{{ unstaged.length }}</Badge>
+      <span class="text-xs font-semibold tracking-wide text-muted-foreground">未暂存</span>
+      <!-- 普通变更不是危险状态：数量用中性徽标，红色只留给冲突与删除 -->
+      <Badge v-if="unstaged.length" variant="muted">{{ unstaged.length }}</Badge>
       <Button
         v-if="unstaged.length"
         variant="ghost"
         size="sm"
-        class="ml-auto h-6 px-2 text-xs"
+        class="ml-auto h-6 px-1.5 text-xs font-medium text-muted-foreground hover:bg-hover hover:text-foreground"
         @click="emit('action', () => stageAll(unstaged.map((f) => filePath(f))))"
       >
         全部暂存
@@ -819,8 +838,8 @@ async function genCommitMsg() {
         <!-- 文件行：位置已经表达了目录，名字只显示文件名（完整路径在 tooltip 里） -->
         <li
           v-if="row.kind === 'file'"
-          class="group/li flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-sm py-1.5 pr-2 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
-          :class="selKey === row.key && 'bg-primary-soft'"
+          class="group/li flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-sm py-1.5 pr-2 whitespace-nowrap transition-colors duration-fast"
+          :class="selKey === row.key ? 'bg-row-selected' : 'hover:bg-hover'"
           :style="{ paddingLeft: 8 + row.depth * 12 + 'px' }"
           @click="onRowClick(row.key, () => emit('openDiff', { path: row.path, cached: false, untracked: row.item.x === '?', conflict: isUnmerged(row.item) }))"
           @contextmenu.prevent="fileCtx = { x: $event.clientX, y: $event.clientY, f: row.item, cached: false }"
@@ -829,7 +848,7 @@ async function genCommitMsg() {
           <Tooltip :text="`${statusMeta(row.item).desc} · ${row.item.path}`">
             <span class="truncate text-sm">
               <template v-if="renameNames(row.item)">
-                <span class="text-muted-foreground line-through">{{ renameNames(row.item)![0] }}</span>
+                <span class="line-through" :class="selKey === row.key ? 'text-foreground' : 'text-muted-foreground'">{{ renameNames(row.item)![0] }}</span>
                 → {{ renameNames(row.item)![1] }}
               </template>
               <template v-else>{{ row.label }}</template>
@@ -891,29 +910,35 @@ async function genCommitMsg() {
 
     <!-- 提交区：固定底部卡片 -->
     <div class="shrink-0 space-y-2 border-t border-border bg-card p-3">
-      <div class="relative">
-        <!-- 字号钉在 text-fixed（固定 px，不跟随「设置 → 字号」）：这里是右栏最大的文字，
-             跟着字号放大到 16-17px 会挤掉可见行数 -->
-        <Textarea
-          v-model="message"
-          rows="4"
-          class="pr-9 text-fixed"
-          placeholder="提交信息…"
-          @keydown.ctrl.enter="onCommitKeydown"
-        />
+      <!-- 标题行把「提交信息」和 AI 入口放在同一层：AI 按钮原先浮在输入框右上角，
+           容易和正文抢注意力，也让输入区看起来没有标题。 -->
+      <div class="flex items-center gap-1.5">
+        <span class="text-xs font-semibold tracking-wide text-muted-foreground">提交信息</span>
+        <span class="flex-1" />
         <Tooltip text="AI 生成提交信息">
           <Button
-            variant="ghost"
-            size="icon"
-            class="absolute top-1.5 right-1.5 h-6 w-6"
+            variant="quiet"
+            size="sm"
+            class="h-6 gap-1 px-1.5 text-xs font-medium text-muted-foreground hover:text-foreground"
             :disabled="aiBusy || !staged.length || busy"
+            aria-label="AI 生成提交信息"
             @click="genCommitMsg"
           >
-            <Spinner v-if="aiBusy" :size="13" />
-            <Sparkles v-else class="size-3.5 text-primary" />
+            <Spinner v-if="aiBusy" :size="12" />
+            <Sparkles v-else class="size-3 text-primary" />
+            AI 生成
           </Button>
         </Tooltip>
       </div>
+      <!-- 字号钉在 text-fixed（固定 px，不跟随「设置 → 字号」）：这里是右栏最大的文字，
+           跟着字号放大到 16-17px 会挤掉可见行数 -->
+      <Textarea
+        v-model="message"
+        rows="4"
+        class="text-fixed"
+        placeholder="提交信息…"
+        @keydown.ctrl.enter="onCommitKeydown"
+      />
       <div v-if="aiErr" class="flex items-start gap-1.5 text-xs leading-relaxed text-destructive">
         <span class="flex-1 break-words">{{ aiErr }}</span>
         <!-- 前置条件提示不给关闭按钮：它随条件达成自己消失，关掉反而把「没做的事」说成做了 -->
@@ -954,10 +979,20 @@ async function genCommitMsg() {
           </Button>
         </Tooltip>
       </div>
-      <Button variant="default" class="w-full tabular-nums" :disabled="!canCommit" @click="doCommit">
-        <Spinner v-if="busy" :size="14" />
-        {{ busy ? "处理中…" : `提交${staged.length ? ` (${staged.length})` : ""}` }}
-      </Button>
+      <!-- 主按钮不铺满整行：整行宽的实心块读起来像页脚而不是动作；
+           快捷键提示放在按钮右侧，和参考图一致，也不额外占一行高度。 -->
+      <div class="flex items-center gap-2.5">
+        <Button
+          variant="default"
+          class="min-w-[7rem] px-5 tabular-nums"
+          :disabled="!canCommit"
+          @click="doCommit"
+        >
+          <Spinner v-if="busy" :size="14" />
+          {{ busy ? "处理中…" : `提交${staged.length ? ` (${staged.length})` : ""}` }}
+        </Button>
+        <span class="truncate text-2xs text-muted-foreground">Ctrl + Enter</span>
+      </div>
       <Transition name="dlg">
       <ContextMenu
         v-if="commitMenuPos"
@@ -978,8 +1013,9 @@ async function genCommitMsg() {
       @contextmenu.prevent="stashMenuOpen = false"
     >
       <div
-        class="pop-in surface-menu fixed max-h-[60vh] w-[300px] overflow-y-auto rounded-sm py-1"
-        :style="{ left: stashAnchor.x + 'px', top: stashAnchor.y + 'px' }"
+        ref="stashMenuEl"
+        class="bounded-menu pop-in surface-menu fixed w-[320px] rounded-sm py-1"
+        :style="{ left: stashAnchor.x + 'px', top: stashAnchor.y + 'px', maxHeight: 'min(60vh, calc(100vh - 16px))' }"
       >
         <div class="px-3 py-1 text-2xs font-semibold tracking-wide text-muted-foreground">
           Stash · 暂存架
@@ -1001,10 +1037,13 @@ async function genCommitMsg() {
             v-for="e in stashEntries"
             :key="e.index"
             class="group/st flex items-center gap-2 px-3 py-1.5 text-xs transition-colors duration-fast hover:bg-hover"
-            :title="`${e.subject} · ${e.date}\n右侧图标：恢复改动 / 恢复并删除 / 删除记录`"
+            :title="`${e.subject} · ${relDateText(e.date)}\n右侧图标：恢复改动 / 恢复并删除 / 删除记录`"
           >
             <Archive class="size-3 shrink-0 text-muted-foreground" />
-            <span class="min-w-0 flex-1 truncate">{{ e.subject }}</span>
+            <div class="min-w-0 flex-1">
+              <div class="truncate font-medium">{{ e.subject }}</div>
+              <div class="mt-0.5 truncate text-2xs text-muted-foreground">stash@{ {{ e.index }} } · {{ relDateText(e.date) }}</div>
+            </div>
             <span
               class="flex shrink-0 items-center gap-1 opacity-60 transition-opacity duration-fast group-hover/st:opacity-100 group-focus-within/st:opacity-100"
             >
@@ -1062,20 +1101,27 @@ async function genCommitMsg() {
       aria-labelledby="dlg-stash-push-title"
       @click.self="stashPushOpen = false"
     >
-      <div class="w-dlg-sm surface rounded-lg p-5 pop-in">
-        <div id="dlg-stash-push-title" class="mb-2 font-medium">收纳改动到 Stash</div>
-        <Input v-model="stashMsg" placeholder="备注（可选）" />
-        <label class="mt-2 flex cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-          <input v-model="stashUntracked" type="checkbox" class="accent-[var(--primary)]" />
-          包含未跟踪文件
-        </label>
-        <p class="mt-1.5 text-xs leading-relaxed text-muted-foreground">
-          把已暂存与未暂存的改动一起收进暂存架，工作区恢复干净；稍后可从 stash 菜单恢复。
-        </p>
-        <div class="mt-3 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" @click="stashPushOpen = false">取消</Button>
-          <Button variant="default" size="sm" :disabled="busy" @click="doStashPush">收纳</Button>
+      <div class="dialog-shell w-dlg-sm surface rounded-lg pop-in">
+        <header class="dialog-header">
+          <div id="dlg-stash-push-title" class="dialog-title">收纳改动到 Stash</div>
+        </header>
+        <div class="dialog-body space-y-4">
+          <label class="dialog-field text-xs">
+            <span class="font-medium">备注 <span class="font-normal text-muted-foreground">（可选）</span></span>
+            <Input v-model="stashMsg" placeholder="方便下次找回这批改动" />
+          </label>
+          <label class="flex cursor-pointer items-start gap-2 text-sm">
+            <input v-model="stashUntracked" type="checkbox" class="mt-1 shrink-0 accent-[var(--primary)]" />
+            <span>包含未跟踪文件</span>
+          </label>
+          <p class="text-xs leading-relaxed text-muted-foreground">
+            收纳已暂存与未暂存的改动，稍后可从 Stash 菜单恢复。未跟踪文件按上方选项处理。
+          </p>
         </div>
+        <footer class="dialog-footer">
+          <Button variant="ghost" size="sm" @click="stashPushOpen = false">取消</Button>
+          <Button variant="default" size="sm" :disabled="busy" @click="doStashPush">收纳改动</Button>
+        </footer>
       </div>
     </div>
     </Transition>
@@ -1091,21 +1137,19 @@ async function genCommitMsg() {
       aria-labelledby="dlg-stash-pop-title"
       @click.self="closeStashPop"
     >
-      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
-        <div id="dlg-stash-pop-title" class="mb-1.5 font-medium">恢复并删除 Stash 记录</div>
-        <div>
-          将把「{{ stashPopConfirm.subject }}」的改动恢复到工作区，并删除这条 stash 记录。
-          改动不会自动回到暂存区，需要重新暂存与提交。
+      <div class="dialog-shell w-dlg-md surface rounded-lg pop-in">
+        <header class="dialog-header">
+          <div id="dlg-stash-pop-title" class="dialog-title">恢复并删除 Stash 记录</div>
+        </header>
+        <div class="dialog-body space-y-3 text-sm leading-relaxed">
+          <div class="rounded-sm border border-border bg-muted p-3 break-words">{{ stashPopConfirm.subject }}</div>
+          <p>恢复这条记录的改动，成功后删除记录。改动不会自动回到暂存区，需要重新暂存与提交。</p>
+          <p class="text-xs text-muted-foreground">如果稍后还要使用这条记录，请取消并选择 Stash 菜单中的“仅恢复（记录保留）”。</p>
         </div>
-        <div class="mt-1.5 text-xs text-muted-foreground">
-          如果只是想先试试、稍后还要再恢复，请取消并改用 stash 菜单里的「仅恢复（记录保留）」。
-        </div>
-        <div class="mt-3 flex justify-end gap-2">
+        <footer class="dialog-footer">
           <Button ref="stashPopCancelBtn" variant="ghost" size="sm" @click="closeStashPop">取消</Button>
-          <Button variant="destructive" size="sm" :disabled="busy" @click="confirmStashPop">
-            恢复并删除
-          </Button>
-        </div>
+          <Button variant="destructive" size="sm" :disabled="busy" @click="confirmStashPop">恢复并删除</Button>
+        </footer>
       </div>
     </div>
     </Transition>

@@ -134,7 +134,7 @@ onUnmounted(() => {
         <div
           v-if="show"
           ref="tipEl"
-          class="surface-menu pointer-events-none fixed z-50 max-w-[380px] whitespace-pre-line rounded-sm px-2.5 py-1.5 text-left text-xs leading-relaxed text-foreground"
+          class="surface-menu pointer-events-none fixed z-50 max-w-[min(380px,calc(100vw-16px))] break-words whitespace-pre-line rounded-sm px-2.5 py-1.5 text-left text-xs leading-relaxed text-foreground"
           :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
         >
           {{ text }}

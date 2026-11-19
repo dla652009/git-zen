@@ -90,6 +90,13 @@
   --border-soft: color-mix(in srgb, var(--border) 55%, transparent);
   --primary-soft: color-mix(in srgb, var(--primary) 16%, transparent);
 
+  /* 选中态只走这一对，列表行 / 分支行 / 文件行才不会有「这个组件 15%、那个 16%」的漂移。
+     弱档直接复用 --primary-soft：Win7 / XP 在各自 token 块里把它覆盖成 Aero / Luna 的淡蓝，
+     选中色因此自动跟随皮肤，不需要任何主题专用选择器。 */
+  --row-selected-bg: var(--primary-soft);
+  --row-selected-strong: color-mix(in srgb, var(--primary) 24%, transparent);
+  --focus-ring: color-mix(in srgb, var(--primary) 26%, transparent);
+
   /* ── 遮罩 ───────────────────────────────────────────────────── */
   /* 深色主题用纯黑压暗；浅色主题在各自块里换成「不那么黑」的版本，否则像关机 */
   --scrim: color-mix(in srgb, #05050a 62%, transparent);
@@ -476,6 +483,9 @@
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary-soft: var(--primary-soft);
+  --color-row-selected: var(--row-selected-bg);
+  --color-row-selected-strong: var(--row-selected-strong);
+  --color-focus-ring: var(--focus-ring);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-destructive: var(--destructive);
@@ -571,6 +581,244 @@ body,
   background: var(--card);
   border: 1px solid var(--border);
   box-shadow: var(--elev-1), var(--highlight);
+}
+
+/* 弹窗只统一边界与滚动分工，宽度仍由各任务决定。 */
+.dialog-shell {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 4rem);
+  overflow: hidden;
+}
+.dialog-header {
+  flex-shrink: 0;
+  max-height: min(25vh, 180px);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.dialog-body {
+  min-width: 0;
+  /* 保底高度，不让正文被固定区压没。上限是算得出来的：标题 ≤25vh，
+     页脚最多是「校验区 25vh + 按钮行」或「说明 20vh + 按钮行」（两者不同时出现），
+     合计离 100vh 还有富余，所以 4rem 的保底不会把壳撑破（壳 hidden 会裁切，那更糟）。 */
+  min-height: 4rem;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  padding: 16px 20px;
+}
+/* 页脚本身不滚动：滚动的只能是里面的说明（.dialog-footnote 自带限高）。
+   否则短窗口 / 字号 20 时说明把按钮挤进滚动区，主动作要滚一下才找到 */
+.dialog-footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border);
+}
+.dialog-validation {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: min(25vh, 160px);
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+  overscroll-behavior: contain;
+}
+.dialog-footnote {
+  max-height: min(20vh, 120px);
+  overflow-y: auto;
+  overflow-wrap: anywhere;
+}
+.dialog-title {
+  min-width: 0;
+  font-size: var(--text-base);
+  line-height: 1.5;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.dialog-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dialog-two-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 12px;
+}
+.repo-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.repo-entry-wide {
+  grid-column: 1 / -1;
+}
+@media (max-width: 560px) {
+  .dialog-two-fields,
+  .repo-entry-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .repo-entry-wide {
+    grid-column: auto;
+  }
+}
+
+/* 管理工作区保留双栏；字段根据内容区宽度切为上下排。 */
+.settings-frame {
+  width: 960px;
+  max-width: calc(100vw - 32px);
+  height: min(640px, calc(100vh - 4rem));
+}
+.settings-nav {
+  width: 152px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.settings-content {
+  container-type: inline-size;
+  container-name: settings;
+  overflow-wrap: anywhere;
+}
+.settings-add-step > .gz-field,
+.settings-add-step > .relative {
+  min-width: min(160px, 100%);
+  max-width: 100%;
+  flex: 1 1 160px;
+}
+.settings-shortcut-row > span:last-child {
+  flex: 1 1 180px;
+}
+@container settings (max-width: 520px) {
+  .settings-field-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .settings-field-row > label {
+    width: auto;
+  }
+  .settings-step-params {
+    order: 2;
+    flex-basis: 100%;
+    flex-wrap: wrap;
+  }
+  .settings-step-params > .gz-field,
+  .settings-step-params > .relative {
+    max-width: 100%;
+    flex: 1 1 150px;
+  }
+  .settings-workflow-title {
+    flex-basis: calc(100% - 28px);
+  }
+}
+@container settings (max-width: 420px) {
+  .settings-theme-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 720px) {
+  .settings-nav {
+    width: 112px;
+  }
+  .settings-nav button {
+    padding-left: 8px;
+    padding-right: 8px;
+    gap: 6px;
+  }
+}
+.repo-overview-open {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 4px 12px;
+}
+.overview-repo-name { grid-column: 1; grid-row: 1; }
+.overview-repo-branch { grid-column: 2; grid-row: 1; }
+/* 同步提示沿用完整告警色对，勾选仓库不改变其语义。 */
+.overview-repo-sync {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: start;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--badge-warning-bg);
+  color: var(--badge-warning-fg);
+}
+.overview-repo-path { grid-column: 1 / 3; grid-row: 2; }
+.overview-repo-dirty { grid-column: 3; grid-row: 2; }
+.overview-repo-row[data-selected="true"] {
+  background: var(--row-selected-bg);
+}
+.overview-repo-row[data-selected="true"] .text-muted-foreground {
+  color: var(--foreground);
+}
+
+/* 快速选择器把键盘提示移出输入框，短窗口仍留出结果区。 */
+.quick-dialog-overlay {
+  padding: clamp(16px, 12vh, 88px) 16px 16px;
+}
+.quick-dialog-panel {
+  max-height: min(640px, calc(100vh - clamp(16px, 12vh, 88px) - 16px));
+}
+.quick-dialog-search {
+  flex-shrink: 0;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.quick-dialog-footer {
+  display: flex;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 16px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: var(--text-xs);
+}
+
+/* 锚定菜单和下拉只在自身内部滚动，保持视口边界。 */
+.bounded-menu {
+  min-width: min(150px, calc(100vw - 12px));
+  max-width: min(440px, calc(100vw - 12px));
+  max-height: calc(100vh - 12px);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.bounded-select {
+  max-width: calc(100vw - 16px);
+  max-height: min(224px, calc(100vh - 16px));
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+/* 历史区按自身宽度收起次要元信息，保留用户行高与三栏尺寸。
+   老 WebView 不支持容器查询时，元信息仍受模板中的 35% 上限约束。
+   注意：元信息宽度现在由内容决定（模板里不再写死列宽），这里只收上限 ——
+   写死 width 会让作者那格把剩余空间吃成一条空档。 */
+.history-viewport {
+  container-type: inline-size;
+  container-name: history;
+}
+@container history (max-width: 40rem) {
+  .history-meta {
+    max-width: 8rem;
+  }
 }
 
 /* 弹层入场：@starting-style 让「从哪来」可声明，不需要额外 class 切换。
@@ -669,11 +917,12 @@ body,
    用 animation 不用 transition —— 切换后 status、log、branches 是分批到达的，
    数据更新会反复打断 transition（起止状态不断被重置），动画可能停在半透明；
    animation 一旦启动就跑完，不受后续 DOM/数据变化影响。
-   fill-mode: both 让 animation-delay 期间先保持 from 状态，否则延迟段按终态渲染、起播时闪一下。 */
+   fill-mode: both 让 animation-delay 期间先保持 from 状态，否则延迟段按终态渲染、起播时闪一下。
+   位移收敛到 10px：三栏同时平移 16px 时中间历史区像「整页翻过去」，抢了切仓库本身的注意力。 */
 @keyframes repo-in-left {
   from {
     opacity: 0;
-    transform: translateX(-16px);
+    transform: translateX(-10px);
   }
   to {
     opacity: 1;
@@ -683,7 +932,7 @@ body,
 @keyframes repo-in-right {
   from {
     opacity: 0;
-    transform: translateX(16px);
+    transform: translateX(10px);
   }
   to {
     opacity: 1;
@@ -712,10 +961,10 @@ body,
   animation-delay: 0ms;
 }
 .repo-anim-2 {
-  animation-delay: 30ms;
+  animation-delay: 20ms;
 }
 .repo-anim-3 {
-  animation-delay: 60ms;
+  animation-delay: 40ms;
 }
 
 /* 侧栏/抽屉类横向入场 */
@@ -753,6 +1002,26 @@ body,
   .repo-anim-3 {
     animation-delay: 0s !important;
   }
+  /* 减少动态效果时不做非必要位移：切仓库只留淡入，按钮不再缩放，行进出场不再上下滑。
+     全局时长已压到 0.01ms，这里单独把三栏的淡入放回 --dur-fast：
+     状态变化仍要看得出来，但只保留透明度，不保留位移与 stagger 延迟。 */
+  .repo-in-left,
+  .repo-in-right {
+    animation-name: repo-in-fade !important;
+  }
+  .repo-in-left,
+  .repo-in-right,
+  .repo-in-fade {
+    animation-duration: var(--dur-fast) !important;
+  }
+  .gz-btn:active {
+    transform: none !important;
+  }
+  .row-enter-from,
+  .row-leave-to,
+  .dlg-leave-to :where(.pop-in) {
+    transform: none !important;
+  }
 }
 
 /* ============================================================================
@@ -778,7 +1047,7 @@ html[data-theme="win7"] {
   --radius-sm: 3px;
   --radius-md: 4px;
   --radius-lg: 6px;
-  --dur-fast: 90ms;
+  --dur-fast: 100ms;
 }
 
 /* Win7 的键盘焦点是控件内部的 1px 虚点框，不是外圈发光的实线环 */
@@ -1003,7 +1272,7 @@ html[data-theme="xp"] {
   --radius-sm: 2px;
   --radius-md: 3px;
   --radius-lg: 4px;
-  --dur-fast: 90ms;
+  --dur-fast: 100ms;
 }
 
 /* XP 的键盘焦点同样是控件内部的 1px 虚点框 */

@@ -147,9 +147,9 @@ const menuItems = computed<MenuItem[]>(() => [
     aria-labelledby="dlg-repos-title"
     @click.self="open = false"
   >
-    <div class="w-dlg-xl surface rounded-lg p-5 pop-in">
-      <div class="flex items-center gap-2">
-        <div id="dlg-repos-title" class="text-base font-semibold">所有仓库</div>
+    <div class="dialog-shell w-[800px] surface rounded-lg pop-in">
+      <header class="dialog-header"><div class="flex flex-wrap items-center gap-2">
+        <div id="dlg-repos-title" class="dialog-title">所有仓库</div>
         <span class="flex-1" />
         <Button variant="ghost" size="sm" :disabled="loading" @click="emit('refresh')">
           刷新
@@ -162,21 +162,10 @@ const menuItems = computed<MenuItem[]>(() => [
         >
           全部拉取
         </Button>
-        <Button
-          variant="secondary"
-          size="sm"
-          :disabled="loading || !picked.length"
-          :title="picked.length ? `对已勾选的 ${picked.length} 个仓库执行` : '先勾选仓库'"
-          @click="openMenu"
-        >
-          <WorkflowIcon class="size-3.5" />
-          运行工作流
-          <span v-if="picked.length" class="text-xs text-muted-foreground tabular-nums">{{ picked.length }}</span>
-          <Play class="size-3 rotate-90" />
-        </Button>
+        
       </div>
 
-      <div class="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+      <div class="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
         <label class="flex cursor-pointer items-center gap-1.5">
           <input
             type="checkbox"
@@ -206,7 +195,7 @@ const menuItems = computed<MenuItem[]>(() => [
         </Tooltip>
       </div>
 
-      <div class="mt-3 max-h-80 min-h-24 overflow-auto rounded-md border border-border-soft bg-background/40 p-1">
+      </header><div class="dialog-body"><div class="min-h-24 space-y-1 rounded-sm border border-border bg-background/40 p-1">
         <div v-if="loading" class="grid h-24 place-items-center">
           <Spinner label="同步中…" />
         </div>
@@ -221,7 +210,7 @@ const menuItems = computed<MenuItem[]>(() => [
           <div
             v-for="r in rows"
             :key="r.path"
-            class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs transition-colors duration-fast hover:bg-hover"
+            class="overview-repo-row flex w-full items-center gap-2 rounded-sm px-2 py-2 text-xs transition-colors duration-fast hover:bg-hover" :data-selected="picked.includes(r.path) ? 'true' : undefined"
           >
             <input
               type="checkbox"
@@ -232,18 +221,18 @@ const menuItems = computed<MenuItem[]>(() => [
             >
             <button
               type="button"
-              class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
+              class="repo-overview-open min-w-0 flex-1 cursor-pointer text-left"
               :title="r.path"
               @click="emit('openRepo', r.path)"
             >
-              <span class="w-36 shrink-0 truncate font-medium">{{ r.name }}</span>
-              <code class="w-32 shrink-0 truncate font-mono text-muted-foreground">{{ r.branch || "—" }}</code>
-              <span class="flex w-24 shrink-0 items-center gap-1.5 font-mono tabular-nums text-[var(--c-conf)]">
+              <span class="overview-repo-name min-w-0 truncate font-medium" :title="r.name">{{ r.name }}</span><span class="overview-repo-path min-w-0 truncate text-xs text-muted-foreground">{{ r.path }}</span>
+              <code class="overview-repo-branch min-w-0 truncate font-mono text-muted-foreground" :title="r.branch">{{ r.branch || "—" }}</code>
+              <span v-if="r.ahead || r.behind" class="overview-repo-sync flex shrink-0 items-center justify-end gap-1.5 font-mono tabular-nums">
                 <span v-if="r.ahead">↑{{ r.ahead }}</span>
                 <span v-if="r.behind">↓{{ r.behind }}</span>
               </span>
               <span
-                class="min-w-0 flex-1 truncate text-right tabular-nums"
+                class="overview-repo-dirty min-w-0 truncate text-right tabular-nums"
                 :class="r.dirty ? '' : 'text-muted-foreground'"
               >
                 {{ r.dirty ? `${r.dirty} 个变更` : "干净" }}
@@ -301,7 +290,7 @@ const menuItems = computed<MenuItem[]>(() => [
               <div
                 v-for="r in sec.rows"
                 :key="r.path"
-                class="flex w-full items-center gap-2 rounded-sm py-1.5 pr-2 pl-6 text-xs transition-colors duration-fast hover:bg-hover"
+                class="overview-repo-row flex w-full items-center gap-2 rounded-sm py-2 pr-2 pl-6 text-xs transition-colors duration-fast hover:bg-hover" :data-selected="picked.includes(r.path) ? 'true' : undefined"
               >
                 <input
                   type="checkbox"
@@ -312,18 +301,18 @@ const menuItems = computed<MenuItem[]>(() => [
                 >
                 <button
                   type="button"
-                  class="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left"
+                  class="repo-overview-open min-w-0 flex-1 cursor-pointer text-left"
                   :title="r.path"
                   @click="emit('openRepo', r.path)"
                 >
-                  <span class="w-32 shrink-0 truncate font-medium">{{ r.name }}</span>
-                  <code class="w-28 shrink-0 truncate font-mono text-muted-foreground">{{ r.branch || "—" }}</code>
-                  <span class="flex w-20 shrink-0 items-center gap-1.5 font-mono tabular-nums text-[var(--c-conf)]">
+                  <span class="overview-repo-name min-w-0 truncate font-medium" :title="r.name">{{ r.name }}</span><span class="overview-repo-path min-w-0 truncate text-xs text-muted-foreground">{{ r.path }}</span>
+                  <code class="overview-repo-branch min-w-0 truncate font-mono text-muted-foreground" :title="r.branch">{{ r.branch || "—" }}</code>
+                  <span v-if="r.ahead || r.behind" class="overview-repo-sync flex shrink-0 items-center justify-end gap-1.5 font-mono tabular-nums">
                     <span v-if="r.ahead">↑{{ r.ahead }}</span>
                     <span v-if="r.behind">↓{{ r.behind }}</span>
                   </span>
                   <span
-                    class="min-w-0 flex-1 truncate text-right tabular-nums"
+                    class="overview-repo-dirty min-w-0 truncate text-right tabular-nums"
                     :class="r.dirty ? '' : 'text-muted-foreground'"
                   >
                     {{ r.dirty ? `${r.dirty} 个变更` : "干净" }}
@@ -335,9 +324,21 @@ const menuItems = computed<MenuItem[]>(() => [
         </template>
       </div>
 
-      <div class="mt-5 flex justify-end">
+      </div><footer class="dialog-footer"><span class="mr-auto text-xs text-muted-foreground tabular-nums">已选择 {{ picked.length }} / {{ stats.total }} 个仓库</span>
+<Button
+          variant="secondary"
+          size="sm"
+          :disabled="loading || !picked.length"
+          :title="picked.length ? `对已勾选的 ${picked.length} 个仓库执行` : '先勾选仓库'"
+          @click="openMenu"
+        >
+          <WorkflowIcon class="size-3.5" />
+          运行工作流
+          <span v-if="picked.length" class="text-xs text-muted-foreground tabular-nums">{{ picked.length }}</span>
+          <Play class="size-3 rotate-90" />
+        </Button>
         <Button variant="ghost" size="sm" @click="open = false">关闭</Button>
-      </div>
+      </footer>
     </div>
     <Transition name="dlg">
     <ContextMenu

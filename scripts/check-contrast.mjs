@@ -312,9 +312,63 @@ for (const [themeName, tokens] of themes) {
   }
 }
 
+// ---------- 选中行：底色是按比例叠在画布/卡片上的 primary，必须按合成后的颜色算 ----------
+// style.css 里 --row-selected-bg = --primary-soft（16% 主色，Win7/XP 是显式淡蓝），
+// --row-selected-strong = 24% 主色。透明底色先与实际表面合成，Win7/XP 的显式色值直接使用。
+// 选中行的正文与元信息都用不透明 --foreground：muted-foreground 在浅色主题只有 4.0–4.2，
+// 半透明前景更低（latte 3.3–3.8），层级只能交给字号，不能拿对比度换。
+const SELECTION_TEXT_MIN = 4.5;
+
+function selectionBackground(tokens, tokenName, base) {
+  const raw = resolveToken(tokens, tokenName);
+  if (!raw) return null;
+  const solid = parseColor(raw);
+  if (solid) return solid; // Win7 / XP 的 --primary-soft 是显式色值
+  const m = raw.match(
+    /color-mix\(\s*in srgb\s*,\s*(?:var\(\s*(--[\w-]+)\s*\)|(#[0-9a-fA-F]{3,6}))\s+([\d.]+)%\s*,\s*transparent\s*\)/,
+  );
+  if (!m) return null;
+  const tint = m[1] ? parseColor(resolveToken(tokens, m[1])) : parseColor(m[2]);
+  if (!tint) return null;
+  const pct = Number(m[3]) / 100;
+  return tint.map((v, i) => Math.round(v * pct + base[i] * (1 - pct)));
+}
+
+const rootTokens = themes.get("dark") ?? new Map();
+let selectionChecks = 0;
+for (const [themeName, tokens] of themes) {
+  // 新令牌只在 :root 定义一次；其余主题靠 CSS 继承。检查时也要按同样规则合并。
+  const merged = new Map([...rootTokens, ...tokens]);
+  const fg = parseColor(resolveToken(merged, "--foreground"));
+  if (!fg) {
+    failures.push({ theme: themeName, fgLabel: "--foreground", bgLabel: "（token 缺失）", value: "—", min: "存在" });
+    continue;
+  }
+  for (const baseName of ["--background", "--card", "--elevated"]) {
+    const base = parseColor(resolveToken(merged, baseName));
+    if (!base) continue;
+    for (const tokenName of ["--row-selected-bg", "--row-selected-strong"]) {
+      const bg = selectionBackground(merged, tokenName, base);
+      if (!bg) {
+        failures.push({
+          theme: themeName,
+          fgLabel: tokenName,
+          bgLabel: baseName,
+          value: "—",
+          min: "可解析",
+        });
+        continue;
+      }
+      selectionChecks++;
+      check(themeName, "--foreground", `${tokenName} over ${baseName}`, fg, bg, SELECTION_TEXT_MIN);
+    }
+  }
+}
+
 // ---------- 输出 ----------
 
-const total = textChecks + badgeChecks + dangerChecks + semanticChecks + graphChecks;
+const total =
+  textChecks + badgeChecks + dangerChecks + semanticChecks + graphChecks + selectionChecks;
 const themeNames = [...themes.keys()].join(" / ");
 
 if (failures.length === 0 && fatal.length === 0) {
@@ -323,7 +377,8 @@ if (failures.length === 0 && fatal.length === 0) {
       `文字对 ${textChecks}（≥${TEXT_MIN}）、徽标 ${badgeChecks}（≥${TEXT_MIN}）、` +
       `危险按钮 ${dangerChecks}（≥${TEXT_MIN}）、` +
       `语义色 ${semanticChecks}（图标 ≥${GRAPH_MIN}，${SEMANTIC_TEXT} ≥${TEXT_MIN}）、` +
-      `图形 ${graphChecks}（≥${GRAPH_MIN}）。`,
+      `图形 ${graphChecks}（≥${GRAPH_MIN}）、` +
+      `选中行 ${selectionChecks}（正文与元信息 ≥${SELECTION_TEXT_MIN}）。`,
   );
   if (notes.length) for (const n of notes) console.log(`  ! ${n}`);
   process.exit(0);

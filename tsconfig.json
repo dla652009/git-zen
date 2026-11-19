@@ -24,6 +24,7 @@
     "src/lib/worktree.test.ts",
     "src/lib/overlays.test.ts",
     "src/lib/patch.test.ts",
+    "src/lib/relDate.test.ts",
     "src/lib/safeJson.test.ts",
     "src/lib/useDiffSearch.test.ts",
     "src/workflow.test.ts"

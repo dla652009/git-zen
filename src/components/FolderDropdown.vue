@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 分组文件夹下拉（M16 16.2 收尾）。open 状态、拖拽机与分组 CRUD 全留 App.vue：
 // 这里只负责渲染、成员过滤，以及打开后把当前仓库滚进视野。
-import { computed, nextTick, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { X } from "@lucide/vue";
 import { Tooltip } from "@/components/ui";
 
@@ -29,6 +29,24 @@ const emit = defineEmits<{
 }>();
 
 const panelEl = ref<HTMLElement | null>(null);
+const panelPos = ref({ x: 8, y: 8, maxHeight: 400 });
+
+async function place() {
+  const dd = props.dd;
+  if (!dd) return;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const maxHeight = Math.min(Math.floor(vh * 0.6), Math.max(0, vh - 16));
+  panelPos.value = { x: 8, y: 8, maxHeight };
+  await nextTick();
+  const panel = panelEl.value;
+  if (!panel || props.dd !== dd) return;
+  panelPos.value = {
+    x: Math.max(8, Math.min(dd.x, vw - panel.offsetWidth - 8)),
+    y: Math.max(8, Math.min(dd.y, vh - panel.offsetHeight - 8)),
+    maxHeight,
+  };
+}
 
 // 成员自己算：App 的 folderMembers 只有这一处消费者
 const members = computed(() => {
@@ -47,24 +65,29 @@ watch(
   },
   { immediate: true },
 );
+watch([() => props.dd, members], place, { immediate: true, flush: "post" });
+onMounted(() => window.addEventListener("resize", place));
+onUnmounted(() => window.removeEventListener("resize", place));
 </script>
 
 <template>
   <div v-if="dd" class="fixed inset-0 z-40" @click="emit('close')" @contextmenu.prevent="emit('close-force')">
     <div
       ref="panelEl"
-      class="fixed max-h-[60vh] w-[260px] overflow-y-auto surface-menu rounded-sm py-1 pop-in"
-      :style="{ left: dd.x + 'px', top: dd.y + 'px' }"
+      class="fixed flex w-[300px] max-w-[calc(100vw-16px)] flex-col overflow-hidden surface-menu rounded-sm pop-in"
+      :style="{ left: panelPos.x + 'px', top: panelPos.y + 'px', maxHeight: panelPos.maxHeight + 'px' }"
     >
-      <div class="px-3 pt-3 pb-1.5 text-2xs font-semibold tracking-wide text-muted-foreground tabular-nums">
-        {{ dd.group }} · {{ members.length }} 个仓库
+      <div class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2.5 text-xs">
+        <span class="min-w-0 flex-1 truncate font-semibold" :title="dd.group">{{ dd.group }}</span>
+        <span class="shrink-0 text-muted-foreground tabular-nums">{{ members.length }} 个仓库</span>
       </div>
+      <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
       <div
         v-for="r in members"
         :key="r.path"
         :data-folder-active="r.path === currentRepo ? '1' : undefined"
-        class="group/member flex items-center gap-1 transition-colors duration-fast hover:bg-hover"
-        :class="r.path === currentRepo && 'bg-primary-soft text-primary'"
+        class="group/member flex items-center gap-1 transition-colors duration-fast"
+        :class="r.path === currentRepo ? 'bg-row-selected text-foreground' : 'hover:bg-hover'"
       >
         <button
           class="flex min-w-0 flex-1 cursor-grab items-center gap-2 px-3 py-1.5 text-left text-xs select-none"
@@ -76,11 +99,14 @@ watch(
             class="size-1.5 shrink-0 rounded-full"
             :class="r.path === currentRepo ? 'bg-primary' : 'bg-border'"
           />
-          <span class="truncate">{{ r.name }}</span>
+          <span class="min-w-0 flex-1">
+            <span class="block truncate text-sm font-medium">{{ r.name }}</span>
+            <span class="mt-0.5 block truncate text-xs" :class="r.path === currentRepo ? 'text-foreground' : 'text-muted-foreground'">{{ r.path }}</span>
+          </span>
         </button>
         <Tooltip text="移出分组">
           <button
-            class="mr-1 shrink-0 cursor-pointer text-muted-foreground opacity-0 transition-opacity duration-fast group-hover/member:opacity-100 hover:text-destructive"
+            class="mr-2 shrink-0 cursor-pointer rounded-xs p-1 text-muted-foreground transition-colors duration-fast hover:text-destructive"
             aria-label="移出分组"
             @mousedown.stop
             @click.stop="emit('remove-member', r.path)"
@@ -92,7 +118,8 @@ watch(
       <div v-if="!members.length" class="px-3 py-2 text-xs text-muted-foreground">
         空分组 · 用标签栏右侧的「管理分组」添加仓库
       </div>
-      <div class="mt-1 border-t border-border/60 pt-1">
+      </div>
+      <div class="shrink-0 border-t border-border/60 py-1">
         <button
           class="block w-full cursor-pointer px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors duration-fast hover:bg-hover"
           @click.stop="emit('open-mgr', dd!.group)"

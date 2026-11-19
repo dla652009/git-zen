@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 共享右键/下拉菜单：统一 定位收敛到视口 / Esc 关闭 / ↑↓ 选择 + 回车执行 / 外点关闭 / 入场动效。
 // 替代此前各处手搓的 fixed 定位菜单（选项卡/提交/文件/分组/stash）
-import { ref, computed, onMounted, onUnmounted, nextTick } from "vue";
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from "vue";
 
 export interface MenuItem {
   label: string;
@@ -25,20 +25,29 @@ const actionable = computed(() =>
     .filter(({ it }) => !it.separator && !it.disabled),
 );
 
-onMounted(async () => {
+async function place() {
   await nextTick();
   const el = root.value;
-  if (el) {
-    const r = el.getBoundingClientRect();
-    pos.value = {
-      x: Math.max(6, Math.min(props.x, window.innerWidth - r.width - 6)),
-      y: Math.max(6, Math.min(props.y, window.innerHeight - r.height - 6)),
-    };
-  }
+  if (!el) return;
+  pos.value = {
+    x: Math.max(6, Math.min(props.x, window.innerWidth - el.offsetWidth - 6)),
+    y: Math.max(6, Math.min(props.y, window.innerHeight - el.offsetHeight - 6)),
+  };
+}
+onMounted(async () => {
+  await place();
   // capture：菜单浮在最上层，Esc 不应再穿透给下层弹窗
   window.addEventListener("keydown", onKey, true);
+  window.addEventListener("resize", place);
 });
-onUnmounted(() => window.removeEventListener("keydown", onKey, true));
+onUnmounted(() => {
+  window.removeEventListener("keydown", onKey, true);
+  window.removeEventListener("resize", place);
+});
+watch(active, async () => {
+  await nextTick();
+  root.value?.querySelector<HTMLElement>(`[data-menu-index="${active.value}"]`)?.scrollIntoView({ block: "nearest" });
+});
 
 function run(it: MenuItem) {
   if (it.separator || it.disabled) return;
@@ -97,15 +106,16 @@ function onKey(e: KeyboardEvent) {
     <div class="fixed inset-0 z-50" @click="emit('close')" @contextmenu.prevent="onOverlayContextmenu">
       <div
         ref="root"
-        class="pop-in surface-menu fixed min-w-[150px] max-w-[440px] overflow-hidden rounded-sm py-1"
+        class="bounded-menu pop-in surface-menu fixed rounded-sm p-1"
         :style="{ left: pos.x + 'px', top: pos.y + 'px' }"
         @click.stop
       >
         <template v-for="(it, i) in items" :key="i">
-          <div v-if="it.separator" class="my-1 border-t border-border/60" />
+          <div v-if="it.separator" class="mx-1 my-1 border-t border-border/60" />
           <button
             v-else
-            class="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-xs transition-colors duration-fast active:bg-active"
+            :data-menu-index="i"
+            class="flex w-full cursor-pointer items-center gap-2 rounded-xs px-2.5 py-1.5 text-left text-xs transition-colors duration-fast active:bg-active"
             :class="[
               it.danger ? 'text-destructive' : '',
               active === i ? 'bg-hover' : '',
@@ -114,7 +124,7 @@ function onKey(e: KeyboardEvent) {
             @mousemove="active = i"
             @click.stop="run(it)"
           >
-            <span class="min-w-0 flex-1 truncate">{{ it.label }}</span>
+            <span class="min-w-0 flex-1 whitespace-normal break-words">{{ it.label }}</span>
           </button>
         </template>
       </div>

@@ -36,62 +36,52 @@ const imeConfirm = imeGuard(() => emit("confirm"));
 
 <template>
   <Transition name="dlg">
-  <div
-    v-if="open"
-    v-trap
-    class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="dlg-confirm-title"
-    @click.self="open = false"
-  >
-    <div class="w-dlg-md surface rounded-lg p-5 pop-in">
-      <div id="dlg-confirm-title" class="mb-3 text-base font-semibold">{{ title }}</div>
-      <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <span>{{ body }}</span>
-        <span v-if="stats" class="inline-flex items-center gap-1 font-mono text-xs tabular-nums">
-          <span class="rounded bg-[var(--diff-add-bg)] px-1.5 py-0.5 text-[var(--diff-add-text)]">
-            +{{ stats.add }}
-          </span>
-          <span class="rounded bg-[var(--diff-del-bg)] px-1.5 py-0.5 text-[var(--diff-del-text)]">
-            −{{ stats.del }}
-          </span>
-        </span>
-      </div>
-      <div
-        v-if="details?.length"
-        class="mt-3 max-h-56 overflow-auto rounded-md border border-border-soft bg-background/40 p-2"
-      >
-        <div
-          v-for="d in details"
-          :key="d.hash + d.text"
-          class="flex gap-2 py-0.5 text-xs"
-        >
-          <code class="shrink-0 font-mono text-muted-foreground">{{ d.hash }}</code>
-          <span class="min-w-0 break-words">{{ d.text }}</span>
+    <div
+      v-if="open"
+      v-trap
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-confirm-title"
+      @click.self="open = false"
+    >
+      <div class="dialog-shell w-dlg-md surface rounded-lg pop-in">
+        <header class="dialog-header">
+          <div id="dlg-confirm-title" class="dialog-title">{{ title }}</div>
+        </header>
+        <div class="dialog-body space-y-3 text-sm leading-relaxed">
+          <p class="whitespace-pre-line break-words">{{ body }}</p>
+          <div v-if="stats" class="flex flex-wrap items-center gap-2 font-mono text-xs tabular-nums">
+            <span class="rounded-xs bg-[var(--diff-add-bg)] px-2 py-1 text-[var(--diff-add-text)]">+{{ stats.add }}</span>
+            <span class="rounded-xs bg-[var(--diff-del-bg)] px-2 py-1 text-[var(--diff-del-text)]">−{{ stats.del }}</span>
+          </div>
+          <div v-if="details?.length" class="rounded-sm border border-border bg-muted p-2">
+            <div v-for="d in details" :key="d.hash + d.text" class="flex items-start gap-2 py-1 text-xs">
+              <code class="w-[5.5rem] shrink-0 break-all font-mono text-muted-foreground" :title="d.hash">{{ d.hash }}</code>
+              <span class="min-w-0 flex-1 break-words">{{ d.text }}</span>
+            </div>
+          </div>
         </div>
-      </div>
-      <label v-if="input" class="mt-3 block text-xs">
-        <span class="mb-1 block text-muted-foreground">{{ input.label }}</span>
-        <Input
-          v-model="text"
-          :placeholder="input.placeholder"
-          @keydown.enter.prevent="imeConfirm"
-        />
-      </label>
-      <p v-if="note" class="mt-2 text-xs text-muted-foreground">{{ note }}</p>
-      <label v-if="checkbox" class="mt-2 flex cursor-pointer items-center gap-2 text-xs">
-        <input v-model="checked" type="checkbox" class="accent-[var(--primary)]" />
-        {{ checkbox }}
-      </label>
-      <div class="mt-5 flex justify-end gap-2">
-        <!-- 危险操作的安全默认：焦点落「取消」，Enter 天然触发取消而非确认 -->
-        <Button v-focus variant="ghost" size="sm" @click="open = false">取消</Button>
-        <Button :variant="okVariant ?? 'destructive'" size="sm" @click="emit('confirm')">
-          {{ okText ?? "确认执行" }}
-        </Button>
+        <footer class="dialog-footer">
+          <!-- 校验/输入区与按钮分成两层：校验区自己限高滚动，按钮永远在它下面一行，
+               短窗口 + 大字号下也不会出现「按钮被推出可视区」 -->
+          <div v-if="input || note || checkbox" class="dialog-validation">
+            <label v-if="input" class="dialog-field w-full text-xs">
+              <span class="font-medium">{{ input.label }}</span>
+              <Input v-model="text" :placeholder="input.placeholder" @keydown.enter.prevent="imeConfirm" />
+            </label>
+            <p v-if="note" class="w-full text-xs leading-relaxed text-muted-foreground">{{ note }}</p>
+            <label v-if="checkbox" class="flex w-full cursor-pointer items-start gap-2 text-xs leading-relaxed">
+              <input v-model="checked" type="checkbox" class="mt-0.5 shrink-0 accent-[var(--primary)]" />
+              <span>{{ checkbox }}</span>
+            </label>
+          </div>
+          <div class="flex w-full shrink-0 flex-wrap justify-end gap-2">
+            <Button v-focus variant="ghost" size="sm" @click="open = false">取消</Button>
+            <Button :variant="okVariant ?? 'destructive'" size="sm" @click="emit('confirm')">{{ okText ?? '确认执行' }}</Button>
+          </div>
+        </footer>
       </div>
     </div>
-  </div>
   </Transition>
 </template>

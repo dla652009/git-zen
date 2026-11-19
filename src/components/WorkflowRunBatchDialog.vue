@@ -2,6 +2,9 @@
 // 多仓库批次进度：一行一个仓库，展开看步骤。
 // 执行期允许关掉弹窗（批次可能跑很久），状态留在 useWorkflowRun 的 wfBatch 里继续更新 ——
 // 关窗必须走 closeWfBatch()，它在 busy 期间只收起、不置空。
+//
+// 布局分工：标题与总体计数固定，仓库列表单独滚动（长名单不会把动作挤出框外），
+// 底部动作区固定并常驻「可以关窗、流程继续跑」的说明。
 import { computed, ref, watch } from "vue";
 import { Check, ChevronDown, Minus, FolderGit2, Workflow as WorkflowIcon, X } from "@lucide/vue";
 import { describeStep } from "../workflow";
@@ -105,107 +108,123 @@ function stepDone(r: RowView): string {
     aria-labelledby="dlg-wf-batch-title"
     @click.self="emit('close')"
   >
-    <div class="w-dlg-lg surface rounded-lg p-5 pop-in">
-      <div id="dlg-wf-batch-title" class="mb-1 flex items-center gap-2 text-base font-semibold">
-        <WorkflowIcon class="size-4 text-primary" />
-        {{ batch.wf.name }}
-        <span class="text-xs font-normal text-muted-foreground tabular-nums">
-          {{ counts.total }} 个仓库
-        </span>
-      </div>
-      <div class="mb-3 text-xs text-muted-foreground tabular-nums">
-        <template v-if="!batch.done">
-          已完成 {{ counts.done }}/{{ counts.total }}<span v-if="counts.fail">，失败 {{ counts.fail }}</span>
-        </template>
-        <template v-else>
-          全部结束：成功 {{ counts.done }}<span v-if="counts.fail">，失败 {{ counts.fail }}</span><span
-            v-if="counts.skipped"
-          >，跳过 {{ counts.skipped }}</span>
-        </template>
-        <span v-if="batch.stopOnFail" class="ml-1">（勾了「失败即停」）</span>
-      </div>
+    <div class="dialog-shell w-dlg-lg surface rounded-lg pop-in">
+      <header class="dialog-header">
+        <div class="flex items-center gap-2">
+          <WorkflowIcon class="size-4 shrink-0 text-primary" aria-hidden="true" />
+          <div id="dlg-wf-batch-title" class="dialog-title min-w-0 flex-1 truncate" :title="batch.wf.name">
+            {{ batch.wf.name }}
+          </div>
+          <span class="shrink-0 text-xs font-normal text-muted-foreground tabular-nums">
+            {{ counts.total }} 个仓库
+          </span>
+        </div>
+        <p class="mt-1 text-xs text-muted-foreground tabular-nums">
+          <template v-if="!batch.done">
+            已完成 {{ counts.done }}/{{ counts.total }}<span v-if="counts.fail">，失败 {{ counts.fail }}</span>
+          </template>
+          <template v-else>
+            全部结束：成功 {{ counts.done }}<span v-if="counts.fail">，失败 {{ counts.fail }}</span><span
+              v-if="counts.skipped"
+            >，跳过 {{ counts.skipped }}</span>
+          </template>
+          <span v-if="batch.stopOnFail" class="ml-1">（勾了「失败即停」）</span>
+        </p>
+      </header>
 
-      <ul class="max-h-[55vh] space-y-1.5 overflow-auto pr-1 text-base">
-        <li v-for="(r, i) in batch.rows" :key="r.path" class="rounded-md border border-border-soft">
-          <div class="flex items-start gap-2 px-2 py-1.5">
-            <span class="flex w-4 shrink-0 justify-center pt-0.5">
-              <Spinner v-if="r.state === 'running'" :size="13" />
-              <Check v-else-if="r.state === 'done'" class="size-3.5 text-[var(--c-add)]" />
-              <Minus v-else-if="r.state === 'skipped'" class="size-3.5 text-muted-foreground" />
-              <X v-else-if="r.state === 'fail'" class="size-3.5 text-destructive" />
-              <span v-else class="size-2 rounded-full border border-border" />
-            </span>
-            <button
-              type="button"
-              class="min-w-0 flex-1 text-left"
-              :aria-expanded="show(r.path)"
-              @click="toggle(r.path)"
-            >
-              <div class="flex items-center gap-1.5">
-                <ChevronDown
-                  class="size-3 shrink-0 text-muted-foreground transition-transform duration-110"
-                  :class="show(r.path) ? '' : '-rotate-90'"
-                />
-                <span class="truncate font-medium" :class="r.path === repo ? 'text-primary' : ''">{{ r.name }}</span>
-                <span class="shrink-0 text-xs text-muted-foreground">{{ STATE_TEXT[r.state] }}</span>
-                <span v-if="r.states.length" class="shrink-0 text-xs text-muted-foreground">
-                  {{ stepDone(r) }}
-                </span>
-              </div>
-              <div v-if="r.error" class="mt-0.5 whitespace-pre-wrap text-xs text-destructive">
+      <div class="dialog-body">
+        <ul class="space-y-1.5 text-base">
+          <li v-for="(r, i) in batch.rows" :key="r.path" class="rounded-md border border-border-soft">
+            <!-- 窄窗（浮层被压在 100vw-32px 以内）时按钮组换到下一行，仓库名始终留得住宽度 -->
+            <div class="flex flex-wrap items-start gap-2 px-2 py-1.5">
+              <span class="flex w-4 shrink-0 justify-center pt-0.5">
+                <Spinner v-if="r.state === 'running'" :size="13" />
+                <Check v-else-if="r.state === 'done'" class="size-3.5 text-[var(--c-add)]" />
+                <Minus v-else-if="r.state === 'skipped'" class="size-3.5 text-muted-foreground" />
+                <X v-else-if="r.state === 'fail'" class="size-3.5 text-destructive" />
+                <span v-else class="size-2 rounded-full border border-border" />
+              </span>
+              <button
+                type="button"
+                class="min-w-0 flex-1 basis-40 text-left"
+                :aria-expanded="show(r.path)"
+                @click="toggle(r.path)"
+              >
+                <div class="flex items-center gap-1.5">
+                  <ChevronDown
+                    class="size-3 shrink-0 text-muted-foreground transition-transform duration-110"
+                    :class="show(r.path) ? '' : '-rotate-90'"
+                  />
+                  <span
+                    class="min-w-0 flex-1 truncate font-medium"
+                    :class="r.path === repo ? 'text-primary' : ''"
+                    :title="r.name"
+                    >{{ r.name }}</span
+                  >
+                  <span class="shrink-0 text-xs text-muted-foreground">{{ STATE_TEXT[r.state] }}</span>
+                  <span v-if="r.states.length" class="shrink-0 text-xs text-muted-foreground tabular-nums">
+                    {{ stepDone(r) }}
+                  </span>
+                </div>
+              </button>
+              <!-- 失败原因可能带原始 stderr：限高滚动，不让一行仓库把整张名单撑开。
+                   放在按钮外 —— 否则想选中/滚动这段错误文本就会把该仓库折叠掉 -->
+              <div
+                v-if="r.error"
+                class="mb-1 w-full basis-full max-h-24 overflow-y-auto whitespace-pre-wrap break-words rounded-xs bg-destructive/5 px-1.5 py-1 font-mono text-xs text-destructive"
+                tabindex="0"
+              >
                 {{ r.error }}
               </div>
-            </button>
-            <div class="flex shrink-0 items-center gap-1">
-              <!-- 失败与被「失败即停」跳过的行都能补跑；执行中不给（串行必须一次一个） -->
-              <Button
-                v-if="(r.state === 'fail' || r.state === 'skipped') && !busy"
-                variant="quiet"
-                size="sm"
-                @click="emit('retry', i)"
-              >
-                重试
-              </Button>
-              <!-- 切仓库是导航不是写操作：批次跑着的时候最需要跳过去看失败现场 -->
-              <Button
-                v-if="r.path !== repo"
-                variant="quiet"
-                size="sm"
-                :title="`切换到 ${r.name}`"
-                @click="emit('switchTo', r.path)"
-              >
-                <FolderGit2 class="size-3.5" />
-              </Button>
+              <div class="flex shrink-0 items-center gap-1">
+                <!-- 失败与被「失败即停」跳过的行都能补跑；执行中不给（串行必须一次一个） -->
+                <Button
+                  v-if="(r.state === 'fail' || r.state === 'skipped') && !busy"
+                  variant="quiet"
+                  size="sm"
+                  @click="emit('retry', i)"
+                >
+                  重试
+                </Button>
+                <!-- 切仓库是导航不是写操作：批次跑着的时候最需要跳过去看失败现场 -->
+                <Button
+                  v-if="r.path !== repo"
+                  variant="quiet"
+                  size="sm"
+                  :title="`切换到 ${r.name}`"
+                  @click="emit('switchTo', r.path)"
+                >
+                  <FolderGit2 class="size-3.5" />
+                </Button>
+              </div>
             </div>
-          </div>
-          <ul v-if="show(r.path)" class="space-y-1 pb-2 pl-8 pr-2 text-sm">
-            <li v-for="(s, si) in r.states" :key="si" class="flex items-start gap-2">
-              <span class="flex w-3.5 shrink-0 justify-center pt-0.5">
-                <Spinner v-if="s.state === 'running'" :size="11" />
-                <Check v-else-if="s.state === 'done'" class="size-3 text-[var(--c-add)]" />
-                <Minus v-else-if="s.state === 'skip'" class="size-3 text-muted-foreground" />
-                <X v-else-if="s.state === 'fail'" class="size-3 text-destructive" />
-                <span v-else class="size-1.5 rounded-full border border-border" />
-              </span>
-              <span class="min-w-0 flex-1" :class="s.state === 'fail' && 'text-destructive'">
-                {{ describeStep(batch.wf.steps[si]!, r.startBranch ?? "") }}
-                <span v-if="s.note" class="text-xs text-muted-foreground">· {{ s.note }}</span>
-              </span>
-            </li>
-          </ul>
-        </li>
-      </ul>
-
-      <div class="mt-3 flex items-center justify-between gap-2">
-        <span class="text-xs text-muted-foreground">执行期间可以关掉这个窗口，流程会继续跑</span>
-        <div class="flex items-center gap-1.5">
-          <!-- 勾了「失败即停」之后剩下的仓库停在 skipped，给一个一次跑完的出口 -->
-          <Button v-if="counts.skipped && !busy" variant="secondary" size="sm" class="tabular-nums" @click="emit('resume')">
-            继续执行剩余 {{ counts.skipped }} 个
-          </Button>
-          <Button variant="secondary" size="sm" @click="emit('close')">关闭</Button>
-        </div>
+            <ul v-if="show(r.path)" class="space-y-1 pb-2 pl-8 pr-2 text-sm">
+              <li v-for="(s, si) in r.states" :key="si" class="flex items-start gap-2">
+                <span class="flex w-3.5 shrink-0 justify-center pt-0.5">
+                  <Spinner v-if="s.state === 'running'" :size="11" />
+                  <Check v-else-if="s.state === 'done'" class="size-3 text-[var(--c-add)]" />
+                  <Minus v-else-if="s.state === 'skip'" class="size-3 text-muted-foreground" />
+                  <X v-else-if="s.state === 'fail'" class="size-3 text-destructive" />
+                  <span v-else class="size-1.5 rounded-full border border-border" />
+                </span>
+                <span class="min-w-0 flex-1 break-words" :class="s.state === 'fail' && 'text-destructive'">
+                  {{ describeStep(batch.wf.steps[si]!, r.startBranch ?? "") }}
+                  <span v-if="s.note" class="text-xs text-muted-foreground">· {{ s.note }}</span>
+                </span>
+              </li>
+            </ul>
+          </li>
+        </ul>
       </div>
+
+      <footer class="dialog-footer">
+        <span class="mr-auto text-xs text-muted-foreground">执行期间可以关掉这个窗口，流程会继续跑</span>
+        <!-- 勾了「失败即停」之后剩下的仓库停在 skipped，给一个一次跑完的出口 -->
+        <Button v-if="counts.skipped && !busy" variant="secondary" size="sm" class="tabular-nums" @click="emit('resume')">
+          继续执行剩余 {{ counts.skipped }} 个
+        </Button>
+        <Button variant="secondary" size="sm" @click="emit('close')">关闭</Button>
+      </footer>
     </div>
   </div>
   </Transition>

@@ -3,6 +3,7 @@ import { ref, computed, watch } from "vue";
 import { layout, LANE_COLORS } from "../graph";
 import type { LogEntry } from "../gitApi";
 import { Badge, Button, Spinner, Tooltip } from "@/components/ui";
+import { relDateText } from "@/lib/relDate";
 
 // 泳道历史图：虚拟滚动——几千提交时只渲染可视区 ± BUFFER 行的内容与连线，
 // 全量高度用空占位撑起（行高固定 26px，窗口换算无需测量）。
@@ -51,7 +52,7 @@ function onScroll() {
 function tip(c: LogEntry): string {
   return [
     c.subject,
-    `${c.hash.slice(0, 10)} · ${c.author} · ${c.date}`,
+    `${c.hash.slice(0, 10)} · ${c.author} · ${shortDate(c.date)}`,
     c.refs.length ? c.refs.join(" ") : "",
     "再次单击查看变更 · 右键更多操作",
   ]
@@ -350,15 +351,8 @@ function restRefs(c: LogEntry): string {
     .join("\n");
 }
 
-/** 「5 days ago」→「5d」。右栏窄，中文「天」也占两字宽，用字母最省 */
-function shortDate(d: string): string {
-  const m = d.match(/^(\d+)\s+(second|minute|hour|day|week|month|year)s?\s+ago$/i);
-  if (!m) return d.replace(/\s+ago$/i, "");
-  const unit = m[2][0].toLowerCase(); // s / m / h / d / w / m / y
-  // minute 与 month 都是 m：分钟更常见，月份用 mo 区分
-  const suffix = m[2].toLowerCase() === "month" ? "mo" : unit;
-  return `${m[1]}${suffix}`;
-}
+// 日期本地化统一走 lib/relDate：git 给的是英文 "3 days ago"，这里转中文
+const shortDate = relDateText;
 
 // 搜索命中高亮：把主题按命中位置切段渲染（不区分大小写）
 const hitSegments = computed(() => {
@@ -389,7 +383,7 @@ const hitSegments = computed(() => {
   <div
     ref="viewport"
     tabindex="0"
-    class="h-full overflow-y-auto"
+    class="history-viewport h-full overflow-y-auto"
     @scroll="onScroll"
     @keydown="onKeydown"
   >
@@ -414,32 +408,48 @@ const hitSegments = computed(() => {
           :cx="lay.colOf.get(c.hash)! * COL_W + COL_W / 2"
           :cy="(winStart + vi) * ROW_H + ROW_H / 2"
           :r="R"
-          :style="{ fill: color(lay.colOf.get(c.hash)!) }"
+          :style="{
+            fill: color(lay.colOf.get(c.hash)!),
+            // 用画布色描一圈 1.5px：相邻泳道靠得近时，圆点不会糊成一条
+            stroke: 'var(--background)',
+            strokeWidth: '1.5px',
+          }"
         />
       </svg>
 
       <div
         v-for="(c, vi) in visible"
         :key="c.hash"
-        class="absolute flex cursor-pointer items-center gap-1.5 overflow-hidden border-l-2 pr-3 whitespace-nowrap transition-colors duration-fast hover:bg-hover"
-        :class="[
-          selected === c.hash ? 'bg-primary-soft' : selection.has(c.hash) && 'bg-primary/15',
-        ]"
+        class="group/history absolute isolate flex cursor-pointer items-center gap-1.5 overflow-hidden border-l-2 border-l-transparent pr-3 whitespace-nowrap"
         :style="{
           top: (winStart + vi) * ROW_H + 'px',
           height: ROW_H + 'px',
-          left: lay.cols * COL_W + 'px',
+          left: 0,
           right: 0,
-          // 左侧 2px 蓝条标记多选；单选仍是 bg-primary-soft，两者可叠加区分
-          borderLeftColor: selection.has(c.hash) ? 'var(--primary)' : 'transparent',
+          // 点击区域保留整行，底色单独从泳道右侧开始，避免遮挡 SVG。
+          paddingLeft: lay.cols * COL_W + 'px',
         }"
         @click="onRowClick(c, $event)"
         @contextmenu.prevent="emit('commitMenu', { x: $event.clientX, y: $event.clientY, c })"
       >
-        <!-- 一行三段争宽度：主题 / refs / 作者·时间。优先级从高到低，
+        <span
+          aria-hidden="true"
+          class="pointer-events-none absolute inset-y-0 right-0 -z-10 transition-colors duration-fast"
+          :class="selected === c.hash ? 'bg-row-selected' : selection.has(c.hash) ? 'bg-row-selected-strong' : 'group-hover/history:bg-hover'"
+          :style="{ left: lay.cols * COL_W + 'px' }"
+        />
+        <!-- 多选的左标记落在泳道与文字之间，而不是面板最左缘；
+             单选只靠底色，保持和参考图一致的安静选中态。 -->
+        <span
+          v-if="selection.has(c.hash)"
+          aria-hidden="true"
+          class="pointer-events-none absolute inset-y-0 w-[2px] bg-primary"
+          :style="{ left: lay.cols * COL_W + 'px' }"
+        />
+        <!-- 一行三段争宽度：主题 / refs / 作者·hash·时间。优先级从高到低，
              主题保底 min-w-0 flex-1，refs 可收缩（min-w-0 才破得开 auto 最小尺寸，
-             否则 nowrap 的徽标永远撑满自己的内容宽），作者列固定窄列不参与争夺。 -->
-        <span class="min-w-0 flex-1 truncate" :title="tip(c)">
+             否则 nowrap 的徽标永远撑满自己的内容宽），元信息固定窄列不参与争夺。 -->
+        <span class="min-w-0 flex-1 truncate text-foreground" :title="tip(c)">
           <template v-if="hitSegments" v-for="(seg, si) in hitSegments(c.subject)" :key="si"
             ><mark v-if="seg.hit" class="rounded-sm bg-primary/30 px-0.5 text-foreground">{{ seg.text }}</mark
             ><template v-else>{{ seg.text }}</template></template
@@ -460,11 +470,25 @@ const hitSegments = computed(() => {
             >+{{ c.refs.length - REFS_SHOWN }}</Badge
           >
         </span>
+        <!-- 元信息比主题低一档：作者 / 相对时间统一 text-xs。
+             hash 不再占行内位置（一眼认不出、也背不下来，真要复制走 tooltip）。
+             宽度按内容收紧，不写死列宽：写死时作者那格 flex-1 会把剩余空间全吃掉，
+             作者和日期之间就空出一大块。现在元信息整体贴右，日期仍跨行右对齐。
+             选中行不能沿用 muted-foreground：它在浅色主题的淡紫底上只有 4.0–4.2:1；
+             半透明的前景色也会被底色稀释（latte 只有 3.3–3.8），所以选中时直接回到前景色，
+             层级交给字号与字重，不拿对比度换。 -->
         <span
-          class="max-w-[9.5rem] shrink-0 truncate text-sm text-muted-foreground tabular-nums"
-          :title="`${c.author} · ${c.date}`"
-          >{{ c.author }} · {{ shortDate(c.date) }}</span
+          class="history-meta flex min-w-0 max-w-[35%] shrink items-center gap-1.5 text-xs tabular-nums"
+          :class="
+            selected === c.hash || selection.has(c.hash)
+              ? 'text-foreground'
+              : 'text-muted-foreground'
+          "
+          :title="`${c.author} · ${c.hash} · ${shortDate(c.date)}`"
         >
+          <span class="min-w-0 truncate">{{ c.author }}</span>
+          <span class="shrink-0 text-right whitespace-nowrap">{{ shortDate(c.date) }}</span>
+        </span>
       </div>
     </div>
     <!-- 末尾指示条：滚到分页边界时给出「正在加载 / 已到底」的反馈，不然页面完全静止 -->

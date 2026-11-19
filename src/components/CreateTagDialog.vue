@@ -25,40 +25,38 @@ const imeClose = imeGuard(() => {
 
 <template>
   <Transition name="dlg">
-  <div
-    v-if="open"
-    v-trap
-    class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="dlg-create-tag-title"
-    @click.self="open = false"
-  >
-    <div class="w-dlg-md surface rounded-lg p-5 pop-in">
-      <div id="dlg-create-tag-title" class="mb-3 text-base font-semibold">新建标签</div>
-      <Input
-        v-model="name"
-        v-focus
-        placeholder="标签名，如 v1.0.0"
-        @keydown.enter.prevent="imeConfirm"
-        @keydown.esc="imeClose"
-      />
-      <Input
-        v-model="msg"
-        class="mt-2"
-        placeholder="附注信息（可选，填写即创建附注标签）"
-        @keydown.esc="imeClose"
-      />
-      <p class="mt-2 text-xs text-muted-foreground">
-        基于{{ tagTarget ? `提交 ${tagTarget.slice(0, 10)}` : `当前 HEAD（${status?.branch || "—"}）` }}创建。
-      </p>
-      <div class="mt-5 flex justify-end gap-2">
-        <Button variant="ghost" size="sm" @click="open = false">取消</Button>
-        <Button variant="default" size="sm" :disabled="!name.trim() || busy" @click="emit('confirm')">
-          创建
-        </Button>
+    <div
+      v-if="open"
+      v-trap
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-create-tag-title"
+      @click.self="open = false"
+    >
+      <div class="dialog-shell w-dlg-md surface rounded-lg pop-in">
+        <header class="dialog-header">
+          <div id="dlg-create-tag-title" class="dialog-title">新建标签</div>
+        </header>
+        <div class="dialog-body space-y-4">
+          <label class="dialog-field text-xs">
+            <span class="font-medium">标签名称</span>
+            <Input v-model="name" v-focus placeholder="例如 v1.0.0" @keydown.enter.prevent="imeConfirm" @keydown.esc="imeClose" />
+          </label>
+          <label class="dialog-field text-xs">
+            <span class="font-medium">附注信息 <span class="font-normal text-muted-foreground">（可选）</span></span>
+            <Input v-model="msg" placeholder="填写后创建附注标签" @keydown.esc="imeClose" />
+          </label>
+          <div class="rounded-sm border border-border bg-muted p-3 text-xs">
+            <span class="text-muted-foreground">标签指向</span>
+            <div class="mt-1 break-all font-mono">{{ tagTarget || ('当前 HEAD · ' + (status?.branch || '—')) }}</div>
+          </div>
+        </div>
+        <footer class="dialog-footer">
+          <Button variant="ghost" size="sm" @click="open = false">取消</Button>
+          <Button variant="default" size="sm" :disabled="!name.trim() || busy" @click="emit('confirm')">创建标签</Button>
+        </footer>
       </div>
     </div>
-  </div>
   </Transition>
 </template>

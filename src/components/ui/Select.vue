@@ -13,6 +13,9 @@ const props = withDefaults(
   defineProps<{
     options: { value: string; label: string }[];
     placeholder?: string;
+    id?: string;
+    /** 触发按钮的无障碍名称：值本身读不出「这是什么参数」时用 */
+    label?: string;
     class?: string;
     disabled?: boolean;
   }>(),
@@ -36,17 +39,21 @@ async function place() {
   const anchor = rootEl.value;
   if (!anchor) return;
   const a = anchor.getBoundingClientRect();
-  await nextTick();
-  const panel = panelEl.value;
-  const pw = panel?.offsetWidth ?? a.width;
-  const ph = panel?.offsetHeight ?? 0;
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  let left = a.left;
-  if (left + pw > vw - 8) left = Math.max(8, vw - pw - 8);
+  const width = Math.min(a.width, Math.max(0, vw - 16));
+  // 先让锚点宽度生效，再测量换行后的面板尺寸。
+  pos.value = { left: Math.max(8, Math.min(a.left, vw - width - 8)), top: Math.max(8, a.bottom + 4), width };
+  await nextTick();
+  const panel = panelEl.value;
+  if (!panel || !open.value) return;
+  const pw = Math.min(panel.offsetWidth, Math.max(0, vw - 16));
+  const ph = Math.min(panel.offsetHeight, Math.max(0, vh - 16));
+  const left = Math.max(8, Math.min(a.left, vw - pw - 8));
   let top = a.bottom + 4;
-  if (ph && top + ph > vh - 8) top = Math.max(8, a.top - ph - 4); // 底部放不下 → 翻上方
-  pos.value = { left, top, width: a.width };
+  if (ph && top + ph > vh - 8) top = Math.max(8, a.top - ph - 4);
+  top = Math.max(8, Math.min(top, vh - ph - 8));
+  pos.value = { left, top, width };
 }
 
 function toggle() {
@@ -70,6 +77,7 @@ function onScrollOrResize(e?: Event) {
   open.value = false;
 }
 function onKey(e: KeyboardEvent) {
+  if (e.isComposing) return;
   if (e.key === "Escape" && open.value) {
     // 面板在 body 下，Esc 要自己拦一下，别让下层浮层跟着关
     e.stopPropagation();
@@ -99,11 +107,13 @@ const current = () => props.options.find((o) => o.value === model.value);
   <div ref="rootEl" class="relative">
     <button
       type="button"
+      :id="props.id"
       :disabled="disabled"
       :title="current()?.label ?? placeholder"
+      :aria-label="props.label"
       :class="
         cn(
-          'gz-field flex h-8 w-full items-center justify-between gap-2 rounded-sm border border-border bg-input-bg px-2.5 text-base whitespace-nowrap outline-none transition-colors duration-fast focus-visible:border-primary/60 disabled:opacity-45',
+          'gz-field flex h-8 w-full items-center justify-between gap-2 rounded-sm border border-border bg-input-bg px-2.5 text-base whitespace-nowrap outline-none transition-colors duration-fast focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-focus-ring disabled:opacity-45',
           props.class
         )
       "
@@ -121,7 +131,7 @@ const current = () => props.options.find((o) => o.value === model.value);
       <div
         v-if="open"
         ref="panelEl"
-        class="pop-in surface-menu fixed z-[60] max-h-56 overflow-y-auto overscroll-contain rounded-sm py-1"
+        class="bounded-select pop-in surface-menu fixed z-[60] overscroll-contain rounded-sm py-1"
         :style="{ left: pos.left + 'px', top: pos.top + 'px', minWidth: pos.width + 'px' }"
         role="listbox"
         @keydown="onKey"
@@ -133,8 +143,8 @@ const current = () => props.options.find((o) => o.value === model.value);
           role="option"
           :aria-selected="o.value === model"
           :class="[
-            'block w-full cursor-pointer px-2.5 py-1.5 text-left text-xs whitespace-nowrap transition-colors duration-fast hover:bg-hover active:bg-active',
-            o.value === model && 'bg-primary-soft text-primary',
+            'block w-full cursor-pointer px-2.5 py-1.5 text-left text-xs whitespace-normal break-words transition-colors duration-fast hover:bg-hover active:bg-active',
+            o.value === model && 'bg-row-selected font-medium text-foreground',
           ]"
           @click="pick(o.value)"
         >

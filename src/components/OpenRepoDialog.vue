@@ -35,89 +35,81 @@ const emit = defineEmits<{
     role="dialog"
     aria-modal="true"
     :aria-labelledby="open === 'choose' ? 'dlg-open-repo-title' : 'dlg-clone-title'"
-    @click.self="emit('close')"
+    @click.self="!cloneBusy && emit('close')"
   >
-    <div class="w-dlg-lg surface rounded-lg p-5 pop-in">
-      <!-- 选择入口 -->
+    <div class="dialog-shell w-dlg-lg surface rounded-lg pop-in">
       <template v-if="open === 'choose'">
-        <div id="dlg-open-repo-title" class="mb-3 text-base font-semibold">打开仓库</div>
-        <div class="grid grid-cols-2 gap-3">
-          <button
-            class="cursor-pointer rounded-md surface-panel p-4 text-left transition-colors duration-fast hover:border-primary/60 hover:bg-primary/5 hover:shadow-elev-2"
-            @click="emit('choose-local')"
-          >
-            <FolderOpen class="mb-1.5 size-5 text-primary" />
-            <span class="block text-sm font-medium">本地目录</span>
-            <span class="mt-0.5 block text-xs text-muted-foreground">选择本机已有的 Git 仓库</span>
-          </button>
-          <button
-            class="cursor-pointer rounded-md surface-panel p-4 text-left transition-colors duration-fast hover:border-primary/60 hover:bg-primary/5 hover:shadow-elev-2"
-            @click="emit('remote')"
-          >
-            <Download class="mb-1.5 size-5 text-primary" />
-            <span class="block text-sm font-medium">从远程克隆</span>
-            <span class="mt-0.5 block text-xs text-muted-foreground">输入 URL 克隆到本地并打开</span>
-          </button>
-          <!-- 第三个动作横跨整行：三个等宽卡片在 520px 里太挤，而且它本来就比前两个少见 -->
-          <button
-            class="col-span-2 flex cursor-pointer items-center gap-3 rounded-md surface-panel p-4 text-left transition-colors duration-fast hover:border-primary/60 hover:bg-primary/5 hover:shadow-elev-2"
-            @click="emit('init-repo')"
-          >
-            <FolderPlus class="size-5 shrink-0 text-primary" />
-            <span class="min-w-0">
-              <span class="block text-sm font-medium">初始化新仓库</span>
-              <span class="mt-0.5 block text-xs text-muted-foreground">把选中的空目录 git init 后打开</span>
-            </span>
-          </button>
+        <header class="dialog-header">
+          <div id="dlg-open-repo-title" class="dialog-title">打开仓库</div>
+        </header>
+        <div class="dialog-body">
+          <div class="repo-entry-grid">
+            <button
+              class="cursor-pointer rounded-sm surface-panel p-4 text-left transition-colors duration-fast hover:border-primary/60 hover:bg-hover"
+              @click="emit('choose-local')"
+            >
+              <FolderOpen class="mb-2 size-5 text-primary" />
+              <span class="block text-sm font-medium">本地目录</span>
+              <span class="mt-1 block text-xs leading-relaxed text-muted-foreground">选择本机已有的 Git 仓库</span>
+            </button>
+            <button
+              class="cursor-pointer rounded-sm surface-panel p-4 text-left transition-colors duration-fast hover:border-primary/60 hover:bg-hover"
+              @click="emit('remote')"
+            >
+              <Download class="mb-2 size-5 text-primary" />
+              <span class="block text-sm font-medium">从远程克隆</span>
+              <span class="mt-1 block text-xs leading-relaxed text-muted-foreground">输入远程地址，克隆后自动打开</span>
+            </button>
+            <button
+              class="repo-entry-wide flex cursor-pointer items-center gap-3 rounded-sm surface-panel p-4 text-left transition-colors duration-fast hover:border-primary/60 hover:bg-hover"
+              @click="emit('init-repo')"
+            >
+              <FolderPlus class="size-5 shrink-0 text-primary" />
+              <span class="min-w-0"><span class="block text-sm font-medium">初始化新仓库</span><span class="mt-1 block text-xs leading-relaxed text-muted-foreground">在选中的目录中创建 Git 仓库</span></span>
+            </button>
+          </div>
         </div>
+        <footer class="dialog-footer">
+          <Button variant="ghost" size="sm" @click="emit('close')">关闭</Button>
+        </footer>
       </template>
-      <!-- 远程克隆表单 -->
       <template v-else>
-        <div id="dlg-clone-title" class="mb-3 text-base font-semibold">从远程克隆</div>
-        <Input
-          v-model="url"
-          v-focus
-          placeholder="远程地址：https://host/user/repo.git 或 git@host:user/repo.git"
-          @keydown.esc="emit('close', $event)"
-        />
-        <div class="mt-2 flex items-center gap-2">
-          <Button variant="secondary" size="sm" class="shrink-0" @click="emit('pick-parent')">
-            选择位置…
-          </Button>
-          <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground" :title="cloneParent">
-            {{ cloneParent || "未选择克隆到哪个目录" }}
-          </span>
+        <header class="dialog-header">
+          <div id="dlg-clone-title" class="dialog-title">从远程克隆</div>
+        </header>
+        <div class="dialog-body space-y-4">
+          <label class="dialog-field text-xs">
+            <span class="font-medium">远程地址</span>
+            <Input v-model="url" v-focus :disabled="cloneBusy" placeholder="HTTPS 地址或 SSH 地址" @keydown.esc="emit('close', $event)" />
+          </label>
+          <div class="dialog-field text-xs">
+            <span class="font-medium">保存位置</span>
+            <div class="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" size="sm" :disabled="cloneBusy" @click="emit('pick-parent')">选择位置…</Button>
+              <span class="min-w-0 flex-1 break-all text-muted-foreground" :title="cloneParent">{{ cloneParent || '尚未选择位置' }}</span>
+            </div>
+          </div>
+          <label class="dialog-field text-xs">
+            <span class="font-medium">目录名称</span>
+            <Input v-model="cloneName" :disabled="cloneBusy" placeholder="根据远程地址推断，也可自行修改" @input="emit('touch-name')" @keydown.enter.prevent="emit('confirm-clone', $event)" @keydown.esc="emit('close', $event)" />
+          </label>
+          <div class="rounded-sm border border-border bg-muted p-3 text-xs">
+            <span class="text-muted-foreground">克隆目标</span>
+            <div class="mt-1 break-all font-mono">{{ cloneParent && cloneName.trim() ? cloneParent.replace(/[\/]+$/, '') + '/' + cloneName.trim() : '选择位置并填写目录名后显示' }}</div>
+          </div>
+          <div v-if="cloneErr" role="alert" class="text-xs leading-relaxed text-destructive">
+            {{ cloneErr }}
+            <details v-if="cloneErrDetail" class="mt-2 rounded-sm border border-border p-2">
+              <summary class="cursor-pointer text-muted-foreground">详细信息</summary>
+              <pre class="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">{{ cloneErrDetail }}</pre>
+            </details>
+          </div>
         </div>
-        <Input
-          v-model="cloneName"
-          class="mt-2"
-          placeholder="目录名（输入地址后自动推断，可修改）"
-          @input="emit('touch-name')"
-          @keydown.enter.prevent="emit('confirm-clone', $event)"
-          @keydown.esc="emit('close', $event)"
-        />
-        <div v-if="cloneErr" class="mt-2 text-xs text-destructive">
-          {{ cloneErr }}
-          <details v-if="cloneErrDetail" class="mt-1">
-            <summary class="cursor-pointer text-muted-foreground">详细信息</summary>
-            <pre class="mt-1 max-h-24 overflow-y-auto whitespace-pre-wrap text-xs text-muted-foreground">{{ cloneErrDetail }}</pre>
-          </details>
-        </div>
-        <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
-          将克隆到「位置 / 目录名」，完成后自动打开。认证走系统凭据（credential helper / ssh key）。
-        </p>
-        <div class="mt-5 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" @click="emit('close')">取消</Button>
-          <Button
-            variant="default"
-            size="sm"
-            :disabled="!url.trim() || !cloneParent || !cloneName.trim() || cloneBusy"
-            @click="emit('start-clone')"
-          >
-            <Spinner v-if="cloneBusy" :size="14" />
-            {{ cloneBusy ? "克隆中…" : "克隆并打开" }}
-          </Button>
-        </div>
+        <footer class="dialog-footer">
+          <span v-if="cloneBusy" class="mr-auto text-xs text-muted-foreground">正在克隆，请稍候…</span>
+          <Button variant="ghost" size="sm" :disabled="cloneBusy" @click="emit('close')">取消</Button>
+          <Button variant="default" size="sm" :disabled="!url.trim() || !cloneParent || !cloneName.trim() || cloneBusy" @click="emit('start-clone')"><Spinner v-if="cloneBusy" :size="14" />{{ cloneBusy ? '克隆中…' : '克隆并打开' }}</Button>
+        </footer>
       </template>
     </div>
   </div>

@@ -16,29 +16,31 @@ const emit = defineEmits<{ retry: [] }>();
 
 <template>
   <Transition name="dlg">
-  <div
-    v-if="open"
-    v-trap
-    class="fixed inset-0 z-40 grid place-items-center bg-scrim"
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby="dlg-error-title"
-    @click.self="open = false"
-  >
-    <!-- 错误框不用 surface：它要保持红色描边，会和 surface 自带的 border 打架 -->
-    <div class="w-dlg-md rounded-lg border border-destructive/40 bg-elevated p-5 shadow-elev-4 pop-in">
-      <div id="dlg-error-title" class="mb-3 text-base font-semibold text-destructive">操作失败</div>
-      <div>{{ message }}</div>
-      <details v-if="detail" class="mt-2">
-        <summary class="cursor-pointer text-xs text-muted-foreground">详细信息</summary>
-        <pre class="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap text-xs text-muted-foreground">{{ detail }}</pre>
-      </details>
-      <div class="mt-5 flex justify-end gap-2">
-        <!-- 只对 run() 包起来的操作给重试：那是「重放一次同样的调用」，校验类错误重试没意义 -->
-        <Button v-if="canRetry" variant="secondary" size="sm" @click="emit('retry')">重试</Button>
-        <Button variant="secondary" size="sm" @click="open = false">知道了</Button>
+    <div
+      v-if="open"
+      v-trap
+      class="fixed inset-0 z-40 grid place-items-center bg-scrim"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="dlg-error-title"
+      @click.self="open = false"
+    >
+      <div class="dialog-shell w-dlg-md rounded-lg border border-destructive/40 bg-elevated shadow-elev-4 pop-in">
+        <header class="dialog-header">
+          <div id="dlg-error-title" class="dialog-title text-destructive">操作失败</div>
+        </header>
+        <div class="dialog-body space-y-4 text-sm leading-relaxed">
+          <p class="whitespace-pre-line break-words">{{ message }}</p>
+          <details v-if="detail" class="rounded-sm border border-border p-3">
+            <summary class="cursor-pointer text-xs text-muted-foreground">查看详细信息</summary>
+            <pre class="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-xs text-muted-foreground">{{ detail }}</pre>
+          </details>
+        </div>
+        <footer class="dialog-footer">
+          <Button v-if="canRetry" variant="secondary" size="sm" @click="emit('retry')">重试</Button>
+          <Button variant="secondary" size="sm" @click="open = false">知道了</Button>
+        </footer>
       </div>
     </div>
-  </div>
   </Transition>
 </template>

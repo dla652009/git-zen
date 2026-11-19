@@ -102,8 +102,10 @@ function toggle(path: string) {
       v-for="n in flatLeaves"
       :key="n.path"
       :class="[
-        'relative flex cursor-pointer items-center gap-1 py-1.5 pr-3 transition-colors duration-fast hover:bg-hover',
-        n.branch!.current && 'font-semibold text-primary',
+        'relative flex cursor-pointer items-center gap-1 py-1.5 pr-3 transition-colors duration-fast select-none',
+        n.branch!.current
+          ? 'bg-row-selected font-semibold text-foreground'
+          : 'hover:bg-hover',
       ]"
       :style="{ paddingLeft: TREE_BASE + 'px', lineHeight: ROW_LEADING }"
       :title="branchTitle(n.branch!)"
@@ -112,9 +114,17 @@ function toggle(path: string) {
       @contextmenu.prevent="emit('menu', n.branch!, $event.clientX, $event.clientY)"
     >
       <span class="truncate">{{ n.branch!.name }}</span>
+      <!-- 去掉行首那个每行都一样的图标后，当前分支只剩粗体与底色，扫读不够显眼，补一个点 -->
+      <span
+        v-if="n.branch!.current"
+        class="size-1.5 shrink-0 rounded-full bg-primary"
+        aria-hidden="true"
+      />
       <span class="ml-auto shrink-0 pl-1 text-2xs leading-none tabular-nums">
-        <span v-if="n.branch!.ahead" class="mr-0.5 text-[var(--c-mod)]">↑{{ n.branch!.ahead }}</span>
-        <span v-if="n.branch!.behind" class="text-[var(--c-conf)]">↓{{ n.branch!.behind }}</span>
+        <!-- 当前分支有选中底色时，语义色 c-mod 在 light/latte/xp 上不足 4.5；
+             方向由 ↑/↓ 箭头表达，颜色让位给前景色。 -->
+        <span v-if="n.branch!.ahead" class="mr-0.5" :class="n.branch!.current ? 'text-foreground' : 'text-[var(--c-mod)]'">↑{{ n.branch!.ahead }}</span>
+        <span v-if="n.branch!.behind" :class="n.branch!.current ? 'text-foreground' : 'text-[var(--c-conf)]'">↓{{ n.branch!.behind }}</span>
       </span>
     </li>
   </template>
@@ -130,12 +140,13 @@ function toggle(path: string) {
           v-for="x in guideXs"
           :key="x"
           aria-hidden="true"
-          class="pointer-events-none absolute inset-y-0 w-px bg-border"
+          class="pointer-events-none absolute inset-y-0 w-px bg-border-soft"
           :style="{ left: x + 'px' }"
         />
         <ChevronDown class="size-3 shrink-0 transition-transform duration-fast" :class="collapsed.has(n.path) && '-rotate-90'" />
         <span class="truncate text-muted-foreground" :title="`${n.seg}（含 ${n.count} 个分支）`">{{ n.seg }}</span>
-        <span class="shrink-0 text-2xs tabular-nums opacity-60">{{ n.count }}</span>
+        <!-- 数量与一级分组同一列右对齐：目录层级再深，数字也不会跟着名字左右漂 -->
+        <span class="ml-auto shrink-0 pl-2 text-2xs text-muted-foreground tabular-nums">{{ n.count }}</span>
       </div>
       <!-- 文件夹的展开/收起与一级分组同一套高度动画（class 见 style.css 的 .collapse-*）。
            内层 div 是唯一 grid item：BranchTree 是多根 fragment，直接做 0fr 只压得动第一行。
@@ -159,8 +170,10 @@ function toggle(path: string) {
     <li
       v-else
       :class="[
-        'relative flex cursor-pointer items-center gap-1 py-1.5 pr-3 transition-colors duration-fast hover:bg-hover',
-        n.branch?.current && 'font-semibold text-primary',
+        'relative flex cursor-pointer items-center gap-1 py-1.5 pr-3 transition-colors duration-fast select-none',
+        n.branch?.current
+          ? 'bg-row-selected font-semibold text-foreground'
+          : 'hover:bg-hover',
       ]"
       :style="{ paddingLeft: TREE_BASE + (props.depth ?? 0) * STEP + LEAF_OFFSET + 'px', lineHeight: ROW_LEADING }"
       :title="branchTitle(n.branch!)"
@@ -172,13 +185,20 @@ function toggle(path: string) {
         v-for="x in guideXs"
         :key="x"
         aria-hidden="true"
-        class="pointer-events-none absolute inset-y-0 w-px bg-border"
+        class="pointer-events-none absolute inset-y-0 w-px bg-border-soft"
         :style="{ left: x + 'px' }"
       />
       <span class="truncate">{{ n.seg }}</span>
+      <span
+        v-if="n.branch!.current"
+        class="size-1.5 shrink-0 rounded-full bg-primary"
+        aria-hidden="true"
+      />
       <span class="ml-auto shrink-0 pl-1 text-2xs leading-none tabular-nums">
-        <span v-if="n.branch!.ahead" class="mr-0.5 text-[var(--c-mod)]">↑{{ n.branch!.ahead }}</span>
-        <span v-if="n.branch!.behind" class="text-[var(--c-conf)]">↓{{ n.branch!.behind }}</span>
+        <!-- 当前分支有选中底色时，语义色 c-mod 在 light/latte/xp 上不足 4.5；
+             方向由 ↑/↓ 箭头表达，颜色让位给前景色。 -->
+        <span v-if="n.branch!.ahead" class="mr-0.5" :class="n.branch!.current ? 'text-foreground' : 'text-[var(--c-mod)]'">↑{{ n.branch!.ahead }}</span>
+        <span v-if="n.branch!.behind" :class="n.branch!.current ? 'text-foreground' : 'text-[var(--c-conf)]'">↓{{ n.branch!.behind }}</span>
       </span>
     </li>
   </template>

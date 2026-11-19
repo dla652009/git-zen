@@ -11,7 +11,7 @@ const model = defineModel<string>({ default: "" });
     v-model="model"
     :class="
       cn(
-        'gz-field w-full rounded-sm border border-border bg-input-bg px-2.5 py-1.5 text-base outline-none transition-colors duration-fast resize-y placeholder:text-muted-foreground focus-visible:border-primary/60',
+        'gz-field w-full rounded-sm border border-border bg-input-bg px-2.5 py-1.5 text-base outline-none transition-colors duration-fast resize-y placeholder:text-muted-foreground focus-visible:border-primary/60 focus-visible:ring-2 focus-visible:ring-focus-ring',
         props.class
       )
     "

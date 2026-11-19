@@ -654,44 +654,44 @@ const NAV = [
     @click.self="closeWithoutSaving()"
   >
     <!-- 880x520：热力图满幅 + 各页留白；窗口过小时回退 95vw/95vh（热力图横向滚动，内容区滚动） -->
-    <div class="pop-in surface flex h-[520px] max-h-[95vh] w-[880px] max-w-[95vw] overflow-hidden rounded-lg">
+    <div class="settings-frame pop-in surface flex overflow-hidden rounded-lg">
       <!-- 左侧导航 -->
-      <nav class="w-36 shrink-0 space-y-0.5 border-r border-border bg-muted/30 p-2">
+      <nav class="settings-nav shrink-0 space-y-0.5 border-r border-border bg-muted/30 p-2">
         <button
           v-for="item in NAV"
           :key="item.id"
           :class="[
             'flex w-full cursor-pointer items-center gap-2 rounded-sm px-3 py-1.5 text-left text-base transition-colors duration-fast',
-            tab === item.id ? 'bg-primary-soft font-medium text-primary' : 'text-muted-foreground hover:bg-hover',
+            tab === item.id ? 'bg-row-selected font-medium text-foreground' : 'text-muted-foreground hover:bg-hover',
           ]"
           @click="tab = item.id"
         >
-          <component :is="item.icon" class="size-4" />
+          <component :is="item.icon" class="size-4" :class="tab === item.id ? 'text-primary' : ''" />
           {{ item.label }}
         </button>
       </nav>
 
       <!-- 右侧内容 -->
       <div class="flex min-w-0 flex-1 flex-col">
-        <header class="flex shrink-0 items-center border-b border-border px-4 py-2.5">
-          <span id="dlg-settings-title" class="font-medium">设置</span>
+        <header class="dialog-header flex shrink-0 items-center">
+          <span id="dlg-settings-title" class="dialog-title">设置</span>
           <span class="flex-1" />
-          <Button variant="ghost" size="icon" @click="closeWithoutSaving()"><X class="size-4" /></Button>
+          <Button variant="ghost" size="icon" aria-label="关闭设置且不保存" @click="closeWithoutSaving()"><X class="size-4" /></Button>
         </header>
 
-        <div class="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
+        <div class="settings-content min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
           <!-- 用户信息（仓库级） -->
           <template v-if="tab === 'user'">
             <section>
               <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">提交者信息</h3>
               <div class="space-y-3">
-                <div class="flex items-center gap-3">
-                  <label class="w-16 shrink-0 text-xs text-muted-foreground">名字</label>
-                  <Input v-model="userName" placeholder="提交历史中显示的名字" />
+                <div class="settings-field-row flex items-center gap-3">
+                  <label for="settings-user-name" class="w-16 shrink-0 text-xs text-muted-foreground">名字</label>
+                  <Input id="settings-user-name" v-model="userName" placeholder="提交历史中显示的名字" />
                 </div>
-                <div class="flex items-center gap-3">
-                  <label class="w-16 shrink-0 text-xs text-muted-foreground">邮箱</label>
-                  <Input v-model="userEmail" placeholder="you@example.com" />
+                <div class="settings-field-row flex items-center gap-3">
+                  <label for="settings-user-email" class="w-16 shrink-0 text-xs text-muted-foreground">邮箱</label>
+                  <Input id="settings-user-email" v-model="userEmail" placeholder="you@example.com" />
                 </div>
               </div>
               <p class="mt-2 text-xs text-muted-foreground">
@@ -712,7 +712,7 @@ const NAV = [
               <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">AI 服务（OpenAI 兼容协议）</h3>
               <div class="mb-4 flex items-center justify-between rounded-md border border-border bg-muted/25 px-3 py-2">
                 <span class="text-xs">启用 AI 功能</span>
-                <Switch v-model="aiOn" />
+                <Switch aria-label="启用 AI 功能" v-model="aiOn" />
               </div>
               <div
                 :class="[
@@ -726,25 +726,25 @@ const NAV = [
                     右键「远程」新建 MR 时，先按 merge-base diff 生成标题与描述供预览确认
                   </p>
                 </div>
-                <Switch v-model="mrAiGenOn" :disabled="!aiOn" />
+                <Switch aria-label="生成 MR 标题与描述" v-model="mrAiGenOn" :disabled="!aiOn" />
               </div>
               <div :class="['space-y-3', aiOn ? '' : 'pointer-events-none opacity-40']">
-                <div class="flex items-center gap-3">
-                  <label class="w-16 shrink-0 text-xs text-muted-foreground">Base URL</label>
-                  <Input v-model="draft.aiBaseUrl" placeholder="https://api.openai.com/v1" />
+                <div class="settings-field-row flex items-center gap-3">
+                  <label for="settings-ai-url" class="w-16 shrink-0 text-xs text-muted-foreground">Base URL</label>
+                  <Input id="settings-ai-url" v-model="draft.aiBaseUrl" placeholder="https://api.openai.com/v1" />
                 </div>
-                <div class="flex items-center gap-3">
-                  <label class="w-16 shrink-0 text-xs text-muted-foreground">API Key</label>
-                  <Input v-model="draft.aiApiKey" type="password" placeholder="sk-…（本地 Ollama 可留空）" />
+                <div class="settings-field-row flex items-center gap-3">
+                  <label for="settings-ai-key" class="w-16 shrink-0 text-xs text-muted-foreground">API Key</label>
+                  <Input id="settings-ai-key" v-model="draft.aiApiKey" type="password" placeholder="sk-…（本地 Ollama 可留空）" />
                 </div>
-                <div class="flex items-center gap-3">
-                  <label class="w-16 shrink-0 text-xs text-muted-foreground">模型</label>
-                  <Input v-model="draft.aiModel" placeholder="gpt-4o-mini / deepseek-chat / qwen2.5 …" />
+                <div class="settings-field-row flex items-center gap-3">
+                  <label for="settings-ai-model" class="w-16 shrink-0 text-xs text-muted-foreground">模型</label>
+                  <Input id="settings-ai-model" v-model="draft.aiModel" placeholder="gpt-4o-mini / deepseek-chat / qwen2.5 …" />
                 </div>
-                <div class="flex items-center gap-3">
-                  <label class="w-16 shrink-0 text-xs text-muted-foreground">提交语言</label>
+                <div class="settings-field-row flex items-center gap-3">
+                  <label for="settings-ai-language" class="w-16 shrink-0 text-xs text-muted-foreground">提交语言</label>
                   <Select
-                    v-model="draft.aiCommitLang"
+                    id="settings-ai-language" v-model="draft.aiCommitLang"
                     class="w-40"
                     :options="[
                       { value: '中文', label: '中文' },
@@ -789,12 +789,12 @@ const NAV = [
                   :class="[
                     'flex cursor-pointer items-center justify-center gap-1.5 rounded-md border px-2 py-1.5 text-xs transition-colors duration-fast',
                     draft.themeMode === m.id
-                      ? 'border-primary/60 bg-primary-soft text-primary'
+                      ? 'border-primary/60 bg-row-selected text-foreground'
                       : 'border-border hover:bg-hover',
                   ]"
                   @click="pickMode(m.id)"
                 >
-                  <component :is="m.icon" class="size-3.5" />
+                  <component :is="m.icon" class="size-3.5" :class="draft.themeMode === m.id ? 'text-primary' : ''" />
                   {{ m.label }}
                 </button>
               </div>
@@ -809,14 +809,14 @@ const NAV = [
               </div>
               <!-- 卡片列出核心配色：纯文字标签认不出「这套是什么感觉」，
                    而选主题这件事本来就是看颜色决定的 -->
-              <div class="grid grid-cols-2 gap-2">
+              <div class="settings-theme-grid grid grid-cols-2 gap-2">
                 <button
                   v-for="s in visibleSchemes"
                   :key="s.id"
                   :class="[
                     'group relative cursor-pointer rounded-lg border p-2.5 text-left transition-colors duration-fast',
                     isSchemeActive(s.id)
-                      ? 'border-primary/60 bg-primary-soft'
+                      ? 'border-primary/60 bg-row-selected'
                       : 'border-border hover:bg-hover',
                   ]"
                   :aria-pressed="isSchemeActive(s.id)"
@@ -849,20 +849,20 @@ const NAV = [
             <section>
               <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">字体</h3>
               <div class="space-y-3">
-                <div class="flex items-center gap-3">
-                  <label class="w-16 shrink-0 text-xs text-muted-foreground">UI 字体</label>
+                <div class="settings-field-row flex items-center gap-3">
+                  <label for="settings-font-family" class="w-16 shrink-0 text-xs text-muted-foreground">UI 字体</label>
                   <Select
-                    v-model="draft.fontFamily"
+                    id="settings-font-family" v-model="draft.fontFamily"
                     :options="FONT_OPTIONS"
                   />
                 </div>
-                <div class="flex items-center gap-3">
-                  <label class="w-16 shrink-0 text-xs text-muted-foreground">字号</label>
+                <div class="settings-field-row flex items-center gap-3">
+                  <label for="settings-font-size" class="w-16 shrink-0 text-xs text-muted-foreground">字号</label>
                   <!-- 数字框而不是滑杆：滑杆滑不出精确值，也没法一眼看出当前是几号。
                        夹取放在 change（失焦/回车）而不是 input —— 边打字边夹会把
                        「1」→ 14、「16」打成「146」→ 17，根本没法输。 -->
                   <Input
-                    v-model.number="draft.fontSize"
+                    id="settings-font-size" v-model.number="draft.fontSize"
                     type="number"
                     :min="FONT_SIZE_MIN"
                     :max="FONT_SIZE_MAX"
@@ -887,7 +887,7 @@ const NAV = [
                 <span
                   v-for="p in prefixList"
                   :key="p"
-                  class="flex items-center gap-1 rounded-xs bg-primary-soft px-1.5 py-0.5 font-mono text-xs text-primary"
+                  class="flex items-center gap-1 rounded-xs bg-primary-soft px-1.5 py-0.5 font-mono text-xs text-foreground"
                 >
                   {{ p }}
                   <X class="size-3 cursor-pointer hover:text-destructive" @click="removePrefix(p)" />
@@ -908,10 +908,10 @@ const NAV = [
 
             <section>
               <h3 class="mb-2 text-xs tracking-wide text-muted-foreground">性能</h3>
-              <div class="flex items-center gap-3">
-                <label class="w-16 shrink-0 text-xs text-muted-foreground">切换缓存</label>
+              <div class="settings-field-row flex items-center gap-3">
+                <label for="settings-cache-size" class="w-16 shrink-0 text-xs text-muted-foreground">切换缓存</label>
                 <input
-                  v-model.number="draft.repoCacheSize"
+                  id="settings-cache-size" v-model.number="draft.repoCacheSize"
                   type="range"
                   min="1"
                   max="30"
@@ -933,7 +933,7 @@ const NAV = [
                     点推送时先列出这次要推哪些提交。推送发出去就没有撤销，建议保留。
                   </p>
                 </div>
-                <Switch v-model="draft.pushPreview" />
+                <Switch aria-label="推送前预览" v-model="draft.pushPreview" />
               </div>
             </section>
 
@@ -985,13 +985,13 @@ const NAV = [
                 tag="div"
               >
                 <div v-for="w in workflows" :key="w.id" class="mb-3 rounded-md border border-border">
-                  <div class="flex items-center gap-2 px-3 py-2">
+                  <div class="settings-workflow-header flex flex-wrap items-center gap-2 px-3 py-2">
                     <GripVertical
                       class="flow-handle size-3.5 shrink-0 cursor-grab text-muted-foreground"
                       @click.stop
                     />
                     <button
-                      class="flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left text-base"
+                      class="settings-workflow-title flex min-w-0 flex-1 cursor-pointer items-center gap-1.5 text-left text-base" :title="w.name"
                       @click="wfExpanded = wfExpanded === w.id ? '' : w.id"
                     >
                       <ChevronDown
@@ -1082,20 +1082,20 @@ const NAV = [
                       @keydown.alt.up.prevent="moveStep(w, si, -1)"
                       @keydown.alt.down.prevent="moveStep(w, si, 1)"
                     >
-                      <div class="flex items-center gap-2">
+                      <div class="settings-step-row flex flex-wrap items-center gap-2">
                         <GripVertical
                           class="step-handle size-3.5 shrink-0 cursor-grab text-muted-foreground"
                           @click.stop
                         />
                         <span
-                          class="grid size-5 shrink-0 place-items-center rounded-xs bg-primary-soft text-2xs font-medium text-primary"
+                          class="grid size-5 shrink-0 place-items-center rounded-xs bg-primary-soft text-2xs font-medium text-foreground"
                         >{{ si + 1 }}</span>
                         <component :is="STEP_ICONS[s.kind]" class="size-3.5 shrink-0 text-muted-foreground" />
                         <span class="w-16 shrink-0 text-xs font-medium">{{ KIND_LABELS[s.kind] }}</span>
                         <Tooltip v-if="DANGER_HINTS[s.kind]" :text="DANGER_HINTS[s.kind]!">
                           <TriangleAlert class="size-3.5 shrink-0 text-[var(--c-mod)]" />
                         </Tooltip>
-                        <div class="flex min-w-0 flex-1 items-center gap-1.5">
+                        <div class="settings-step-params flex min-w-0 flex-1 items-center gap-1.5">
                           <template v-if="refOf(s)">
                             <Select
                               :model-value="refOf(s)!.mode"
@@ -1223,7 +1223,7 @@ const NAV = [
                   <!-- 添加步骤 -->
                   <div class="rounded-md border border-dashed border-border px-2.5 py-2.5">
                     <div class="mb-2 text-xs text-muted-foreground">添加步骤</div>
-                    <div class="flex flex-wrap items-center gap-1.5">
+                    <div class="settings-add-step flex flex-wrap items-center gap-1.5">
                       <Select v-model="newStepKind" class="h-8 w-36 shrink-0 text-xs" :options="STEP_KIND_OPTIONS" />
                       <template v-if="newStepKind === 'checkout' || newStepKind === 'merge'">
                         <Select v-model="newStepMode" class="h-8 w-28 shrink-0 text-xs" :options="REF_MODE_OPTIONS" />
@@ -1331,7 +1331,7 @@ const NAV = [
                   <div
                     v-for="[keys, desc] in g.items"
                     :key="keys"
-                    class="flex items-center justify-between gap-4 px-3 py-2"
+                    class="settings-shortcut-row flex flex-wrap items-center justify-between gap-4 px-3 py-2"
                   >
                     <span class="shrink-0 rounded-xs bg-muted px-1.5 py-0.5 font-mono text-xs">{{ keys }}</span>
                     <span class="text-right text-xs text-muted-foreground">{{ desc }}</span>
@@ -1414,7 +1414,7 @@ const NAV = [
         </div>
 
         <!-- 底部操作条 -->
-        <footer class="flex shrink-0 items-center justify-end gap-2 border-t border-border px-4 py-2.5">
+        <footer class="dialog-footer">
           <Button variant="ghost" size="sm" @click="closeWithoutSaving()">取消</Button>
           <Button variant="default" size="sm" @click="save">保存</Button>
         </footer>
@@ -1433,15 +1433,15 @@ const NAV = [
       aria-modal="true"
       aria-labelledby="dlg-wf-del-title"
       @click.self="delFlow = null"
-      @keydown.esc.stop="delFlow = null"
+      @keydown.esc.stop="!$event.isComposing && (delFlow = null)"
     >
-      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
-        <div id="dlg-wf-del-title" class="mb-1.5 font-medium">删除工作流</div>
-        <div>确定删除「{{ delFlow.name }}」？删除后不可恢复。</div>
-        <div class="mt-3 flex justify-end gap-2">
+      <div class="dialog-shell w-dlg-md surface rounded-lg pop-in">
+        <header class="dialog-header"><div id="dlg-wf-del-title" class="dialog-title">删除工作流</div></header>
+        <div class="dialog-body text-sm leading-relaxed">确定删除「{{ delFlow.name }}」？删除后不可恢复。</div>
+        <footer class="dialog-footer">
           <Button ref="delCancelBtn" variant="ghost" size="sm" @click="delFlow = null">取消</Button>
           <Button variant="destructive" size="sm" @click="confirmDeleteFlow">确认删除</Button>
-        </div>
+        </footer>
       </div>
     </div>
     </Transition>
@@ -1457,20 +1457,21 @@ const NAV = [
       aria-modal="true"
       aria-labelledby="dlg-wf-rename-title"
       @click.self="wfRename = null"
-      @keydown.esc.stop="wfRename = null"
+      @keydown.esc.stop="!$event.isComposing && (wfRename = null)"
     >
-      <div class="w-dlg-md surface rounded-lg p-5 pop-in">
-        <div id="dlg-wf-rename-title" class="mb-2 font-medium">重命名工作流</div>
+      <div class="dialog-shell w-dlg-md surface rounded-lg pop-in">
+        <header class="dialog-header"><div id="dlg-wf-rename-title" class="dialog-title">重命名工作流</div></header>
+        <div class="dialog-body"><label class="dialog-field text-xs"><span class="font-medium">工作流名称</span>
         <Input
           ref="wfRenameInput"
           v-model="wfRename.draft"
           placeholder="工作流名称"
           @keydown.enter="onRenameEnter"
-        />
-        <div class="mt-3 flex justify-end gap-2">
+        /></label></div>
+        <footer class="dialog-footer">
           <Button variant="ghost" size="sm" @click="wfRename = null">取消</Button>
           <Button variant="default" size="sm" :disabled="!wfRename.draft.trim()" @click="confirmFlowRename">保存</Button>
-        </div>
+        </footer>
       </div>
     </div>
     </Transition>

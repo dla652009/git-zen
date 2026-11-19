@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onUnmounted } from "vue";
-import { X, Bot, Maximize2, Minimize2, Search, ChevronDown, ListTree, List, Folder } from "@lucide/vue";
+import { X, Bot, Maximize2, Minimize2, Search, ChevronDown, ListTree, List, Folder, PanelLeftClose, PanelLeftOpen } from "@lucide/vue";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import * as api from "../gitApi";
 import { AI_PROMPTS, aiComplete, clipForAI, aiCacheRead, aiCacheWrite, isAbortError } from "../ai";
@@ -11,6 +11,7 @@ import { useDiffSearch } from "../composables/useDiffSearch";
 // 的期待是一样的，第二份实现迟早会分叉
 import { buildFileRows, type FileRow } from "../lib/fileTree";
 import { humanizeMsg } from "../lib/errors";
+import { relDateText, relFrom } from "../lib/relDate";
 import { FileDown } from "@lucide/vue";
 
 const savedTip = ref(false);
@@ -252,20 +253,6 @@ interface BlameEntry {
 }
 const blameStore = ref<Map<string, Map<number, BlameEntry>>>(new Map());
 
-function relTime(epoch: number): string {
-  const s = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
-  if (s < 60) return "刚刚";
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} 分钟前`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h} 小时前`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return `${d} 天前`;
-  const mo = Math.floor(d / 30);
-  if (mo < 12) return `${mo} 个月前`;
-  return `${Math.floor(mo / 12)} 年前`;
-}
-
 watch(
   () => [sections.value, selectedFile.value] as const,
   async ([secs, sel]) => {
@@ -291,14 +278,14 @@ watch(
 
 function tipFor(l: PatchLine): string {
   const generic = props.commit
-    ? `修改：${props.commit.author} · ${props.commit.date}`
+    ? `修改：${props.commit.author} · ${relDateText(props.commit.date)}`
     : props.file
       ? `文件：${props.file.path}${props.file.cached ? "（已暂存）" : "（工作区）"}`
       : "";
   const blameOf = (line?: number) =>
     line !== undefined ? blameStore.value.get(selectedFile.value)?.get(line) : undefined;
   const attribution = (b: BlameEntry) =>
-    `最后修改：${b.author} · ${relTime(b.time)}（${b.hash.slice(0, 8)}）`;
+    `最后修改：${b.author} · ${relFrom(b.time)}（${b.hash.slice(0, 8)}）`;
   if (props.commit) {
     if (l.text.startsWith("+")) return generic; // 本次提交新增 → 归属当前提交作者
     const b = blameOf(l.oldLine);
@@ -315,7 +302,18 @@ const listW = ref(Number(localStorage.getItem("gz.diffListW")) || 256);
 const winW = ref(window.innerWidth);
 const maxListW = computed(() => Math.min(560, Math.round(winW.value * 0.45)));
 const listWShown = computed(() => Math.min(maxListW.value, Math.max(160, listW.value)));
-const onWinResize = () => (winW.value = window.innerWidth);
+
+// 左列表可手动收起：栏宽即使有上限也仍占窗口比例（最多 45%），想专注读 diff 时可以折起来。
+// 只有「换文件」需要它，收起不影响正在读的内容。纯本地展示状态，不落盘。
+// 不再按窗口宽度自动开合 —— 窗口最小宽 860，那个阈值永远不成立，等同死代码。
+const listOpen = ref(true);
+// 当前是第几个文件：左列表收起时，位置感只能从这里来
+const selectedIdx = computed(() => sections.value.findIndex((s) => s.file === selectedFile.value));
+const selectedNo = computed(() => (selectedIdx.value < 0 ? 0 : selectedIdx.value + 1));
+
+const onWinResize = () => {
+  winW.value = window.innerWidth;
+};
 let resizeStartX = 0;
 let resizeStartW = 0;
 function startListResize(e: MouseEvent) {
@@ -364,69 +362,109 @@ onUnmounted(() => {
          否则两个 rounded 会同时留在 class 上、由产物 CSS 顺序决定谁赢 -->
     <div
       class="pop-in surface flex flex-col"
-      :class="fullscreen ? 'h-full w-full' : 'h-[80vh] w-[80vw] rounded-lg'"
+      :class="fullscreen ? 'h-full w-full' : 'dialog-shell h-[80vh] w-[80vw] rounded-lg'"
     >
-      <header class="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
-        <span id="dlg-diff-title" class="truncate font-medium">
-          {{ commit ? commit.subject : file?.path }}
+      <header class="flex shrink-0 items-start gap-2 border-b border-border px-3 py-2">
+        <!-- 标题两行：第一行标题 / 路径（超长截断，完整值走 title），第二行是身份与位置。
+             收起左列表、标题被截断时，「看的是哪个文件、第几个 / 共几个」仍读得到 -->
+        <div class="min-w-0 flex-1">
+          <div
+            id="dlg-diff-title"
+            class="truncate font-medium"
+            :title="commit ? commit.subject : file?.path"
+          >
+            {{ commit ? commit.subject : file?.path }}
+          </div>
+          <div class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground tabular-nums">
+            <span class="shrink-0">
+              {{ commit ? `${commit.author} · ${relDateText(commit.date)}` : file?.cached ? "已暂存的变更" : "工作区变更" }}
+            </span>
+            <template v-if="sections.length">
+              <span aria-hidden="true">·</span>
+              <span class="shrink-0">文件 {{ selectedNo }} / {{ sections.length }}</span>
+            </template>
+            <Badge v-if="file?.conflict" variant="warning">合并冲突</Badge>
+          </div>
+        </div>
+        <span class="flex shrink-0 items-center gap-0.5">
+          <!-- 收起左列表：栏宽上限仍会吃掉近半数窗口宽，折行后的 diff 很难读 -->
+          <Tooltip v-if="sections.length > 1" :text="listOpen ? '收起文件列表' : '展开文件列表'">
+            <Button
+              variant="quiet"
+              size="icon"
+              class="h-6 w-6"
+              :aria-label="listOpen ? '收起文件列表' : '展开文件列表'"
+              :aria-pressed="listOpen"
+              @click="listOpen = !listOpen"
+            >
+              <PanelLeftClose v-if="listOpen" class="size-3.5" />
+              <PanelLeftOpen v-else class="size-3.5" />
+            </Button>
+          </Tooltip>
+          <Tooltip text="搜索（Ctrl+F）">
+            <Button
+              variant="quiet"
+              size="icon"
+              class="h-6 w-6"
+              data-search-toggle
+              aria-label="在 diff 里搜索"
+              :aria-pressed="searchOpen"
+              @click="toggleSearch"
+            >
+              <Search class="size-3.5" />
+            </Button>
+          </Tooltip>
+          <!-- 视图切换：只有一个文件时没有层级可省，按钮就不出现。
+               图标画的是「切过去会变成什么」，不是当前是什么 -->
+          <Tooltip v-if="sections.length > 1" :text="flatView ? '切换到目录树' : '切换到平铺列表'">
+            <Button
+              variant="quiet"
+              size="icon"
+              class="h-6 w-6"
+              :aria-label="flatView ? '切换到目录树' : '切换到平铺列表'"
+              @click="toggleChangeView"
+            >
+              <ListTree v-if="flatView" class="size-3.5" />
+              <List v-else class="size-3.5" />
+            </Button>
+          </Tooltip>
+          <Tooltip :text="fullscreen ? '退出全屏' : '全屏查看'">
+            <Button
+              variant="quiet"
+              size="icon"
+              class="h-6 w-6"
+              :aria-label="fullscreen ? '退出全屏' : '全屏查看'"
+              :aria-pressed="fullscreen"
+              @click="fullscreen = !fullscreen"
+            >
+              <Minimize2 v-if="fullscreen" class="size-3.5" />
+              <Maximize2 v-else class="size-3.5" />
+            </Button>
+          </Tooltip>
+          <Tooltip :text="savedPatchTip ? '已导出 ✓' : '导出 .patch'">
+            <Button variant="quiet" size="icon" class="h-6 w-6" aria-label="导出 patch" @click="exportPatch">
+              <FileDown class="size-3.5" />
+            </Button>
+          </Tooltip>
+          <Tooltip v-if="settings.aiEnabled === 'on'" text="AI 解释这段变更">
+            <Button
+              variant="quiet"
+              size="sm"
+              class="h-6 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground"
+              aria-label="AI 解释变更"
+              :disabled="explainBusy"
+              @click="explain"
+            >
+              <Spinner v-if="explainBusy" :size="12" />
+              <Bot v-else class="size-3.5 text-primary" />
+            AI 解释
+          </Button>
+        </Tooltip>
+        <span class="mx-0.5 h-4 w-px shrink-0 bg-border" />
+        <Button variant="quiet" size="icon" class="h-6 w-6" aria-label="关闭" @click="emit('close')">
+          <X class="size-4" />
+        </Button>
         </span>
-        <span class="shrink-0 text-xs text-muted-foreground tabular-nums">
-          {{ commit ? `${commit.author} · ${commit.date}` : file?.cached ? "已暂存的变更" : "工作区变更" }}
-        </span>
-        <Badge v-if="file?.conflict" variant="warning">合并冲突</Badge>
-        <span class="flex-1" />
-        <Tooltip text="搜索（Ctrl+F）">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="h-6 w-6"
-            data-search-toggle
-            aria-label="在 diff 里搜索"
-            :aria-pressed="searchOpen"
-            @click="toggleSearch"
-          >
-            <Search class="size-3.5" />
-          </Button>
-        </Tooltip>
-        <!-- 视图切换：只有一个文件时没有层级可省，按钮就不出现。
-             图标画的是「切过去会变成什么」，不是当前是什么 -->
-        <Tooltip v-if="sections.length > 1" :text="flatView ? '切换到目录树' : '切换到平铺列表'">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="h-6 w-6"
-            :aria-label="flatView ? '切换到目录树' : '切换到平铺列表'"
-            @click="toggleChangeView"
-          >
-            <ListTree v-if="flatView" class="size-3.5" />
-            <List v-else class="size-3.5" />
-          </Button>
-        </Tooltip>
-        <Tooltip :text="fullscreen ? '退出全屏' : '全屏查看'">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="h-6 w-6"
-            :aria-label="fullscreen ? '退出全屏' : '全屏查看'"
-            :aria-pressed="fullscreen"
-            @click="fullscreen = !fullscreen"
-          >
-            <Minimize2 v-if="fullscreen" class="size-3.5" />
-            <Maximize2 v-else class="size-3.5" />
-          </Button>
-        </Tooltip>
-        <Tooltip :text="savedPatchTip ? '已导出 ✓' : '导出 .patch'">
-          <Button variant="ghost" size="icon" class="h-6 w-6" aria-label="导出 patch" @click="exportPatch">
-            <FileDown class="size-3.5" />
-          </Button>
-        </Tooltip>
-        <Tooltip v-if="settings.aiEnabled === 'on'" text="AI 解释这段变更">
-          <Button variant="ghost" size="sm" aria-label="AI 解释变更" :disabled="explainBusy" @click="explain">
-            <Spinner v-if="explainBusy" :size="14" />
-            <Bot v-else class="size-3.5 text-primary" />
-          </Button>
-        </Tooltip>
-        <Button variant="ghost" size="icon" aria-label="关闭" @click="emit('close')"><X class="size-4" /></Button>
       </header>
 
       <!-- 搜索栏：常驻会白占 36px 高，所以由 header 的按钮或 Ctrl+F 开关 -->
@@ -442,6 +480,7 @@ onUnmounted(() => {
         <!-- 双栏：左文件列表 / 右选中文件的 diff（参考 FileHistoryModal 布局） -->
         <div class="flex min-h-0 flex-1">
         <aside
+          v-if="listOpen && sections.length > 1"
           class="shrink-0 overflow-y-auto border-r border-border"
           :style="{ width: listWShown + 'px' }"
         >
@@ -450,7 +489,7 @@ onUnmounted(() => {
               <!-- 目录行：点整行展开/收起（与变更列表同一套交互） -->
               <li
                 v-if="row.kind === 'dir'"
-                class="flex cursor-pointer items-center gap-1 border-b border-border/60 py-2 pr-3 text-xs whitespace-nowrap transition-colors duration-fast select-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
+                class="flex cursor-pointer items-center gap-1 border-b border-border-soft py-2 pr-3 text-xs whitespace-nowrap transition-colors duration-fast select-none hover:bg-hover focus-visible:outline-2 focus-visible:outline-primary/60 focus-visible:-outline-offset-1"
                 :style="{ paddingLeft: 12 + row.depth * 12 + 'px' }"
                 tabindex="0"
                 role="button"
@@ -474,18 +513,21 @@ onUnmounted(() => {
                    平铺模式 label 就是完整路径 -->
               <li
                 v-if="row.kind === 'file'"
-                class="cursor-pointer border-b border-border/60 py-2 pr-3 transition-colors duration-fast hover:bg-hover"
-                :class="selectedFile === row.item.file && 'bg-primary-soft'"
+                class="cursor-pointer border-b border-border-soft py-2 pr-3 transition-colors duration-fast"
+                :class="selectedFile === row.item.file ? 'bg-row-selected' : 'hover:bg-hover'"
                 :style="{ paddingLeft: 12 + row.depth * 12 + 'px' }"
                 :title="row.item.file"
                 @click="pickFile(row.item.file)"
               >
                 <div class="truncate text-xs font-medium">{{ row.label }}</div>
-                <div class="mt-0.5 flex items-center gap-2 text-xs text-muted-foreground">
+                <div
+                  class="mt-0.5 flex items-center gap-2 text-xs"
+                  :class="selectedFile === row.item.file ? 'text-foreground' : 'text-muted-foreground'"
+                >
                   <span class="tabular-nums">{{ row.item.lines.length }} 行</span>
                   <span
                     v-if="q.trim() && hitsOfFile(row.item.file)"
-                    class="shrink-0 rounded-xs bg-primary/15 px-1 text-2xs text-primary tabular-nums"
+                    class="shrink-0 rounded-xs bg-primary-soft px-1 text-2xs text-foreground tabular-nums"
                     >{{ hitsOfFile(row.item.file) }} 处</span
                   >
                 </div>
@@ -494,7 +536,7 @@ onUnmounted(() => {
           </ul>
         </aside>
         <!-- 文件列表拖宽把手 -->
-        <div class="w-1 shrink-0 cursor-col-resize transition-colors duration-fast hover:bg-primary/40" @mousedown="startListResize" />
+        <div v-if="listOpen && sections.length > 1" class="w-1 shrink-0 cursor-col-resize transition-colors duration-fast hover:bg-primary/40" @mousedown="startListResize" />
         <div class="min-w-0 flex-1 select-text overflow-auto p-3 font-mono text-xs leading-5">
           <Spinner v-if="loading" label="加载中…" />
           <div v-else-if="err" class="text-destructive">{{ err }}</div>

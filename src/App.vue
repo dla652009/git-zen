@@ -140,6 +140,7 @@ const errorOpen = computed({
 
 // git stderr -> 人话；实现放在 src/lib/errors.ts，组件内联错误提示也用同一份规则
 import { humanize } from "./lib/errors";
+import { relDateText } from "./lib/relDate";
 import { isUnmerged } from "./lib/conflict";
 import { useSidebarResize } from "./composables/useSidebarResize";
 import { useRepoCache } from "./composables/useRepoCache";
@@ -861,7 +862,7 @@ watch(repo, async (next, prev) => {
   await nextTick(); // 等「摘类」这次渲染落到 DOM，再挂回去才能重新触发
   if (seq !== repoAnimSeq) return;
   repoAnimOn.value = true;
-  // 170ms 时长 + 最大 60ms stagger，留一点余量后收掉 class，让元素回到无动画的常态
+  // 170ms 时长 + 最大 40ms stagger，留一点余量后收掉 class，让元素回到无动画的常态
   repoAnimTimer = window.setTimeout(() => {
     if (seq === repoAnimSeq) repoAnimOn.value = false;
   }, 260);
@@ -2604,7 +2605,7 @@ const overlayLayers: Record<OverlayName, OverlayLayer> = {
   openRepo: {
     open: () => !!openModal.value,
     close: () => (openModal.value = null),
-    // 克隆进行中不关表单：后台克隆完成后会自动切换仓库，弹窗还承担进度与取消入口
+    // 克隆中保留进度与错误入口；遮罩和按键关闭也走忙碌守卫。
     locked: () => cloneBusy.value,
   },
   releaseNotes: { open: () => notesOpen.value, close: () => (notesOpen.value = false) },
@@ -2752,6 +2753,7 @@ const { leftW, rightW, startResize, endResize, clampSidebars } = useSidebarResiz
 // 在各自模块里自带守卫。OpenRepoDialog 把键盘事件 emit 回来，守卫仍在这两个常量上。
 const imeDoClone = imeGuard(doClone);
 const imeCloseOpenModal = imeGuard(() => {
+  if (cloneBusy.value) return;
   openModal.value = null;
 });
 
@@ -2796,10 +2798,10 @@ onUnmounted(() => {
     <TitleBar :title="windowTitle" />
     <!-- 窗口镶边（header / 标签栏 / footer）统一用卡片色，工作区回落画布色：
          选项卡的「连着下面」才好成立 —— 激活页签跟内容同色，才像真的嵌进去 -->
-    <header class="flex items-center gap-2 border-b border-border bg-card px-3 py-2">
+    <header class="flex items-center gap-1.5 border-b border-border bg-card px-3 py-2">
       <Tooltip text="打开仓库">
         <Button variant="ghost" aria-label="打开仓库" @click="openModal = 'choose'">
-          <FolderOpen class="size-4" />
+          <FolderOpen class="size-3.5" />
           打开
         </Button>
       </Tooltip>
@@ -2873,6 +2875,10 @@ onUnmounted(() => {
           <span class="max-w-[7rem] truncate">{{ w.name }}</span>
         </Button>
       </Tooltip>
+      <!-- 工具条分三段：状态徽标 / 同步与流程 / 纯图标动作。
+           段间用 1px 分隔线而不是更大的 gap —— 分组读得出来，又不会把按钮推散。
+           所有带文字的按钮统一 3.5 图标，纯图标按钮统一 4，图标与文字间距由 Button 的 gap-1.5 保证。 -->
+      <span class="mx-0.5 h-4 w-px shrink-0 bg-border" />
       <Tooltip text="工作流">
         <Button
           variant="quiet"
@@ -2937,7 +2943,7 @@ onUnmounted(() => {
         :class="[repoAnimOn && !leftFold ? repoAnimClass : '', 'repo-anim-1']"
         :style="{ width: leftW + 'px' }"
       >
-        <div class="flex items-center gap-1 px-3 pt-3.5 pb-2 text-2xs font-semibold tracking-wide text-muted-foreground">
+        <div class="flex items-center gap-1 px-3 pt-3.5 pb-2 text-xs font-semibold tracking-wide text-muted-foreground">
           <span>分支</span>
           <!-- 视图切换：目录树（按 / 分层）/ 平铺（一行一个完整分支名）。
                偏好存设置里跨重启保留；与变更列表的 tree/flat 相互独立。 -->
@@ -2963,15 +2969,16 @@ onUnmounted(() => {
             <Input v-model="branchFilter" placeholder="搜索分支…" class="h-7 pl-7 text-xs" />
           </div>
         </div>
-        <!-- 本地分支组：一级栏，图标+强调 -->
+        <!-- 本地分支组：一级栏。字号比叶子小一档（text-sm / 叶子 1rem），靠字重和图标立住层级；
+             数量右对齐 —— 三个分组、标签都用同一列，扫读时不用在名字后面找数字。 -->
         <div
-          class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-base font-medium select-none transition-colors duration-fast hover:bg-hover"
+          class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-sm font-semibold select-none transition-colors duration-fast hover:bg-hover"
           @click="toggleGroup('local')"
         >
-          <ChevronDown class="size-3 transition-transform duration-fast" :class="collapsedGroups.has('local') && '-rotate-90'" />
-          <GitBranch class="size-3.5" />
+          <ChevronDown class="size-3 shrink-0 transition-transform duration-fast" :class="collapsedGroups.has('local') && '-rotate-90'" />
+          <GitBranch class="size-3.5 shrink-0 text-muted-foreground" />
           本地
-          <span class="text-xs font-normal text-muted-foreground tabular-nums">{{ localBranches.length }}</span>
+          <span class="ml-auto shrink-0 pl-2 text-2xs font-normal text-muted-foreground tabular-nums">{{ localBranches.length }}</span>
         </div>
         <!-- Transition 的外层是高度动画容器，内层是唯一 grid item（overflow:hidden 见 style.css）；
              BranchTree 是多根 fragment，必须再包一层，否则 0fr 只作用于第一行 -->
@@ -2992,13 +2999,13 @@ onUnmounted(() => {
         <!-- 远程分组：一级栏图标+强调，默认收起 -->
         <template v-for="[prefix, list] in remoteGroups" :key="prefix">
           <div
-            class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-base font-medium select-none transition-colors duration-fast hover:bg-hover"
+            class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-sm font-semibold select-none transition-colors duration-fast hover:bg-hover"
             @click="toggleRemote(prefix)"
           >
-            <ChevronDown class="size-3 transition-transform duration-fast" :class="!openRemotes.has(prefix) && '-rotate-90'" />
-            <Cloud class="size-3.5" />
+            <ChevronDown class="size-3 shrink-0 transition-transform duration-fast" :class="!openRemotes.has(prefix) && '-rotate-90'" />
+            <Cloud class="size-3.5 shrink-0 text-muted-foreground" />
             {{ prefix }}
-            <span class="text-xs font-normal text-muted-foreground tabular-nums">{{ list.length }}</span>
+            <span class="ml-auto shrink-0 pl-2 text-2xs font-normal text-muted-foreground tabular-nums">{{ list.length }}</span>
           </div>
           <Transition name="collapse">
             <div v-if="openRemotes.has(prefix)">
@@ -3017,15 +3024,15 @@ onUnmounted(() => {
 
         <!-- 标签组：右键组头出 新建/AI Release Notes，右键行出 推送/删除/复制 -->
         <div
-          class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-base font-medium select-none transition-colors duration-fast hover:bg-hover"
+          class="flex cursor-pointer items-center gap-1.5 px-3 py-1.5 text-sm font-semibold select-none transition-colors duration-fast hover:bg-hover"
           title="右键：新建标签 / AI Release Notes"
           @click="toggleGroup('gz:tags')"
           @contextmenu.prevent="tagHeaderMenu = { x: $event.clientX, y: $event.clientY }"
         >
-          <ChevronDown class="size-3 transition-transform duration-fast" :class="collapsedGroups.has('gz:tags') && '-rotate-90'" />
-          <Tag class="size-3.5" />
+          <ChevronDown class="size-3 shrink-0 transition-transform duration-fast" :class="collapsedGroups.has('gz:tags') && '-rotate-90'" />
+          <Tag class="size-3.5 shrink-0 text-muted-foreground" />
           标签
-          <span class="ml-auto text-xs font-normal text-muted-foreground tabular-nums">{{ tags.length }}</span>
+          <span class="ml-auto shrink-0 pl-2 text-2xs font-normal text-muted-foreground tabular-nums">{{ tags.length }}</span>
         </div>
         <Transition name="collapse">
           <div v-if="!collapsedGroups.has('gz:tags')">
@@ -3033,13 +3040,14 @@ onUnmounted(() => {
               <li
                 v-for="t in tagsFiltered"
                 :key="t.name"
-                class="flex cursor-pointer items-center gap-1 py-1.5 pr-3 pl-6 transition-colors duration-fast hover:bg-hover"
-                :title="`${t.annotated ? '附注标签' : '轻量标签'} · ${t.date} · 指向 ${t.target.slice(0, 10)}${t.message ? '\n' + t.message : ''}（右键更多操作）`"
+                class="flex cursor-pointer items-center gap-1.5 py-1.5 pr-3 pl-7 transition-colors duration-fast hover:bg-hover"
+                :title="`${t.annotated ? '附注标签' : '轻量标签'} · ${relDateText(t.date)} · 指向 ${t.target.slice(0, 10)}${t.message ? '\n' + t.message : ''}（右键更多操作）`"
                 @contextmenu.prevent="tagMenu = { x: $event.clientX, y: $event.clientY, name: t.name }"
               >
+                <Tag class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
                 <span class="truncate text-xs">{{ t.name }}</span>
               </li>
-              <li v-if="!tagsFiltered.length" class="py-1.5 pl-6 pr-3 text-xs text-muted-foreground">
+              <li v-if="!tagsFiltered.length" class="py-1.5 pr-3 pl-7 text-xs text-muted-foreground">
                 {{ tags.length ? "无匹配标签" : "暂无标签 · 右键组头新建" }}
               </li>
             </ul>
@@ -3070,7 +3078,7 @@ onUnmounted(() => {
           <!-- 视图范围：当前分支 / 所有分支 -->
           <Select
             v-model="historyMode"
-            class="h-7 w-24 shrink-0 text-xs"
+            class="h-7 w-28 shrink-0 text-xs"
             :options="[
               { value: 'current', label: '当前分支' },
               { value: 'all', label: '所有分支' },
